@@ -114,7 +114,10 @@ describe("SimpleAppShell invite-link login", () => {
     await user.click(copyButton);
 
     expect(copyButton.getAttribute("aria-disabled")).toBeNull();
-    expect(await screen.findByText(/copy nostr-connect url/i)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Copy nostr-connect URL" })).toBeTruthy();
+    }, { timeout: 2200 });
     expect(copyButton.getAttribute("aria-disabled")).toBeNull();
   });
 
@@ -154,11 +157,28 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.queryByRole("button", { name: "Show full voter npub QR" })).toBeNull();
     const identityButton = await screen.findByRole("button", { name: /voter profile menu/i });
     expect(identityButton.textContent).toMatch(/^Voter /);
+    expect(identityButton.querySelector(".simple-account-menu-trigger-icon")).toBeTruthy();
 
     await user.click(identityButton);
 
-    expect(screen.getByText("Colour ID")).toBeTruthy();
+    const menu = screen.getByRole("menu", { name: "App menu" });
+    expect([...menu.querySelectorAll(".simple-account-menu-kicker")].map((node) => node.textContent)).toEqual([
+      "Switch",
+      "Voter",
+      "Identity",
+      "About",
+    ]);
+    expect(screen.queryByText("Identity words")).toBeNull();
+    expect(screen.queryByText("Colour ID")).toBeNull();
     expect(screen.getByText("QR code")).toBeTruthy();
+    expect([...menu.querySelectorAll(".simple-account-menu-identity-grid [role='menuitem']")].map((node) => node.textContent)).toEqual([
+      "QR code",
+      "Copy identity",
+      "New identity",
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Close menu" }));
+    expect(screen.queryByRole("menu", { name: "App menu" })).toBeNull();
   });
 
   it("uses an in-app confirmation before creating a new identity", async () => {
@@ -234,10 +254,9 @@ describe("SimpleAppShell invite-link login", () => {
       expect(demoGuideLink.getAttribute("href")).toBe("demo-guide.html");
       expect(demoGuideLink.getAttribute("target")).toBe("_blank");
       expect(demoGuideLink.getAttribute("rel")).toBe("noopener noreferrer");
-      await user.click(screen.getByRole("menuitem", { name: "Login" }));
-      expect(loginEvents).toBe(1);
+      expect(screen.queryByRole("menuitem", { name: "Login" })).toBeNull();
+      expect(loginEvents).toBe(0);
 
-      await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
       await user.click(screen.getByRole("tab", { name: "Settings" }));
 
       expect(screen.getByTestId("simple-voter-app").textContent).toContain("settings");
@@ -250,7 +269,7 @@ describe("SimpleAppShell invite-link login", () => {
     }
   });
 
-  it("keeps organiser identity visuals in the top menu without duplicating sidebar navigation", async () => {
+  it("keeps organiser identity QR in the top menu without duplicating sidebar navigation", async () => {
     const user = userEvent.setup();
     const organiserNpub = "npub1" + "c".repeat(58);
     window.history.pushState(null, "", "/?role=coordinator");
@@ -270,7 +289,14 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.queryByRole("tab", { name: "Session" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Messages" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
-    expect(screen.getByText("Colour ID")).toBeTruthy();
+    expect(screen.queryByText("Identity words")).toBeNull();
+    expect(screen.queryByText("Colour ID")).toBeNull();
     expect(screen.getByText("QR code")).toBeTruthy();
+    const organiserMenu = screen.getByRole("menu", { name: "App menu" });
+    expect([...organiserMenu.querySelectorAll(".simple-account-menu-identity-grid [role='menuitem']")].map((node) => node.textContent)).toEqual([
+      "QR code",
+      "Copy identity",
+      "New identity",
+    ]);
   });
 });

@@ -97,4 +97,45 @@ describe("SimpleMessagesPanel", () => {
     });
     expect(await screen.findByText("Hello organiser")).toBeTruthy();
   });
+
+  it("renders hyperlinks in message bodies as clickable links", async () => {
+    const coordinatorNpub = "npub1coordinator";
+    simpleHelplineDmMocks.subscribeHelplineDmMessages.mockImplementation(
+      (input: { onMessages: (messages: HelplineDmMessage[]) => void }) => {
+        input.onMessages([
+          {
+            id: "message_link",
+            dmEventId: "event_link",
+            senderNpub: coordinatorNpub,
+            recipientNpubs: ["npub1voter"],
+            peerNpub: coordinatorNpub,
+            direction: "received",
+            body: "Open https://tidley.github.io/auditable-voting/?q=q123 or www.example.com/help.",
+            subject: "Auditable Voting helpline",
+            createdAt: "2026-06-12T00:00:00.000Z",
+          },
+        ]);
+        return () => undefined;
+      },
+    );
+
+    render(
+      <SimpleMessagesPanel
+        role='voter'
+        actorNpub='npub1voter'
+        actorNsec='nsec1voter'
+        targetNpubs={[coordinatorNpub]}
+      />,
+    );
+
+    const questionnaireLink = await screen.findByRole("link", {
+      name: "https://tidley.github.io/auditable-voting/?q=q123",
+    });
+    expect(questionnaireLink.getAttribute("href")).toBe("https://tidley.github.io/auditable-voting/?q=q123");
+    expect(questionnaireLink.getAttribute("target")).toBe("_blank");
+    expect(questionnaireLink.getAttribute("rel")).toBe("noopener noreferrer");
+
+    const shorthandLink = screen.getByRole("link", { name: "www.example.com/help" });
+    expect(shorthandLink.getAttribute("href")).toBe("https://www.example.com/help");
+  });
 });

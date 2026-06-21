@@ -16,6 +16,7 @@ WORKER_NSEC=nsec1...
 COORDINATOR_NPUB=npub1...
 # Optional override:
 # WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info
+# WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol
 ```
 
 Optional:
@@ -24,6 +25,7 @@ Optional:
 WORKER_STATE_DIR=/var/lib/auditable-voting-worker
 WORKER_HEARTBEAT_SECONDS=30
 WORKER_POLL_SECONDS=5
+WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol
 ```
 
 ## Run
@@ -44,7 +46,7 @@ The archive extracts a platform-specific executable with the same stem as the as
 
 - Linux x64: `./auditable-voting-worker-linux-x64`
 
-The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated audit proxy `nsec` when present. Those launcher scripts and direct command-line snippets default helper-side logging to scoped proxy debug logs, set `WORKER_POLL_SECONDS=5` for responsive ballot issuance, and keep dependency relay-frame logs at `info` so encrypted NIP-17 payloads are not printed. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
+The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective public/delegation relay list, private-DM relay list, and generated audit proxy `nsec` when present. Those launcher scripts and direct command-line snippets default helper-side logging to scoped proxy debug logs, set `WORKER_POLL_SECONDS=5` for responsive ballot issuance, keep `relay.nostr.info` out of `WORKER_DM_RELAYS` because it rejects NIP-17 gift wraps, and keep dependency relay-frame logs at `info` so encrypted NIP-17 payloads are not printed. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
 
 ## Current responsibilities
 

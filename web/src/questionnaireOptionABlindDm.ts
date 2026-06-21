@@ -2,16 +2,20 @@ import { gzipSync, gunzipSync, strFromU8, strToU8 } from "fflate";
 import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
-import type {
-  BallotAcceptanceResult,
-  BallotSubmission,
-  BearerInviteCodeEntry,
-  BlindBallotIssuance,
-  BlindBallotRequest,
-  CoordinatorElectionState,
-  VoterElectionLocalState,
+import {
+  sanitiseBlindBallotIssuance,
+  sanitiseBlindBallotRequest,
+  type BallotAcceptanceResult,
+  type BallotSubmission,
+  type BearerInviteCodeEntry,
+  type BlindBallotIssuance,
+  type BlindBallotRequest,
+  type CoordinatorElectionState,
+  type VoterElectionLocalState,
 } from "./questionnaireOptionA";
-import type { QuestionnaireBlindPrivateKey } from "./questionnaireBlindSignature";
+import type {
+  QuestionnaireBlindPrivateKey,
+} from "./questionnaireBlindSignature";
 import type { QuestionnaireDefinition, QuestionnaireDefinitionReference } from "./questionnaireProtocol";
 import type { SignerService } from "./services/signerService";
 import type {
@@ -53,8 +57,10 @@ const OPTION_A_BUNDLE_COMPRESSION_THRESHOLD_BYTES = 8 * 1024;
 const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
-  "wss://relay.nostr.info",
 ];
+const OPTION_A_BLIND_DM_REJECTING_RELAYS = new Set([
+  "wss://relay.nostr.info",
+]);
 const OPTION_A_BLIND_DM_READ_UNINDEXED_TAG_RELAYS = new Set([
   "wss://relay.damus.io",
   "wss://relay.primal.net",
@@ -439,12 +445,14 @@ function filterBlindDmReadRelays(relays: string[]) {
   const ordered = orderBlindDmReadRelays(relays);
   const available = ordered.filter((relay) => {
     const until = optionABlindDmRelayCooldownUntil.get(relay) ?? 0;
-    return until <= now;
+    return until <= now && !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay);
   });
   if (available.length > 0) {
     return available;
   }
-  return ordered.slice(0, Math.max(1, Math.min(2, ordered.length)));
+  return ordered
+    .filter((relay) => !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay))
+    .slice(0, Math.max(1, Math.min(2, ordered.length)));
 }
 
 async function withBlindDmQuerySlot<T>(task: () => Promise<T>): Promise<T> {
@@ -593,7 +601,8 @@ function orderBlindDmReadRelays(relays: string[]) {
 }
 
 function selectPublishRelays(relays: string[]) {
-  return relays.slice(0, Math.min(OPTION_A_BLIND_DM_RELAYS_MAX, relays.length));
+  const compatibleRelays = relays.filter((relay) => !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay));
+  return compatibleRelays.slice(0, Math.min(OPTION_A_BLIND_DM_RELAYS_MAX, compatibleRelays.length));
 }
 
 function selectHintRelays(relays: string[]) {
@@ -974,7 +983,9 @@ function parseBlindRequestDmContent(content: string): BlindBallotRequest[] | nul
     if (!Array.isArray(requests)) {
       return null;
     }
-    const valid = requests.filter(isValidBlindRequestPayload);
+    const valid = requests
+      .filter(isValidBlindRequestPayload)
+      .map((request) => sanitiseBlindBallotRequest(request));
     return valid.length > 0 ? valid : null;
   } catch {
     return null;
@@ -1008,7 +1019,9 @@ function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance[] | n
     if (!Array.isArray(issuances)) {
       return null;
     }
-    const valid = issuances.filter(isValidBlindIssuancePayload);
+    const valid = issuances
+      .filter(isValidBlindIssuancePayload)
+      .map((issuance) => sanitiseBlindBallotIssuance(issuance));
     return valid.length > 0 ? valid : null;
   } catch {
     return null;
@@ -1855,16 +1868,17 @@ export async function publishOptionABlindRequestDm(input: {
   fallbackNsec?: string;
   relays?: string[];
 }) {
+  const request = sanitiseBlindBallotRequest(input.request);
   return publishEnvelope({
     signer: input.signer,
     recipientNpub: input.recipientNpub,
     fallbackNsec: input.fallbackNsec,
     relays: input.relays,
-    channel: `optiona-blind-request:${input.request.electionId}:${input.request.requestId}`,
+    channel: `optiona-blind-request:${request.electionId}:${request.requestId}`,
     envelope: {
       type: "optiona_blind_request_dm",
       schemaVersion: 1,
-      request: input.request,
+      request,
       sentAt: new Date().toISOString(),
     },
   });
@@ -1881,16 +1895,17 @@ export async function publishOptionABlindRequestBundleDm(input: {
   if (!first) {
     throw new Error("Blind request bundle is empty.");
   }
+  const requests = input.requests.map((request) => sanitiseBlindBallotRequest(request));
   return publishEnvelope({
     signer: input.signer,
     recipientNpub: input.recipientNpub,
     fallbackNsec: input.fallbackNsec,
     relays: input.relays,
-    channel: `optiona-blind-request-bundle:${first.electionId}:${first.invitedNpub}:${input.requests.length}`,
+    channel: `optiona-blind-request-bundle:${requests[0]!.electionId}:${requests[0]!.invitedNpub}:${requests.length}`,
     envelope: {
       type: "optiona_blind_request_bundle_dm",
       schemaVersion: 1,
-      requests: input.requests,
+      requests,
       sentAt: new Date().toISOString(),
     },
   });
@@ -1903,12 +1918,13 @@ export async function publishOptionABlindIssuanceDm(input: {
   fallbackNsec?: string;
   relays?: string[];
 }) {
-  const legacyDefinition = input.issuance.definition ?? null;
+  const inputIssuance = sanitiseBlindBallotIssuance(input.issuance);
+  const legacyDefinition = inputIssuance.definition ?? null;
   const issuance = {
-    ...input.issuance,
+    ...inputIssuance,
     definition: undefined,
-    definitionHash: input.issuance.definitionHash ?? (legacyDefinition ? questionnaireDefinitionHash(legacyDefinition) : null),
-    definitionEventId: input.issuance.definitionEventId ?? null,
+    definitionHash: inputIssuance.definitionHash ?? (legacyDefinition ? questionnaireDefinitionHash(legacyDefinition) : null),
+    definitionEventId: inputIssuance.definitionEventId ?? null,
   };
   return publishEnvelope({
     signer: input.signer,
@@ -1932,21 +1948,22 @@ export function buildOptionABlindIssuanceBundleEnvelope(input: {
   definitionEventId?: string | null;
   sentAt?: string;
 }): BlindIssuanceBundleDmEnvelope {
-  const sharedDefinition = input.definition ?? input.issuances.find((issuance) => issuance.definition)?.definition ?? null;
+  const inputIssuances = input.issuances.map((issuance) => sanitiseBlindBallotIssuance(issuance));
+  const sharedDefinition = input.definition ?? inputIssuances.find((issuance) => issuance.definition)?.definition ?? null;
   const definitionHash = input.definitionHash
-    ?? input.issuances.find((issuance) => issuance.definitionHash)?.definitionHash
+    ?? inputIssuances.find((issuance) => issuance.definitionHash)?.definitionHash
     ?? (sharedDefinition ? questionnaireDefinitionHash(sharedDefinition) : null);
   const definitionEventId = input.definitionEventId
-    ?? input.issuances.find((issuance) => issuance.definitionEventId)?.definitionEventId
+    ?? inputIssuances.find((issuance) => issuance.definitionEventId)?.definitionEventId
     ?? null;
   const bundledIssuances = sharedDefinition
-    ? input.issuances.map((issuance) => ({
+    ? inputIssuances.map((issuance) => ({
       ...issuance,
       definition: undefined,
       definitionHash: issuance.definitionHash ?? definitionHash,
       definitionEventId: issuance.definitionEventId ?? definitionEventId,
     }))
-    : input.issuances.map((issuance) => ({
+    : inputIssuances.map((issuance) => ({
       ...issuance,
       definitionHash: issuance.definitionHash ?? definitionHash,
       definitionEventId: issuance.definitionEventId ?? definitionEventId,
@@ -1971,7 +1988,8 @@ export async function publishOptionABlindIssuanceBundleDm(input: {
   fallbackNsec?: string;
   relays?: string[];
 }) {
-  const first = input.issuances[0];
+  const issuances = input.issuances.map((issuance) => sanitiseBlindBallotIssuance(issuance));
+  const first = issuances[0];
   if (!first) {
     throw new Error("Blind issuance bundle is empty.");
   }
@@ -1980,9 +1998,9 @@ export async function publishOptionABlindIssuanceBundleDm(input: {
     recipientNpub: input.recipientNpub,
     fallbackNsec: input.fallbackNsec,
     relays: input.relays,
-    channel: `optiona-blind-issuance-bundle:${first.electionId}:${first.invitedNpub}:${input.issuances.length}`,
+    channel: `optiona-blind-issuance-bundle:${first.electionId}:${first.invitedNpub}:${issuances.length}`,
     envelope: buildOptionABlindIssuanceBundleEnvelope({
-      issuances: input.issuances,
+      issuances,
       definition: input.definition,
       definitionHash: input.definitionHash,
       definitionEventId: input.definitionEventId,

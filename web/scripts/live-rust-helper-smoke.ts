@@ -171,6 +171,13 @@ function envBool(name: string, fallback: boolean) {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
+function envScopedSubmissionSchedule(name: string) {
+  const value = (process.env[name] ?? "").trim().toLowerCase().replace(/-/g, "_");
+  return value === "question_waves" || value === "waves" || value === "by_question"
+    ? "question_waves"
+    : "voter_batches";
+}
+
 function envSubmissionMode(name: string, fallback: LiveRustHelperSubmissionMode): LiveRustHelperSubmissionMode {
   const value = (process.env[name] ?? "").trim().toLowerCase().replace(/-/g, "_");
   if (value === "per_question" || value === "scoped" || value === "separate") {
@@ -496,6 +503,7 @@ async function main() {
   const questionCount = envInt("OPTIONA_LIVE_RUST_HELPER_QUESTION_COUNT", 1);
   const submissionMode = envSubmissionMode("OPTIONA_LIVE_RUST_HELPER_SUBMISSION_MODE", "bundled");
   const perQuestionSubmissions = submissionMode === "per_question";
+  const scopedSubmissionSchedule = envScopedSubmissionSchedule("OPTIONA_LIVE_RUST_HELPER_SCOPED_SUBMISSION_SCHEDULE");
   const requestRetryWaitMs = envInt(
     "OPTIONA_LIVE_RUST_HELPER_REQUEST_RETRY_WAIT_MS",
     perQuestionSubmissions ? Math.max(intervalMs, 30_000) : intervalMs,
@@ -548,6 +556,9 @@ async function main() {
   process.stdout.write(`Voters: ${voters.length}\n`);
   process.stdout.write(`Questions: ${definition.questions.length}\n`);
   process.stdout.write(`Submission mode: ${submissionMode}\n`);
+  if (perQuestionSubmissions) {
+    process.stdout.write(`Scoped submission schedule: ${scopedSubmissionSchedule}\n`);
+  }
   process.stdout.write(`Expected submissions: ${expectedSubmissionCount}\n`);
   process.stdout.write(`First voter: ${voters[0]?.npub ?? "none"}\n`);
   process.stdout.write(`Bulk invite concurrency: ${Math.max(1, Math.min(inviteConcurrency, voters.length))}\n`);
@@ -782,7 +793,15 @@ async function main() {
       responseAnswers: QuestionnaireResponseAnswer[];
       totalSubmissions: number;
     }) {
-      assert.equal(input.issuance.definition?.questionnaireId, questionnaireId);
+      assert.equal(input.issuance.electionId, questionnaireId);
+      if (input.issuance.definition) {
+        assert.equal(input.issuance.definition.questionnaireId, questionnaireId);
+      } else {
+        assert(
+          input.issuance.definitionHash || input.issuance.definitionEventId,
+          "expected blind issuance to carry either a legacy definition or a public definition reference",
+        );
+      }
       const credential = await finalizeQuestionnaireBlindSignature({
         publicKey: blindSigningPublicKey,
         message: input.blindTokenMessage,
@@ -876,7 +895,6 @@ async function main() {
         requestId: randomId("request"),
         invitedNpub: input.voterNpub,
         blindedMessage: blindedToken.blindedMessage,
-        tokenCommitment,
         blindSigningKeyId: blindSigningPublicKey.keyId,
         clientNonce: randomId("nonce"),
         createdAt: new Date().toISOString(),
@@ -892,9 +910,165 @@ async function main() {
       };
     }
 
+    async function submitScopedEntry(input: {
+      voter: ReturnType<typeof makeNostrIdentity>;
+      voterIndex: number;
+      question: QuestionnaireDefinition["questions"][number];
+      questionIndex: number;
+      totalSubmissions: number;
+    }) {
+      const voterLabel = `voter ${input.voterIndex + 1}/${voters.length} question ${input.questionIndex + 1}/${definition.questions.length}`;
+      const submissionDelayMs = randomDelayMs(responseDelayMinMs, responseDelayMaxMs);
+      if (submissionDelayMs > 0) {
+        await sleep(submissionDelayMs);
+      }
+      workerExit.assertRunning();
+      const entry = {
+        question: input.question,
+        questionIndex: input.questionIndex,
+        answer: answerForQuestion(input.question, input.questionIndex),
+        ...(await buildBlindRequest({
+          voterNpub: input.voter.npub,
+          ballotScope: ballotScopeForQuestion(input.question, input.questionIndex),
+        })),
+      };
+
+      let workerSawRequest = false;
+      for (let attempt = 1; attempt <= requestRetryLimit; attempt += 1) {
+        try {
+          const publishedBlindRequest = await publishOptionABlindRequestDm({
+            signer: signer(input.voter.npub),
+            recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
+            request: entry.request,
+            fallbackNsec: input.voter.nsec,
+            relays: visibleDelegation?.controlRelays ?? relays,
+          });
+          if (publishedBlindRequest.successes === 0) {
+            process.stdout.write(`Retryable ${voterLabel} blind request publish failure on attempt ${attempt}/${requestRetryLimit}: zero relay successes\n`);
+          }
+        } catch (error) {
+          process.stdout.write(`Retryable ${voterLabel} blind request publish failure on attempt ${attempt}/${requestRetryLimit}: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
+        if (attempt > 1) {
+          process.stdout.write(`Retried ${voterLabel} blind request publish attempt ${attempt}/${requestRetryLimit}\n`);
+        }
+        const waitStartedAt = Date.now();
+        const waitUntil = waitStartedAt + (attempt < requestRetryLimit ? requestRetryWaitMs : intervalMs);
+        do {
+          await sleep(Math.min(intervalMs, Math.max(0, waitUntil - Date.now())));
+          workerExit.assertRunning();
+          const helperState = getHelperElectionState(await readHelperState(workerStateDir), questionnaireId);
+          if (helperState?.seen_blind_request_ids?.includes(entry.request.requestId)) {
+            workerSawRequest = true;
+            break;
+          }
+        } while (Date.now() < waitUntil);
+        if (workerSawRequest) {
+          break;
+        }
+      }
+
+      let visibleIssuance = null as Awaited<ReturnType<typeof fetchOptionABlindIssuanceDmsWithNsec>>[number] | null;
+      try {
+        visibleIssuance = await waitForValue(
+          `${voterLabel} scoped blind issuance DM from spawned Rust helper`,
+          async () => {
+            const entries = await fetchOptionABlindIssuanceDmsWithNsec({
+              nsec: input.voter.nsec,
+              electionId: questionnaireId,
+              relays,
+              limit: Math.max(50, definition.questions.length + 10),
+            });
+            return entries.find((issuanceEntry) => issuanceEntry.requestId === entry.request.requestId) ?? null;
+          },
+          (value) => Boolean(value?.requestId === entry.request.requestId && value?.invitedNpub === input.voter.npub),
+          timeoutMs,
+          intervalMs,
+          undefined,
+          () => workerExit.assertRunning(),
+        );
+      } catch (error) {
+        const helperState = getHelperElectionState(await readHelperState(workerStateDir), questionnaireId);
+        const logText = liveWorkerLogs.lines.join("");
+        workerSawRequest = Boolean(
+          helperState?.seen_blind_request_ids?.includes(entry.request.requestId)
+          || logText.includes(`blind request received: election_id=${questionnaireId}, request_id=${entry.request.requestId}`),
+        );
+        assert(
+          workerSawRequest,
+          `helper state/logs never confirmed ${voterLabel} blind request ${entry.request.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        assert(
+          Boolean(helperState?.last_blind_issuance_at) || logText.includes(`blind issuance published: election_id=${questionnaireId}, request_id=${entry.request.requestId}`),
+          `helper state/logs never confirmed ${voterLabel} blind issuance for ${entry.request.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        visibleIssuance = await waitForValue(
+          `${voterLabel} scoped blind issuance DM after helper-confirmed issuance`,
+          async () => {
+            const entries = await fetchOptionABlindIssuanceDmsWithNsec({
+              nsec: input.voter.nsec,
+              electionId: questionnaireId,
+              relays,
+              limit: Math.max(50, definition.questions.length + 10),
+            });
+            return entries.find((issuanceEntry) => issuanceEntry.requestId === entry.request.requestId) ?? null;
+          },
+          (value) => Boolean(value?.requestId === entry.request.requestId && value?.invitedNpub === input.voter.npub),
+          Math.max(30_000, Math.floor(timeoutMs / 2)),
+          intervalMs,
+          undefined,
+          () => workerExit.assertRunning(),
+        );
+      }
+      if (!workerSawRequest) {
+        const helperState = getHelperElectionState(await readHelperState(workerStateDir), questionnaireId);
+        const logText = liveWorkerLogs.lines.join("");
+        workerSawRequest = Boolean(
+          helperState?.seen_blind_request_ids?.includes(entry.request.requestId)
+          || logText.includes(`blind request received: election_id=${questionnaireId}, request_id=${entry.request.requestId}`)
+          || visibleIssuance?.requestId === entry.request.requestId,
+        );
+      }
+      assert(workerSawRequest, `helper never confirmed ${voterLabel} blind request ${entry.request.requestId} after ${requestRetryLimit} publish attempts`);
+      assert(visibleIssuance, `missing ${voterLabel} issuance`);
+      await publishCompletedSubmission({
+        voterNsec: input.voter.nsec,
+        voterLabel,
+        request: entry.request,
+        issuance: visibleIssuance,
+        blindTokenMessage: entry.blindTokenMessage,
+        blindingFactor: entry.blindingFactor,
+        tokenSecret: entry.tokenSecret,
+        tokenCommitment: entry.tokenCommitment,
+        ballotScope: entry.ballotScope,
+        responseAnswers: [entry.answer],
+        totalSubmissions: input.totalSubmissions,
+      });
+    }
+
     if (perQuestionSubmissions) {
-      process.stdout.write(`Submitting ${expectedSubmissionCount} scoped blind response job(s) in ${voters.length} voter batch(es)...\n`);
-      await runWithConcurrency(voters, submissionConcurrency, async (voter, voterIndex) => {
+      if (scopedSubmissionSchedule === "question_waves") {
+        process.stdout.write(`Submitting ${expectedSubmissionCount} scoped blind response job(s) in ${definition.questions.length} question wave(s)...\n`);
+        for (const [questionIndex, question] of definition.questions.entries()) {
+          const waveStartedAt = Date.now();
+          const completedBeforeWave = completedSubmissionCount;
+          process.stdout.write(`Starting question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, voters=${voters.length}\n`);
+          await runWithConcurrency(voters, submissionConcurrency, async (voter, voterIndex) => {
+            await submitScopedEntry({
+              voter,
+              voterIndex,
+              question,
+              questionIndex,
+              totalSubmissions: expectedSubmissionCount,
+            });
+          });
+          const waveCompletedCount = completedSubmissionCount - completedBeforeWave;
+          assert.equal(waveCompletedCount, voters.length, `expected ${voters.length} submissions in ${question.questionId} wave`);
+          process.stdout.write(`Completed question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, submissions=${waveCompletedCount}/${voters.length}, elapsedMs=${Date.now() - waveStartedAt}\n`);
+        }
+      } else {
+        process.stdout.write(`Submitting ${expectedSubmissionCount} scoped blind response job(s) in ${voters.length} voter batch(es)...\n`);
+        await runWithConcurrency(voters, submissionConcurrency, async (voter, voterIndex) => {
         const voterLabel = `voter ${voterIndex + 1}/${voters.length}`;
         const submissionDelayMs = randomDelayMs(responseDelayMinMs, responseDelayMaxMs);
         if (submissionDelayMs > 0) {
@@ -1002,7 +1176,8 @@ async function main() {
             totalSubmissions: expectedSubmissionCount,
           });
         });
-      });
+        });
+      }
     } else {
       const submissionJobs: LiveRustHelperSubmissionJob[] = voters.map((voter, voterIndex) => ({
         voter,

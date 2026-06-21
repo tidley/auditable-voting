@@ -383,7 +383,6 @@ async function processDelegatedCoordinatorQueues(input: {
       requestId: request.requestId,
       issuanceId: `issuance_${request.requestId}`,
       invitedNpub: request.invitedNpub,
-      tokenCommitment: request.tokenCommitment,
       blindSigningKeyId: loaded.blindSigningPrivateKey.keyId,
       blindSignature: await signBlindedQuestionnaireToken({
         privateKey: loaded.blindSigningPrivateKey,
@@ -425,9 +424,6 @@ async function processDelegatedCoordinatorQueues(input: {
       continue;
     }
 
-    const issuance = Object.values(next.issuedBlindResponses)
-      .find((candidate) => candidate.tokenCommitment === entry.response.tokenProof.tokenCommitment);
-
     const submission: BallotSubmission = {
       type: "ballot_submission",
       schemaVersion: 1,
@@ -436,7 +432,7 @@ async function processDelegatedCoordinatorQueues(input: {
       invitedNpub: entry.response.authorPubkey,
       responseNpub: entry.response.authorPubkey,
       tokenCommitment: entry.response.tokenProof.tokenCommitment,
-      blindSigningKeyId: issuance?.blindSigningKeyId ?? loaded.blindSigningPrivateKey.keyId,
+      blindSigningKeyId: loaded.blindSigningPrivateKey.keyId,
       credential: entry.response.tokenProof.signature,
       nullifier: entry.response.tokenNullifier,
       payload: {
@@ -474,15 +470,24 @@ async function processDelegatedCoordinatorQueues(input: {
     } else {
       next = received.state;
       const publicKey = next.election.blindSigningPublicKey ?? toQuestionnaireBlindPublicKey(loaded.blindSigningPrivateKey);
-      const credentialValid = Boolean(issuance) && await verifyQuestionnaireBlindSignature({
+      const proofs = submission.credentialBundle?.length
+        ? submission.credentialBundle
+        : [{
+          tokenCommitment: submission.tokenCommitment,
+          blindSigningKeyId: submission.blindSigningKeyId,
+          credential: submission.credential,
+          nullifier: submission.nullifier,
+          ballotScope: null,
+        }];
+      const credentialValid = (await Promise.all(proofs.map((proof) => verifyQuestionnaireBlindSignature({
         publicKey,
         message: buildQuestionnaireBlindTokenSignedMessage({
           questionnaireId: input.electionId,
-          tokenSecretCommitment: submission.tokenCommitment,
-          ballotScope: issuance?.ballotScope ?? null,
+          tokenSecretCommitment: proof.tokenCommitment,
+          ballotScope: proof.ballotScope ?? null,
         }),
-        signature: submission.credential,
-      });
+        signature: proof.credential,
+      })))).every(Boolean);
 
       if (!credentialValid) {
         result = {
@@ -971,7 +976,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(voter.getSnapshot()?.submissionDecisions?.q2?.accepted).toBe(true);
     expect(coordinator.getAcceptedUniqueCount()).toBe(2);
     expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(2);
-  });
+  }, 15000);
 
   it("uses one scoped credential for questions grouped under the same ballot index", async () => {
     const groupedElectionId = `${electionId}_credential_group`;
@@ -1800,9 +1805,11 @@ describe("questionnaireOptionARuntime", () => {
     const issuanceTwo = voterTwo.getSnapshot()?.blindIssuance;
     expect(issuanceOne?.electionId).toBe(electionIdOne);
     expect(issuanceTwo?.electionId).toBe(electionIdTwo);
-    expect(issuanceOne?.tokenCommitment).toBeTruthy();
-    expect(issuanceTwo?.tokenCommitment).toBeTruthy();
-    expect(issuanceOne?.tokenCommitment).not.toBe(issuanceTwo?.tokenCommitment);
+    expect(issuanceOne).not.toHaveProperty("tokenCommitment");
+    expect(issuanceTwo).not.toHaveProperty("tokenCommitment");
+    expect(voterOne.getSnapshot()?.blindTokenSecret?.tokenCommitment).toBeTruthy();
+    expect(voterTwo.getSnapshot()?.blindTokenSecret?.tokenCommitment).toBeTruthy();
+    expect(voterOne.getSnapshot()?.blindTokenSecret?.tokenCommitment).not.toBe(voterTwo.getSnapshot()?.blindTokenSecret?.tokenCommitment);
     expect(coordinatorOne.getSnapshot()?.whitelist[voterNpub]?.issuanceId).toBe(issuanceOne?.issuanceId);
     expect(coordinatorTwo.getSnapshot()?.whitelist[voterNpub]?.issuanceId).toBe(issuanceTwo?.issuanceId);
   });
@@ -1852,9 +1859,9 @@ describe("questionnaireOptionARuntime", () => {
         expect(voter.getSnapshot()?.credentialReady).toBe(true);
         expect(issuance?.electionId).toBe(sessionId);
         expect(issuance?.invitedNpub).toBe(invitedNpub);
-        expect(issuance?.tokenCommitment).toBeTruthy();
+        expect(issuance).not.toHaveProperty("tokenCommitment");
         expect(coordinator.getSnapshot()?.whitelist[invitedNpub]?.issuanceId).toBe(issuance?.issuanceId);
-        tokenCommitments.set(`${sessionId}:${invitedNpub}`, issuance?.tokenCommitment ?? "");
+        tokenCommitments.set(`${sessionId}:${invitedNpub}`, voter.getSnapshot()?.blindTokenSecret?.tokenCommitment ?? "");
       }
     }
 
@@ -2001,11 +2008,11 @@ describe("questionnaireOptionARuntime", () => {
         expect(voter.getSnapshot()?.credentialReady).toBe(true);
         expect(issuance?.electionId).toBe(sessionId);
         expect(issuance?.invitedNpub).toBe(invitedNpub);
-        expect(issuance?.tokenCommitment).toBeTruthy();
+        expect(issuance).not.toHaveProperty("tokenCommitment");
         expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledWith(expect.objectContaining({
           recipientNpub: invitedNpub,
         }));
-        tokenCommitments.set(`${sessionId}:${invitedNpub}`, issuance?.tokenCommitment ?? "");
+        tokenCommitments.set(`${sessionId}:${invitedNpub}`, voter.getSnapshot()?.blindTokenSecret?.tokenCommitment ?? "");
       }
     }
 

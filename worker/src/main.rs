@@ -6,12 +6,13 @@ use crate::config::WorkerConfig;
 use crate::model::{
     is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance,
     BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotRequest,
-    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, CompressedBundleEnvelope,
-    ElectionRuntimeState, QuestionnaireBlindResponseEvent, QuestionnaireSubmissionDecisionEvent,
-    WorkerCapability, WorkerDelegationCertificate, WorkerDelegationEnvelope,
-    WorkerDelegationRevocation, WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot,
-    WorkerPersistentState, WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, BlindTokenProof,
+    CompressedBundleEnvelope, ElectionRuntimeState, QuestionnaireBlindResponseEvent,
+    QuestionnaireSubmissionDecisionEvent, WorkerCapability, WorkerDelegationCertificate,
+    WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
+    WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
+    WorkerStatusEnvelope, WorkerStatusSnapshot, IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION, OPTIONA_WORKER_DELEGATION_KIND,
     OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
@@ -20,14 +21,16 @@ use crate::store::WorkerStore;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use blind_rsa_signatures::SecretKeySha384PSSDeterministic;
+use blind_rsa_signatures::{
+    PublicKeySha384PSSDeterministic, SecretKeySha384PSSDeterministic, Signature,
+};
 use chrono::Utc;
 use crypto_bigint::BoxedUint;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use nostr_sdk::prelude::*;
-use rsa::RsaPrivateKey;
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -76,6 +79,12 @@ const DISCOURAGED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://nostr-pub.wellorder.net",
     "wss://relay.0xchat.com",
 ];
+const PRIVATE_DM_REJECTING_RELAYS: &[&str] = &[
+    // Public questionnaire relay. It currently rejects NIP-17 gift wraps with
+    // "kind 1059 not permitted", so keep it out of worker private DM publish/read paths.
+    "wss://relay.nostr.info",
+];
+const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &["wss://relay.nostr.net", "wss://nos.lol"];
 const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
 const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
 
@@ -90,17 +99,22 @@ fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> 
     Ok(BoxedUint::from_be_slice_vartime(&decoded))
 }
 
-fn sign_blinded_message(blinded_hex: &str, private_jwk: &serde_json::Value) -> Result<String> {
-    let clean = blinded_hex.trim();
+fn decode_hex_bytes(input: &str, label: &str) -> Result<Vec<u8>> {
+    let clean = input.trim();
     if clean.is_empty() || clean.len() % 2 != 0 {
-        anyhow::bail!("invalid blinded message encoding");
+        anyhow::bail!("invalid {label} encoding");
     }
-    let mut blinded_bytes = Vec::with_capacity(clean.len() / 2);
+    let mut bytes = Vec::with_capacity(clean.len() / 2);
     for chunk in clean.as_bytes().chunks(2) {
-        let pair = std::str::from_utf8(chunk).context("invalid blinded message bytes")?;
-        let value = u8::from_str_radix(pair, 16).context("invalid blinded message hex")?;
-        blinded_bytes.push(value);
+        let pair = std::str::from_utf8(chunk).with_context(|| format!("invalid {label} bytes"))?;
+        let value = u8::from_str_radix(pair, 16).with_context(|| format!("invalid {label} hex"))?;
+        bytes.push(value);
     }
+    Ok(bytes)
+}
+
+fn sign_blinded_message(blinded_hex: &str, private_jwk: &serde_json::Value) -> Result<String> {
+    let blinded_bytes = decode_hex_bytes(blinded_hex, "blinded message")?;
     let n = parse_jwk_component(private_jwk, "n")?;
     let e = parse_jwk_component(private_jwk, "e")?;
     let d = parse_jwk_component(private_jwk, "d")?;
@@ -172,6 +186,96 @@ fn sha256_hex(value: &str) -> String {
 
 fn questionnaire_definition_hash(definition: &serde_json::Value) -> String {
     sha256_hex(&canonical_json(definition))
+}
+
+fn get_scope_string(scope: &serde_json::Value, camel_key: &str, snake_key: &str) -> Option<String> {
+    scope
+        .get(camel_key)
+        .or_else(|| scope.get(snake_key))?
+        .as_str()
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+}
+
+fn get_scope_positive_integer(
+    scope: &serde_json::Value,
+    camel_key: &str,
+    snake_key: &str,
+) -> Option<u64> {
+    let value = scope.get(camel_key).or_else(|| scope.get(snake_key))?;
+    let as_integer = value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|entry| u64::try_from(entry).ok()))
+        .or_else(|| {
+            value.as_f64().and_then(|entry| {
+                if entry.is_finite() && entry >= 1.0 {
+                    Some(entry.floor() as u64)
+                } else {
+                    None
+                }
+            })
+        })?;
+    (as_integer >= 1).then_some(as_integer)
+}
+
+fn normalise_blind_token_scope(scope: Option<&serde_json::Value>) -> Option<serde_json::Value> {
+    let scope = scope?;
+    let question_id = get_scope_string(scope, "questionId", "question_id");
+    let slot_id = get_scope_string(scope, "slotId", "slot_id");
+    let slot_index = get_scope_positive_integer(scope, "slotIndex", "slot_index");
+    let version = get_scope_positive_integer(scope, "version", "version");
+    if question_id.is_none() && slot_id.is_none() && slot_index.is_none() && version.is_none() {
+        return None;
+    }
+    let mut map = serde_json::Map::new();
+    if let Some(value) = question_id {
+        map.insert("question_id".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = slot_id {
+        map.insert("slot_id".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = slot_index {
+        map.insert(
+            "slot_index".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(value)),
+        );
+    }
+    if let Some(value) = version {
+        map.insert(
+            "version".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(value)),
+        );
+    }
+    Some(serde_json::Value::Object(map))
+}
+
+fn build_blind_token_signed_message(
+    questionnaire_id: &str,
+    token_commitment: &str,
+    ballot_scope: Option<&serde_json::Value>,
+) -> String {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "questionnaire_id".to_string(),
+        serde_json::Value::String(questionnaire_id.to_string()),
+    );
+    map.insert(
+        "response_mode".to_string(),
+        serde_json::Value::String("blind_token".to_string()),
+    );
+    map.insert(
+        "schema_version".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(1_u64)),
+    );
+    map.insert(
+        "token_secret_commitment".to_string(),
+        serde_json::Value::String(token_commitment.to_string()),
+    );
+    if let Some(scope) = normalise_blind_token_scope(ballot_scope) {
+        map.insert("ballot_scope".to_string(), scope);
+    }
+    canonical_json(&serde_json::Value::Object(map))
 }
 
 fn compressible_bundle_message_type(message_type: &str) -> bool {
@@ -435,6 +539,96 @@ fn definition_value_blind_signing_key_id(definition: &serde_json::Value) -> Opti
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn definition_value_blind_signing_public_jwk(
+    definition: &serde_json::Value,
+) -> Option<&serde_json::Value> {
+    definition.get("blindSigningPublicKey")?.get("jwk")
+}
+
+fn public_key_from_jwk(jwk: &serde_json::Value) -> Result<PublicKeySha384PSSDeterministic> {
+    let n = parse_jwk_component(jwk, "n")?;
+    let e = parse_jwk_component(jwk, "e")?;
+    let key = RsaPublicKey::new(n, e).context("unable to construct RSA public key from JWK")?;
+    Ok(PublicKeySha384PSSDeterministic::new(key))
+}
+
+fn blind_response_proofs(submission: &QuestionnaireBlindResponseEvent) -> Vec<&BlindTokenProof> {
+    if submission.token_proofs.is_empty() {
+        vec![&submission.token_proof]
+    } else {
+        submission.token_proofs.iter().collect()
+    }
+}
+
+fn blind_response_nullifiers(submission: &QuestionnaireBlindResponseEvent) -> Vec<String> {
+    let mut values = if submission.token_nullifiers.is_empty() {
+        vec![submission.token_nullifier.trim().to_string()]
+    } else {
+        submission
+            .token_nullifiers
+            .iter()
+            .map(|entry| entry.token_nullifier.trim().to_string())
+            .collect::<Vec<_>>()
+    };
+    values.retain(|entry| !entry.is_empty());
+    values
+}
+
+fn verify_blind_response_proof(
+    public_key: &PublicKeySha384PSSDeterministic,
+    submission: &QuestionnaireBlindResponseEvent,
+    proof: &BlindTokenProof,
+) -> bool {
+    if proof.questionnaire_id.trim() != submission.questionnaire_id.trim()
+        || proof.token_commitment.trim().is_empty()
+        || proof.signature.trim().is_empty()
+    {
+        return false;
+    }
+    let signature = match decode_hex_bytes(&proof.signature, "blind token signature") {
+        Ok(bytes) => Signature(bytes),
+        Err(_) => return false,
+    };
+    let message = build_blind_token_signed_message(
+        &submission.questionnaire_id,
+        proof.token_commitment.trim(),
+        proof.ballot_scope.as_ref(),
+    );
+    public_key
+        .verify(&signature, None, message.as_bytes())
+        .is_ok()
+}
+
+fn verify_blind_response_proofs(
+    election: &ElectionRuntimeState,
+    submission: &QuestionnaireBlindResponseEvent,
+) -> bool {
+    let Some(definition) = election.definition.as_ref() else {
+        return false;
+    };
+    let Some(jwk) = definition_value_blind_signing_public_jwk(definition) else {
+        return false;
+    };
+    let Ok(public_key) = public_key_from_jwk(jwk) else {
+        return false;
+    };
+    let proofs = blind_response_proofs(submission);
+    if proofs.is_empty() {
+        return false;
+    }
+    proofs
+        .iter()
+        .all(|proof| verify_blind_response_proof(&public_key, submission, proof))
+}
+
+fn blind_response_token_commitments(submission: &QuestionnaireBlindResponseEvent) -> Vec<String> {
+    blind_response_proofs(submission)
+        .into_iter()
+        .map(|proof| proof.token_commitment.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>()
 }
 
 fn definition_blind_signing_key_id(definition: &Option<serde_json::Value>) -> Option<String> {
@@ -875,7 +1069,6 @@ fn build_blind_issuance(
         request_id: request.request_id.clone(),
         issuance_id: format!("issuance_{}", random_suffix()),
         invited_npub: request.invited_npub.clone(),
-        token_commitment: request.token_commitment.clone(),
         blind_signing_key_id: request.blind_signing_key_id.clone(),
         blind_signature,
         definition_hash: election.definition_hash.clone().or_else(|| {
@@ -1038,16 +1231,24 @@ async fn main() -> Result<()> {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+    let dm_relay_strings = config
+        .worker_dm_relays
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
     info!(
         "starting auditable-voting-worker v{}",
         env!("CARGO_PKG_VERSION")
     );
     info!(
-        "worker startup config: coordinator_npub={}, relay_source={}, relay_count={}, relays={:?}, state_dir={}, heartbeat_seconds={}, poll_seconds={}",
+        "worker startup config: coordinator_npub={}, relay_source={}, relay_count={}, relays={:?}, dm_relay_source={}, dm_relay_count={}, dm_relays={:?}, state_dir={}, heartbeat_seconds={}, poll_seconds={}",
         config.coordinator_npub,
         if config.worker_relays_from_env { "env" } else { "default" },
         relay_strings.len(),
         relay_strings,
+        if config.worker_dm_relays_from_env { "env" } else { "default" },
+        dm_relay_strings.len(),
+        dm_relay_strings,
         config.worker_state_dir.display(),
         config.heartbeat_seconds,
         config.poll_seconds
@@ -1269,7 +1470,7 @@ impl WorkerRuntime {
                 .await
                 .with_context(|| format!("{label} gift-wrap construction failed"))?;
         let mut tasks = tokio::task::JoinSet::new();
-        let relays = self.effective_worker_relays().await;
+        let relays = self.effective_worker_private_relays().await;
         self.ensure_relays_connected(&relays).await;
         for relay in relays {
             let client = self.client.clone();
@@ -1334,7 +1535,7 @@ impl WorkerRuntime {
             )
             .since(since_ts)
             .limit(500);
-        let relays = self.effective_worker_relays().await;
+        let relays = self.effective_worker_private_relays().await;
         self.ensure_relays_connected(&relays).await;
 
         let output = self
@@ -1479,6 +1680,39 @@ impl WorkerRuntime {
         self.select_relay_retry_batch(dedupe_relays(relays)).await
     }
 
+    async fn effective_worker_private_relays(&self) -> Vec<RelayUrl> {
+        let mut relays = self.config.worker_dm_relays.clone();
+        let state = self.state.lock().await;
+        for election in state.elections.values() {
+            if election.revoked || is_expired(&election.expires_at) {
+                continue;
+            }
+            for relay in &election.control_relays {
+                match RelayUrl::parse(relay) {
+                    Ok(parsed) => relays.push(parsed),
+                    Err(error) => {
+                        warn!("ignoring invalid delegated control relay {relay}: {error}")
+                    }
+                }
+            }
+        }
+        drop(state);
+
+        let filtered = filter_private_dm_relays(dedupe_relays(relays));
+        let fallback_relays = if filtered.is_empty() {
+            warn!(
+                "worker private DM relay set was empty after filtering NIP-17-incompatible relays; using default private DM relays"
+            );
+            PRIVATE_DM_FALLBACK_RELAYS
+                .iter()
+                .filter_map(|relay| RelayUrl::parse(*relay).ok())
+                .collect()
+        } else {
+            filtered
+        };
+        filter_private_dm_relays(self.select_relay_retry_batch(fallback_relays).await)
+    }
+
     async fn ensure_relays_connected(&self, relays: &[RelayUrl]) {
         for relay in relays {
             if let Err(error) = self.client.add_relay(relay.clone()).await {
@@ -1586,7 +1820,12 @@ impl WorkerRuntime {
             "optiona_blind_request_dm" => {
                 let envelope: BlindBallotRequestEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(true),
+                    Err(error) => {
+                        warn!(
+                            "blind request control message could not be decoded and will be retried: {error}"
+                        );
+                        return Ok(false);
+                    }
                 };
                 debug!(
                     "blind request received: election_id={}, request_id={}, invited_npub={}",
@@ -1600,7 +1839,12 @@ impl WorkerRuntime {
                 let envelope: BlindBallotRequestBundleEnvelope = match serde_json::from_value(value)
                 {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(true),
+                    Err(error) => {
+                        warn!(
+                            "blind request bundle control message could not be decoded and will be retried: {error}"
+                        );
+                        return Ok(false);
+                    }
                 };
                 debug!(
                     "blind request bundle received: requests={}",
@@ -1920,28 +2164,46 @@ impl WorkerRuntime {
 
         let mut accepted = true;
         let mut reason = "accepted".to_string();
+        let nullifiers = blind_response_nullifiers(&submission);
+        let commitments = blind_response_token_commitments(&submission);
+        let unique_nullifiers = nullifiers.iter().cloned().collect::<HashSet<_>>();
+        let unique_commitments = commitments.iter().cloned().collect::<HashSet<_>>();
 
         if submission.event_type != "questionnaire_response_blind" {
             accepted = false;
             reason = "invalid_payload_shape".to_string();
-        } else if submission.token_nullifier.trim().is_empty()
+        } else if nullifiers.is_empty()
+            || commitments.is_empty()
+            || nullifiers.len() != unique_nullifiers.len()
+            || commitments.len() != unique_commitments.len()
             || submission.response_id.trim().is_empty()
             || submission.author_pubkey.trim().is_empty()
         {
             accepted = false;
             reason = "invalid_payload_shape".to_string();
-        } else if election
-            .accepted_nullifiers
-            .contains(&submission.token_nullifier)
+        } else if !verify_blind_response_proofs(election, &submission) {
+            accepted = false;
+            reason = "invalid_token_proof".to_string();
+        } else if nullifiers
+            .iter()
+            .any(|nullifier| election.accepted_nullifiers.contains(nullifier))
+            || commitments
+                .iter()
+                .any(|commitment| election.accepted_token_commitments.contains(commitment))
         {
             accepted = false;
             reason = "duplicate_nullifier".to_string();
         }
 
         if accepted {
-            election
-                .accepted_nullifiers
-                .insert(submission.token_nullifier.clone());
+            for nullifier in &nullifiers {
+                election.accepted_nullifiers.insert(nullifier.clone());
+            }
+            for commitment in &commitments {
+                election
+                    .accepted_token_commitments
+                    .insert(commitment.clone());
+            }
             election
                 .accepted_response_authors
                 .insert(submission.author_pubkey.clone());
@@ -2213,15 +2475,11 @@ impl WorkerRuntime {
             Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY),
             content,
         );
-        let tags = vec![
-            vec!["t".to_string(), "questionnaire_result_summary".to_string()],
-            vec!["questionnaire-id".to_string(), election_id.to_string()],
-            vec!["worker".to_string(), self.worker_npub.clone()],
-            vec![
-                "coordinator".to_string(),
-                self.config.coordinator_npub.clone(),
-            ],
-        ];
+        let tags = result_summary_tags(
+            election_id,
+            &self.worker_npub,
+            &self.config.coordinator_npub,
+        );
         for tag in tags {
             if let Ok(parsed) = Tag::parse(tag) {
                 builder = builder.tag(parsed);
@@ -2731,6 +2989,20 @@ impl WorkerRuntime {
     }
 }
 
+fn result_summary_tags(
+    election_id: &str,
+    worker_npub: &str,
+    coordinator_npub: &str,
+) -> Vec<Vec<String>> {
+    vec![
+        vec!["t".to_string(), "questionnaire_result_summary".to_string()],
+        vec!["q".to_string(), election_id.to_string()],
+        vec!["questionnaire-id".to_string(), election_id.to_string()],
+        vec!["worker".to_string(), worker_npub.to_string()],
+        vec!["coordinator".to_string(), coordinator_npub.to_string()],
+    ]
+}
+
 fn fixed_lookback_timestamp(lookback_secs: u64) -> Timestamp {
     let now = Timestamp::now().as_secs();
     Timestamp::from(now.saturating_sub(lookback_secs))
@@ -2756,6 +3028,20 @@ fn is_discouraged_worker_relay(relay: &str) -> bool {
     DISCOURAGED_WORKER_READ_RELAYS
         .iter()
         .any(|entry| normalize_relay_key(entry) == key)
+}
+
+fn is_private_dm_rejecting_relay(relay: &str) -> bool {
+    let key = normalize_relay_key(relay);
+    PRIVATE_DM_REJECTING_RELAYS
+        .iter()
+        .any(|entry| normalize_relay_key(entry) == key)
+}
+
+fn filter_private_dm_relays(relays: Vec<RelayUrl>) -> Vec<RelayUrl> {
+    relays
+        .into_iter()
+        .filter(|relay| !is_private_dm_rejecting_relay(&relay.to_string()))
+        .collect()
 }
 
 fn discouraged_relay_retry_delay(failures: u32) -> Duration {
@@ -2817,6 +3103,7 @@ fn prune_seen_control_events(
 mod tests {
     use super::*;
     use crate::model::QuestionnaireBlindPrivateKey;
+    use blind_rsa_signatures::{DefaultRng, KeyPairSha384PSSDeterministic};
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -2833,12 +3120,110 @@ mod tests {
             invited_npub: "npub1invitee000000000000000000000000000000000000000000000000"
                 .to_string(),
             blinded_message: "abcd".to_string(),
-            token_commitment: "token_commitment".to_string(),
             blind_signing_key_id: "key_worker_definition".to_string(),
             client_nonce: "nonce_worker_definition".to_string(),
             created_at: now_iso(),
             invite_code_hash: None,
             ballot_scope: None,
+        }
+    }
+
+    fn hex_bytes(bytes: &[u8]) -> String {
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    }
+
+    fn test_definition_and_keypair(
+        questionnaire_id: &str,
+    ) -> (serde_json::Value, KeyPairSha384PSSDeterministic) {
+        let mut rng = DefaultRng;
+        let keypair = KeyPairSha384PSSDeterministic::generate(&mut rng, 2048)
+            .expect("generate blind rsa keypair");
+        let components = keypair.pk.components();
+        let jwk = json!({
+            "kty": "RSA",
+            "alg": "PS384",
+            "ext": true,
+            "n": URL_SAFE_NO_PAD.encode(components.n()),
+            "e": URL_SAFE_NO_PAD.encode(components.e()),
+        });
+        let definition = json!({
+            "schemaVersion": 2,
+            "eventType": "questionnaire_definition",
+            "questionnaireId": questionnaire_id,
+            "title": "Delegated definition",
+            "description": "Public definition",
+            "blindSigningPublicKey": {
+                "scheme": "rsabssa-sha384-pss-deterministic-v1",
+                "keyId": "key_test_public",
+                "jwk": jwk,
+            },
+            "questions": [{
+                "questionId": "q1",
+                "prompt": "Question 1",
+                "type": "yes_no",
+                "required": true
+            }]
+        });
+        (definition, keypair)
+    }
+
+    fn sign_test_token(
+        keypair: &KeyPairSha384PSSDeterministic,
+        questionnaire_id: &str,
+        token_commitment: &str,
+        ballot_scope: Option<&serde_json::Value>,
+    ) -> String {
+        let mut rng = DefaultRng;
+        let message =
+            build_blind_token_signed_message(questionnaire_id, token_commitment, ballot_scope);
+        let blinding = keypair
+            .pk
+            .blind(&mut rng, message.as_bytes())
+            .expect("blind token message");
+        let blind_signature = keypair
+            .sk
+            .blind_sign(&blinding.blind_message)
+            .expect("blind sign token message");
+        let signature = keypair
+            .pk
+            .finalize(&blind_signature, &blinding, message.as_bytes())
+            .expect("finalize token signature");
+        hex_bytes(&signature.0)
+    }
+
+    fn signed_submission(
+        keypair: &KeyPairSha384PSSDeterministic,
+        questionnaire_id: &str,
+        response_id: &str,
+        token_commitment: &str,
+        token_nullifier: &str,
+    ) -> QuestionnaireBlindResponseEvent {
+        let signature = sign_test_token(keypair, questionnaire_id, token_commitment, None);
+        QuestionnaireBlindResponseEvent {
+            schema_version: 1,
+            event_type: "questionnaire_response_blind".to_string(),
+            questionnaire_id: questionnaire_id.to_string(),
+            response_id: response_id.to_string(),
+            submitted_at: 1_782_000_000,
+            author_pubkey: format!("{response_id}_author"),
+            token_nullifier: token_nullifier.to_string(),
+            token_nullifiers: vec![],
+            token_proof: BlindTokenProof {
+                token_commitment: token_commitment.to_string(),
+                questionnaire_id: questionnaire_id.to_string(),
+                signature,
+                question_id: None,
+                ballot_scope: None,
+            },
+            token_proofs: vec![],
+            answers: vec![json!({
+                "questionId": "q1",
+                "answerType": "yes_no",
+                "answer": "yes"
+            })],
         }
     }
 
@@ -2875,7 +3260,9 @@ mod tests {
                 worker_nsec: worker_keys.secret_key().to_bech32().expect("worker nsec"),
                 coordinator_npub,
                 worker_relays: vec![RelayUrl::parse("wss://relay.example.com").expect("relay")],
+                worker_dm_relays: vec![RelayUrl::parse("wss://relay.example.com").expect("relay")],
                 worker_relays_from_env: true,
+                worker_dm_relays_from_env: true,
                 worker_state_dir: state_dir.clone(),
                 heartbeat_seconds: 30,
                 poll_seconds: 5,
@@ -3641,6 +4028,118 @@ mod tests {
     }
 
     #[test]
+    fn blind_response_proof_verification_uses_public_definition_key() {
+        let questionnaire_id = "q_verify_proof";
+        let (definition, keypair) = test_definition_and_keypair(questionnaire_id);
+        let election = ElectionRuntimeState {
+            election_id: questionnaire_id.to_string(),
+            definition: Some(definition),
+            ..ElectionRuntimeState::default()
+        };
+        let submission = signed_submission(
+            &keypair,
+            questionnaire_id,
+            "response_valid",
+            "commitment_valid",
+            "nullifier_valid",
+        );
+
+        assert!(verify_blind_response_proofs(&election, &submission));
+
+        let mut tampered = submission.clone();
+        tampered.token_proof.token_commitment = "commitment_tampered".to_string();
+        assert!(!verify_blind_response_proofs(&election, &tampered));
+
+        let mut tampered_scope = submission.clone();
+        tampered_scope.token_proof.ballot_scope = Some(json!({
+            "questionId": "q1",
+            "slotId": "q1:2",
+            "slotIndex": 2,
+            "version": 1
+        }));
+        assert!(!verify_blind_response_proofs(&election, &tampered_scope));
+    }
+
+    #[tokio::test]
+    async fn handle_submission_requires_valid_proof_and_rejects_commitment_replay() {
+        let questionnaire_id = "q_handle_verified_submission";
+        let (definition, keypair) = test_definition_and_keypair(questionnaire_id);
+        let coordinator_keys = Keys::generate();
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            questionnaire_id.to_string(),
+            ElectionRuntimeState {
+                election_id: questionnaire_id.to_string(),
+                delegation_id: "delegation_verified_submission".to_string(),
+                definition: Some(definition),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+
+        let mut invalid = signed_submission(
+            &keypair,
+            questionnaire_id,
+            "response_invalid",
+            "commitment_invalid",
+            "nullifier_invalid",
+        );
+        invalid.token_proof.signature = "00".to_string();
+        assert!(runtime
+            .handle_submission(invalid)
+            .await
+            .expect("handle invalid"));
+        {
+            let state = runtime.state.lock().await;
+            let election = state.elections.get(questionnaire_id).expect("election");
+            assert_eq!(election.accepted_response_count, 0);
+            assert_eq!(election.rejected_response_count, 1);
+            assert!(election.accepted_token_commitments.is_empty());
+        }
+
+        let valid = signed_submission(
+            &keypair,
+            questionnaire_id,
+            "response_valid",
+            "commitment_replay_test",
+            "nullifier_valid",
+        );
+        assert!(runtime
+            .handle_submission(valid.clone())
+            .await
+            .expect("handle valid"));
+        {
+            let state = runtime.state.lock().await;
+            let election = state.elections.get(questionnaire_id).expect("election");
+            assert_eq!(election.accepted_response_count, 1);
+            assert_eq!(election.rejected_response_count, 1);
+            assert!(election
+                .accepted_token_commitments
+                .contains("commitment_replay_test"));
+        }
+
+        let replay_with_new_nullifier = QuestionnaireBlindResponseEvent {
+            response_id: "response_replay".to_string(),
+            token_nullifier: "nullifier_changed".to_string(),
+            author_pubkey: "response_replay_author".to_string(),
+            ..valid
+        };
+        assert!(runtime
+            .handle_submission(replay_with_new_nullifier)
+            .await
+            .expect("handle replay"));
+        {
+            let state = runtime.state.lock().await;
+            let election = state.elections.get(questionnaire_id).expect("election");
+            assert_eq!(election.accepted_response_count, 1);
+            assert_eq!(election.rejected_response_count, 2);
+            assert!(!election.accepted_nullifiers.contains("nullifier_changed"));
+        }
+
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[test]
     fn status_active_election_ignores_completed_rounds() {
         let mut completed_round = active_public_submission_election();
         completed_round.election_id = "q_completed_round".to_string();
@@ -3811,7 +4310,6 @@ mod tests {
         assert_eq!(issuance.election_id, request.election_id);
         assert_eq!(issuance.request_id, request.request_id);
         assert_eq!(issuance.invited_npub, request.invited_npub);
-        assert_eq!(issuance.token_commitment, request.token_commitment);
         assert_eq!(issuance.blind_signing_key_id, request.blind_signing_key_id);
         assert_eq!(
             issuance.blind_signature,
@@ -4151,6 +4649,85 @@ mod tests {
                 "wss://relay.0xchat.com".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn private_dm_relay_filter_excludes_public_only_relays() {
+        assert!(is_private_dm_rejecting_relay("wss://relay.nostr.info"));
+        assert!(is_private_dm_rejecting_relay("wss://relay.nostr.info/"));
+        assert!(!is_private_dm_rejecting_relay("wss://relay.nostr.net"));
+        assert!(!is_private_dm_rejecting_relay("wss://nos.lol"));
+    }
+
+    #[test]
+    fn result_summary_tags_include_q_index() {
+        let tags = result_summary_tags("q_summary_test", "npub1worker", "npub1coordinator");
+        assert!(tags.contains(&vec![
+            "q".to_string(),
+            "q_summary_test".to_string(),
+        ]));
+        assert!(tags.contains(&vec![
+            "questionnaire-id".to_string(),
+            "q_summary_test".to_string(),
+        ]));
+    }
+
+    #[tokio::test]
+    async fn effective_private_relays_exclude_public_only_delegated_relays() {
+        let coordinator_keys = Keys::generate();
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_worker_definition".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_worker_definition".to_string(),
+                expires_at: (Utc::now() + ChronoDuration::days(1)).to_rfc3339(),
+                control_relays: vec![
+                    "wss://relay.nostr.info".to_string(),
+                    "wss://relay.nostr.net".to_string(),
+                    "wss://nos.lol".to_string(),
+                ],
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+
+        let relays = runtime
+            .effective_worker_private_relays()
+            .await
+            .into_iter()
+            .map(|relay| normalize_relay_key(&relay.to_string()))
+            .collect::<Vec<_>>();
+
+        assert!(!relays.contains(&"wss://relay.nostr.info".to_string()));
+        assert!(relays.contains(&"wss://relay.nostr.net".to_string()));
+        assert!(relays.contains(&"wss://nos.lol".to_string()));
+
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn malformed_blind_request_control_messages_are_not_marked_handled() {
+        let coordinator_keys = Keys::generate();
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+
+        let single_handled = runtime
+            .process_control_message(
+                r#"{"type":"optiona_blind_request_dm","schemaVersion":1,"request":{"type":"blind_ballot_request"}}"#,
+            )
+            .await
+            .expect("process malformed single blind request");
+        assert!(!single_handled);
+
+        let bundle_handled = runtime
+            .process_control_message(
+                r#"{"type":"optiona_blind_request_bundle_dm","schemaVersion":1,"requests":[{"type":"blind_ballot_request"}]}"#,
+            )
+            .await
+            .expect("process malformed blind request bundle");
+        assert!(!bundle_handled);
+
+        fs::remove_dir_all(state_dir).ok();
     }
 
     #[test]

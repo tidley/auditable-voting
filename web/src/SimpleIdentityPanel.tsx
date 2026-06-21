@@ -7,6 +7,7 @@ export default function SimpleIdentityPanel({
   nsec,
   title = 'Identity',
   onRestoreNsec,
+  onLogin,
   restoreMessage,
   onDownloadBackup,
   onRestoreBackupFile,
@@ -21,6 +22,7 @@ export default function SimpleIdentityPanel({
   nsec?: string;
   title?: string;
   onRestoreNsec?: (nsec: string) => void;
+  onLogin?: () => void;
   restoreMessage?: string | null;
   onDownloadBackup?: (passphrase?: string) => void | Promise<void>;
   onRestoreBackupFile?: (
@@ -108,7 +110,7 @@ export default function SimpleIdentityPanel({
   }
 
   return (
-    <SimpleCollapsibleSection title={title}>
+    <SimpleCollapsibleSection title={title} hideToggle>
       <div className='simple-identity-grid'>
         <div className='simple-identity-qr-wrap'>
           {qrSrc ? (
@@ -155,7 +157,7 @@ export default function SimpleIdentityPanel({
                   className='simple-voter-secondary'
                   onClick={() => setShowPrivateKey((value) => !value)}
                 >
-                  {showPrivateKey ? 'Hide' : 'Click to reveal'}
+                  {showPrivateKey ? 'Conceal' : 'Click to reveal'}
                 </button>
               </div>
             ) : (
@@ -193,6 +195,18 @@ export default function SimpleIdentityPanel({
               {restoreMessage ? (
                 <p className='simple-voter-note'>{restoreMessage}</p>
               ) : null}
+            </div>
+          ) : null}
+          {onLogin ? (
+            <div className='simple-identity-restore'>
+              <div className='simple-identity-label'>Login</div>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={onLogin}
+              >
+                Login
+              </button>
             </div>
           ) : null}
           {onDownloadBackup || onRestoreBackupFile ? (

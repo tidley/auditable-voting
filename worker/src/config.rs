@@ -8,13 +8,16 @@ const DEFAULT_WORKER_RELAYS: &[&str] = &[
     "wss://nos.lol",
     "wss://relay.nostr.info",
 ];
+const DEFAULT_WORKER_DM_RELAYS: &[&str] = &["wss://relay.nostr.net", "wss://nos.lol"];
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub worker_nsec: String,
     pub coordinator_npub: String,
     pub worker_relays: Vec<RelayUrl>,
+    pub worker_dm_relays: Vec<RelayUrl>,
     pub worker_relays_from_env: bool,
+    pub worker_dm_relays_from_env: bool,
     pub worker_state_dir: PathBuf,
     pub heartbeat_seconds: u64,
     pub poll_seconds: u64,
@@ -28,6 +31,10 @@ impl WorkerConfig {
         let (raw_relays, worker_relays_from_env) = match env::var("WORKER_RELAYS") {
             Ok(value) => (value, true),
             Err(_) => (DEFAULT_WORKER_RELAYS.join(","), false),
+        };
+        let (raw_dm_relays, worker_dm_relays_from_env) = match env::var("WORKER_DM_RELAYS") {
+            Ok(value) => (value, true),
+            Err(_) => (DEFAULT_WORKER_DM_RELAYS.join(","), false),
         };
         let worker_state_dir = env::var("WORKER_STATE_DIR")
             .map(PathBuf::from)
@@ -43,13 +50,16 @@ impl WorkerConfig {
             .unwrap_or(5)
             .max(5);
 
-        let worker_relays = parse_relays(&raw_relays)?;
+        let worker_relays = parse_relays("WORKER_RELAYS", &raw_relays)?;
+        let worker_dm_relays = parse_relays("WORKER_DM_RELAYS", &raw_dm_relays)?;
 
         Ok(Self {
             worker_nsec,
             coordinator_npub,
             worker_relays,
+            worker_dm_relays,
             worker_relays_from_env,
+            worker_dm_relays_from_env,
             worker_state_dir,
             heartbeat_seconds,
             poll_seconds,
@@ -57,7 +67,7 @@ impl WorkerConfig {
     }
 }
 
-fn parse_relays(value: &str) -> Result<Vec<RelayUrl>> {
+fn parse_relays(env_name: &str, value: &str) -> Result<Vec<RelayUrl>> {
     let mut relays: Vec<RelayUrl> = Vec::new();
     for relay in value
         .split(',')
@@ -68,7 +78,7 @@ fn parse_relays(value: &str) -> Result<Vec<RelayUrl>> {
         relays.push(url);
     }
     if relays.is_empty() {
-        return Err(anyhow!("WORKER_RELAYS resolved to an empty relay list"));
+        return Err(anyhow!("{env_name} resolved to an empty relay list"));
     }
     Ok(relays)
 }

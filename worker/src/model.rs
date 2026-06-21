@@ -186,7 +186,6 @@ pub struct BlindBallotRequest {
     pub request_id: String,
     pub invited_npub: String,
     pub blinded_message: String,
-    pub token_commitment: String,
     pub blind_signing_key_id: String,
     pub client_nonce: String,
     pub created_at: String,
@@ -240,7 +239,6 @@ pub struct BlindBallotIssuance {
     pub request_id: String,
     pub issuance_id: String,
     pub invited_npub: String,
-    pub token_commitment: String,
     pub blind_signing_key_id: String,
     pub blind_signature: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -282,6 +280,28 @@ pub struct BlindBallotIssuanceBundleEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BlindTokenProof {
+    pub token_commitment: String,
+    pub questionnaire_id: String,
+    pub signature: String,
+    #[serde(default)]
+    pub question_id: Option<String>,
+    #[serde(default)]
+    pub ballot_scope: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindTokenNullifier {
+    #[serde(default)]
+    pub question_id: Option<String>,
+    pub token_nullifier: String,
+    #[serde(default)]
+    pub ballot_scope: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QuestionnaireBlindResponseEvent {
     pub schema_version: u8,
     pub event_type: String,
@@ -290,6 +310,11 @@ pub struct QuestionnaireBlindResponseEvent {
     pub submitted_at: i64,
     pub author_pubkey: String,
     pub token_nullifier: String,
+    #[serde(default)]
+    pub token_nullifiers: Vec<BlindTokenNullifier>,
+    pub token_proof: BlindTokenProof,
+    #[serde(default)]
+    pub token_proofs: Vec<BlindTokenProof>,
     #[serde(default)]
     pub answers: Vec<serde_json::Value>,
 }
@@ -328,6 +353,8 @@ pub struct ElectionRuntimeState {
     pub processed_submission_ids: HashSet<String>,
     #[serde(default)]
     pub accepted_nullifiers: HashSet<String>,
+    #[serde(default)]
+    pub accepted_token_commitments: HashSet<String>,
     #[serde(default)]
     pub published_decisions: HashMap<String, String>,
     #[serde(default)]

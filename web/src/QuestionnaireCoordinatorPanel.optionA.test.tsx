@@ -302,6 +302,26 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect((document.querySelector("#delegated-worker-relays") as HTMLTextAreaElement | null)?.value).toContain("wss://relay.nostr.net");
   });
 
+  it("shows separate public and private DM relay lists in the worker quick start command", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
+
+    const quickStart = await screen.findByLabelText("Quick start command") as HTMLTextAreaElement;
+    expect(quickStart.value).toContain("WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info");
+    expect(quickStart.value).toContain("WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol");
+    expect(quickStart.value).not.toContain("WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info");
+  });
+
   it("shows locally known organiser questionnaires in the live status selector", async () => {
     const coordinatorNpub = "npub1organiser";
     upsertElectionSummary({
@@ -351,8 +371,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
     await waitFor(() => {
       const optionText = [...selector.options].map((option) => option.textContent ?? "");
-      expect(optionText.some((text) => text.includes("First local questionnaire - q_first_local"))).toBe(true);
-      expect(optionText.some((text) => text.includes("Second local questionnaire - q_second_local"))).toBe(true);
+      expect(optionText).toEqual([
+        "1. First local questionnaire - q_first_local",
+        "2. Second local questionnaire - q_second_local",
+      ]);
       expect(optionText.some((text) => text.includes("Other organiser questionnaire"))).toBe(false);
       expect(optionText.some((text) => text.includes("Stale mismatched questionnaire"))).toBe(false);
     });
@@ -365,7 +387,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.queryByRole("button", { name: "Publish results" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close + publish results" })).toBeNull();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
-    expect(screen.getByText("Publish a questionnaire to inspect results.")).toBeTruthy();
+    expect(screen.queryByText("Publish a questionnaire to inspect results.")).toBeNull();
   });
 
   it("prefers the published summary title over a cached draft title in the live status selector", async () => {
@@ -515,18 +537,18 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
 
     await waitFor(() => {
-      expect(selector.options[0]?.textContent).toBe("Live draft - q_live_draft");
+      expect(selector.options[0]?.textContent).toBe("1. Live draft - q_live_draft");
     });
 
     fireEvent.change(titleInput, { target: { value: "Edited live draft" } });
     await waitFor(() => {
-      expect(selector.options[0]?.textContent).toBe("Edited live draft - q_live_draft");
+      expect(selector.options[0]?.textContent).toBe("1. Edited live draft - q_live_draft");
     });
 
     fireEvent.change(questionnaireIdInput, { target: { value: "q_edited_live" } });
     await waitFor(() => {
       expect([...selector.options].map((option) => option.value)).toEqual(["q_edited_live"]);
-      expect(selector.options[0]?.textContent).toBe("Edited live draft - q_edited_live");
+      expect(selector.options[0]?.textContent).toBe("1. Edited live draft - q_edited_live");
     });
   });
 
@@ -707,7 +729,14 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       coordinatorNpub,
     });
 
-    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
+    const onReadinessChange = vi.fn();
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        onReadinessChange={onReadinessChange}
+      />,
+    );
 
     const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
@@ -719,7 +748,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(titleInput.matches(":disabled")).toBe(false);
     expect(questionnaireIdInput.matches(":disabled")).toBe(false);
     expect(generateIdButton.matches(":disabled")).toBe(false);
-    expect(screen.getByText("Questionnaire not yet published")).toBeTruthy();
+    await waitFor(() => expect(onReadinessChange).toHaveBeenCalled());
+    const latestReadiness = onReadinessChange.mock.calls.at(-1)?.[0] ?? [];
+    expect(latestReadiness.find((item: { id: string }) => item.id === "publish")).toMatchObject({
+      label: "Published",
+      complete: false,
+    });
   });
 
   it("configures the audit proxy from the just-published definition instead of stale cached definition state", async () => {

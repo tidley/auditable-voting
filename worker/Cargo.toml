@@ -13,7 +13,7 @@ crypto-bigint = "0.7.3"
 flate2 = "1.0"
 nostr-sdk = { version = "0.44.1", features = ["nip59"] }
 rand = "0.9"
-rsa = "0.10.0-rc.15"
+rsa = "0.10.0-rc.16"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"

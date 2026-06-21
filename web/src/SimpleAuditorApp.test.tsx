@@ -70,6 +70,33 @@ describe("SimpleAuditorApp", () => {
       );
     });
   });
+
+  it("uses a paginated response target derived from published result totals", async () => {
+    setupTransportMocks();
+    transportMocks.fetchQuestionnaireResultSummary.mockImplementation(async (input?: { questionnaireId?: string }) => {
+      const questionnaireId = input?.questionnaireId?.trim();
+      return questionnaireId ? [makeResultSummaryEntry(questionnaireId, 1200, 0)] : [];
+    });
+    const { default: SimpleAuditorApp } = await import("./SimpleAuditorApp");
+
+    render(<SimpleAuditorApp />);
+
+    await waitFor(() => {
+      expect(transportMocks.fetchQuestionnaireBlindResponses).toHaveBeenCalledWith(
+        expect.objectContaining({
+          questionnaireId: "q_first",
+          readRelayLimit: 5,
+          maxPages: 32,
+          timeBudgetMs: 30_000,
+        }),
+      );
+    });
+    const firstResponseFetch = transportMocks.fetchQuestionnaireBlindResponses.mock.calls
+      .map(([input]) => input as { questionnaireId: string; limit: number })
+      .find((input) => input.questionnaireId === "q_first");
+
+    expect(firstResponseFetch?.limit).toBeGreaterThanOrEqual(1320);
+  });
 });
 
 function setupTransportMocks() {
@@ -151,6 +178,31 @@ function makeResponseEntry(questionnaireId: string) {
         signature: "signature",
       },
       answers: [],
+    },
+  };
+}
+
+function makeResultSummaryEntry(questionnaireId: string, acceptedResponseCount: number, rejectedResponseCount: number) {
+  return {
+    event: {
+      id: `result_${questionnaireId}`,
+      kind: 30_105,
+      pubkey: "npub1worker",
+      created_at: 1_777_000_400,
+      tags: [["q", questionnaireId]],
+      content: "",
+      sig: "sig",
+    },
+    summary: {
+      schemaVersion: 1,
+      eventType: "questionnaire_result_summary",
+      questionnaireId,
+      createdAt: 1_777_000_400,
+      coordinatorPubkey: "npub1organiser",
+      acceptedResponseCount,
+      rejectedResponseCount,
+      acceptedNullifierCount: acceptedResponseCount,
+      questionSummaries: [],
     },
   };
 }

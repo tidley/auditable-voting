@@ -265,21 +265,23 @@
     }
 
     .summary-card {
-      background: #f6f2e8;
-      color: #0c1516;
+      background: rgba(16, 27, 31, 0.94);
+      color: var(--text);
       border-radius: var(--radius);
       padding: 22px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--accent);
+      box-shadow: 0 20px 80px rgba(0, 0, 0, 0.18);
     }
 
     .summary-card h2 {
-      color: #0c1516;
+      color: var(--text);
       font-size: 1.45rem;
     }
 
     .summary-card p,
     .summary-card li {
-      color: #2f3c3c;
+      color: var(--muted);
     }
 
     ol.clean,
@@ -304,12 +306,12 @@
 
     .summary-card ol.clean li,
     .summary-card ul.clean li {
-      color: #2f3c3c;
+      color: var(--muted);
     }
 
     .summary-card ol.clean li::marker,
     .summary-card ul.clean li::marker {
-      color: #536664;
+      color: var(--accent);
       font-weight: 700;
     }
 

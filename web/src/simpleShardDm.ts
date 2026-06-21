@@ -38,7 +38,6 @@ import {
 export const SIMPLE_DM_RELAYS = [
   'wss://relay.nostr.net',
   'wss://nos.lol',
-  'wss://relay.nostr.info',
 ];
 
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;

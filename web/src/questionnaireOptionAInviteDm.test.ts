@@ -76,7 +76,7 @@ describe("questionnaireOptionAInviteDm", () => {
       kind: 10050,
       pubkey: "a".repeat(64),
       created_at: 123,
-      tags: [["relay", "wss://amethyst-inbox.example"], ["relay", "wss://nip17.com"]],
+      tags: [["relay", "wss://amethyst-inbox.example"], ["relay", "wss://nip17.com"], ["relay", "wss://relay.nostr.info"]],
       content: "",
       id: "relay-list",
       sig: "sig",
@@ -107,6 +107,7 @@ describe("questionnaireOptionAInviteDm", () => {
 
     expect(publishedRelays[0]).toBe("wss://amethyst-inbox.example");
     expect(publishedRelays).toContain("wss://nip17.com");
+    expect(publishedRelays).not.toContain("wss://relay.nostr.info");
   });
 
   it("publishes fallback-key invites as addressed NIP-17 private messages", async () => {

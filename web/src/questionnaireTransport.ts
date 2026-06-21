@@ -404,9 +404,11 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
   entries: QuestionnaireBlindResponseEntry[];
   decisionEntries?: QuestionnaireSubmissionDecisionEntry[];
   verifiedResponseIds?: Iterable<string>;
+  requireVerifiedProofs?: boolean;
 }) {
   const ordered = dedupeBlindResponseEntries(input.entries);
   const verifiedResponseIds = new Set(Array.from(input.verifiedResponseIds ?? []).map((entry) => entry.trim()).filter(Boolean));
+  const requireVerifiedProofs = input.requireVerifiedProofs ?? Boolean(input.verifiedResponseIds);
   const latestDecisionBySubmissionId = new Map<string, QuestionnaireSubmissionDecisionEntry>();
   for (const entry of input.decisionEntries ?? []) {
     const submissionId = entry.decision.submissionId.trim();
@@ -425,9 +427,19 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
   for (const entry of ordered) {
     const responseId = entry.response.responseId.trim();
     const explicitDecision = latestDecisionBySubmissionId.get(responseId);
+    const proofVerified = Boolean(responseId && verifiedResponseIds.has(responseId));
+    if (requireVerifiedProofs && !proofVerified) {
+      decisions.push({
+        ...entry,
+        accepted: false,
+        rejectionReason: "invalid_token_proof",
+        decidedAt: explicitDecision?.decision.accepted === false ? explicitDecision.decision.decidedAt : null,
+        decisionEventId: explicitDecision?.decision.accepted === false ? explicitDecision.event.id : null,
+      });
+      continue;
+    }
     const verifiedResponseOverridesInvalidProof = Boolean(
-      responseId
-      && verifiedResponseIds.has(responseId)
+      proofVerified
       && explicitDecision
       && !explicitDecision.decision.accepted
       && explicitDecision.decision.reason === "invalid_token_proof",
@@ -501,7 +513,8 @@ export async function verifyQuestionnaireBlindResponseProofs(input: {
   entries: QuestionnaireBlindResponseEntry[];
   publicKey?: QuestionnaireBlindPublicKey | null;
 }) {
-  if (!input.publicKey) {
+  const publicKey = input.publicKey ?? null;
+  if (!publicKey) {
     return new Set<string>();
   }
   const verifiedResponseIds = new Set<string>();
@@ -512,7 +525,7 @@ export async function verifyQuestionnaireBlindResponseProofs(input: {
     }
     const proofs = responseTokenProofs(entry.response);
     const valid = (await Promise.all(proofs.map((proof) => verifyQuestionnaireBlindSignature({
-      publicKey: input.publicKey,
+      publicKey,
       message: buildQuestionnaireBlindTokenSignedMessage({
         questionnaireId: entry.response.questionnaireId,
         tokenSecretCommitment: proof.tokenCommitment,

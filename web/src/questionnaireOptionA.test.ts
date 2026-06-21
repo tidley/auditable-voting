@@ -79,7 +79,6 @@ function makeBlindRequest(requestId = "request-1"): BlindBallotRequest {
     requestId,
     invitedNpub: voterNpub,
     blindedMessage: "blinded-msg",
-    tokenCommitment: "token-commitment-1",
     blindSigningKeyId: "blind-key-1",
     clientNonce: "nonce-1",
     createdAt: nowIso,
@@ -94,7 +93,6 @@ function makeIssuance(requestId = "request-1", issuanceId = "issuance-1"): Blind
     requestId,
     issuanceId,
     invitedNpub: voterNpub,
-    tokenCommitment: "token-commitment-1",
     blindSigningKeyId: "blind-key-1",
     blindSignature: "blind-signature",
     issuedAt: nowIso,
@@ -611,7 +609,7 @@ describe("questionnaireOptionA", () => {
       persisted: coordinator,
       canonicalIssuances: { "request-1": makeIssuance("request-1", "issuance-1") },
     });
-    expect(restoredCoordinator.whitelist[voterNpub]?.claimState).toBe("vote_accepted");
+    expect(restoredCoordinator.whitelist[voterNpub]?.claimState).toBe("blind_signature_issued");
     expect(countAcceptedUniqueVoters(restoredCoordinator)).toBe(1);
 
     const restoredWithCanonicalRequest = restoreCoordinatorElectionState({
@@ -670,6 +668,81 @@ describe("questionnaireOptionA", () => {
     });
     expect(restoredVoter.credentialReady).toBe(true);
     expect(restoredVoter.submissionAccepted).toBe(true);
+  });
+
+  it("does not expose final token commitments in blind request or issuance transport", () => {
+    expect(makeBlindRequest()).not.toHaveProperty("tokenCommitment");
+    expect(makeIssuance()).not.toHaveProperty("tokenCommitment");
+  });
+
+  it("strips legacy token commitments from blind request and issuance state", () => {
+    const legacyRequest = {
+      ...makeBlindRequest("request-legacy"),
+      tokenCommitment: "legacy-request-leak",
+      ballotScope: {
+        questionId: "q1",
+        slotId: "q1",
+        slotIndex: 1,
+        version: 1,
+        tokenCommitment: "legacy-nested-leak",
+      },
+    } as unknown as BlindBallotRequest;
+    const legacyIssuance = {
+      ...makeIssuance("request-legacy", "issuance-legacy"),
+      tokenCommitment: "legacy-issuance-leak",
+      ballotScope: {
+        questionId: "q1",
+        slotId: "q1",
+        slotIndex: 1,
+        version: 1,
+        tokenCommitment: "legacy-nested-leak",
+      },
+    } as unknown as BlindBallotIssuance;
+
+    const voterInit = createEmptyVoterElectionLocalState({
+      electionId,
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      now: nowIso,
+    });
+    const voterLoggedIn = reduceVoterEvent(voterInit, {
+      type: "LOGIN_VERIFIED",
+      electionId,
+      npub: voterNpub,
+      verifiedAt: nowIso,
+    }).state;
+    const voterRequested = reduceVoterEvent(voterLoggedIn, {
+      type: "BLIND_REQUEST_CREATED",
+      request: legacyRequest,
+    }).state;
+    expect(voterRequested.blindRequest as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    expect(voterRequested.blindRequest?.ballotScope as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    const voterIssued = reduceVoterEvent(voterRequested, {
+      type: "BLIND_ISSUANCE_RECEIVED",
+      issuance: legacyIssuance,
+    }).state;
+    expect(voterIssued.blindIssuance as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    expect(voterIssued.blindIssuance?.ballotScope as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+
+    let coordinator = makeCoordinatorState();
+    coordinator = reduceCoordinatorEvent(coordinator, { type: "WHITELIST_ADDED", entry: makeWhitelistEntry() }).state;
+    coordinator = reduceCoordinatorEvent(coordinator, {
+      type: "LOGIN_VERIFIED",
+      electionId,
+      invitedNpub: voterNpub,
+    }).state;
+    coordinator = reduceCoordinatorEvent(coordinator, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request: legacyRequest,
+    }).state;
+    expect(coordinator.pendingBlindRequests["request-legacy"] as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    expect(coordinator.pendingBlindRequests["request-legacy"]?.ballotScope as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    coordinator = reduceCoordinatorEvent(coordinator, {
+      type: "BLIND_SIGNATURE_ISSUED",
+      issuance: legacyIssuance,
+    }).state;
+    expect(coordinator.issuedBlindResponses["request-legacy"] as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    expect(coordinator.issuedBlindResponses["request-legacy"]?.ballotScope as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
   });
 
   it("allows blind request intake before publish and blocks when closed", () => {

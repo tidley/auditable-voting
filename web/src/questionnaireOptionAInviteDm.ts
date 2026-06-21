@@ -25,6 +25,9 @@ const KIND_NIP17_RELAY_LIST = 10050;
 const INVITE_PAYLOAD_TAG = "optiona_invite_payload";
 const OPTION_A_INVITE_DM_QUERY_MAX_CONCURRENCY = 2;
 const OPTION_A_INVITE_DM_RELAY_BACKOFF_MS = 60 * 1000;
+const OPTION_A_INVITE_DM_REJECTING_RELAYS = new Set([
+  "wss://relay.nostr.info",
+]);
 
 const optionAInviteDmRelayCooldownUntil = new Map<string, number>();
 const optionAInviteDmInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
@@ -175,17 +178,21 @@ function buildRelays(relays?: string[]) {
 }
 
 function selectReadRelays(relays: string[], maxRelays = OPTION_A_INVITE_DM_READ_RELAYS_MAX) {
-  return relays.slice(0, Math.min(maxRelays, relays.length));
+  const compatibleRelays = relays.filter((relay) => !OPTION_A_INVITE_DM_REJECTING_RELAYS.has(relay));
+  return compatibleRelays.slice(0, Math.min(maxRelays, compatibleRelays.length));
 }
 
 function selectFallbackReadRelays(relays: string[], primaryRelays: string[], maxRelays = OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX) {
   const primarySet = new Set(primaryRelays);
-  const fallbackOnly = relays.filter((relay) => !primarySet.has(relay));
+  const fallbackOnly = relays.filter((relay) => (
+    !primarySet.has(relay) && !OPTION_A_INVITE_DM_REJECTING_RELAYS.has(relay)
+  ));
   return fallbackOnly.slice(0, Math.min(maxRelays, fallbackOnly.length));
 }
 
 function selectPublishRelays(relays: string[]) {
-  return relays.slice(0, Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, relays.length));
+  const compatibleRelays = relays.filter((relay) => !OPTION_A_INVITE_DM_REJECTING_RELAYS.has(relay));
+  return compatibleRelays.slice(0, Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, compatibleRelays.length));
 }
 
 function selectHintRelays(relays: string[]) {

@@ -143,7 +143,6 @@ export interface BlindBallotRequest {
   requestId: RequestId;
   invitedNpub: Npub;
   blindedMessage: string;
-  tokenCommitment: string;
   blindSigningKeyId: string;
   clientNonce: string;
   createdAt: IsoTime;
@@ -159,7 +158,6 @@ export interface BlindBallotIssuance {
   requestId: RequestId;
   issuanceId: IssuanceId;
   invitedNpub: Npub;
-  tokenCommitment: string;
   blindSigningKeyId: string;
   blindSignature: string;
   definitionHash?: Hex | null;
@@ -342,8 +340,8 @@ function cloneCoordinatorState(state: CoordinatorElectionState): CoordinatorElec
     ...state,
     whitelist: { ...state.whitelist },
     bearerInviteCodes: { ...(state.bearerInviteCodes ?? {}) },
-    pendingBlindRequests: { ...state.pendingBlindRequests },
-    issuedBlindResponses: { ...state.issuedBlindResponses },
+    pendingBlindRequests: sanitiseBlindBallotRequestRecord(state.pendingBlindRequests),
+    issuedBlindResponses: sanitiseBlindBallotIssuanceRecord(state.issuedBlindResponses),
     receivedSubmissions: { ...state.receivedSubmissions },
     acceptedNullifiers: { ...state.acceptedNullifiers },
     acceptanceResults: { ...state.acceptanceResults },
@@ -355,8 +353,10 @@ function cloneVoterState(state: VoterElectionLocalState): VoterElectionLocalStat
   return {
     ...state,
     blindTokenSecret: state.blindTokenSecret ? { ...state.blindTokenSecret } : null,
-    blindRequests: { ...(state.blindRequests ?? {}) },
-    blindIssuances: { ...(state.blindIssuances ?? {}) },
+    blindRequest: state.blindRequest ? sanitiseBlindBallotRequest(state.blindRequest) : null,
+    blindIssuance: state.blindIssuance ? sanitiseBlindBallotIssuance(state.blindIssuance) : null,
+    blindRequests: sanitiseBlindBallotRequestRecordPreservingKeys(state.blindRequests ?? {}),
+    blindIssuances: sanitiseBlindBallotIssuanceRecordPreservingKeys(state.blindIssuances ?? {}),
     blindTokenSecrets: { ...(state.blindTokenSecrets ?? {}) },
     submissions: { ...(state.submissions ?? {}) },
     submissionDecisions: { ...(state.submissionDecisions ?? {}) },
@@ -366,6 +366,127 @@ function cloneVoterState(state: VoterElectionLocalState): VoterElectionLocalStat
 
 function maxClaimState(left: WhitelistClaimState, right: WhitelistClaimState): WhitelistClaimState {
   return CLAIM_STATE_ORDER[left] >= CLAIM_STATE_ORDER[right] ? left : right;
+}
+
+function sanitiseBallotScope(scope: BallotScope | null | undefined): BallotScope | null {
+  if (!scope || typeof scope !== "object") {
+    return null;
+  }
+  const next: BallotScope = {};
+  if (typeof scope.questionId === "string") {
+    next.questionId = scope.questionId;
+  } else if (scope.questionId === null) {
+    next.questionId = null;
+  }
+  if (typeof scope.slotId === "string") {
+    next.slotId = scope.slotId;
+  } else if (scope.slotId === null) {
+    next.slotId = null;
+  }
+  if (typeof scope.slotIndex === "number" && Number.isFinite(scope.slotIndex)) {
+    next.slotIndex = Math.max(1, Math.floor(scope.slotIndex));
+  } else if (scope.slotIndex === null) {
+    next.slotIndex = null;
+  }
+  if (typeof scope.version === "number" && Number.isFinite(scope.version)) {
+    next.version = Math.max(1, Math.floor(scope.version));
+  } else if (scope.version === null) {
+    next.version = null;
+  }
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+export function sanitiseBlindBallotRequest(request: BlindBallotRequest): BlindBallotRequest {
+  const next: BlindBallotRequest = {
+    type: "blind_ballot_request",
+    schemaVersion: 1,
+    electionId: request.electionId,
+    requestId: request.requestId,
+    invitedNpub: request.invitedNpub,
+    blindedMessage: request.blindedMessage,
+    blindSigningKeyId: request.blindSigningKeyId,
+    clientNonce: request.clientNonce,
+    createdAt: request.createdAt,
+  };
+  if (request.inviteCodeHash !== undefined) {
+    next.inviteCodeHash = request.inviteCodeHash ?? null;
+  }
+  if (request.ballotScope !== undefined) {
+    next.ballotScope = sanitiseBallotScope(request.ballotScope);
+  }
+  if (request.lastSentAt !== undefined) {
+    next.lastSentAt = request.lastSentAt ?? null;
+  }
+  return next;
+}
+
+export function sanitiseBlindBallotIssuance(issuance: BlindBallotIssuance): BlindBallotIssuance {
+  const next: BlindBallotIssuance = {
+    type: "blind_ballot_response",
+    schemaVersion: 1,
+    electionId: issuance.electionId,
+    requestId: issuance.requestId,
+    issuanceId: issuance.issuanceId,
+    invitedNpub: issuance.invitedNpub,
+    blindSigningKeyId: issuance.blindSigningKeyId,
+    blindSignature: issuance.blindSignature,
+    issuedAt: issuance.issuedAt,
+  };
+  if (issuance.definitionHash !== undefined) {
+    next.definitionHash = issuance.definitionHash ?? null;
+  }
+  if (issuance.definitionEventId !== undefined) {
+    next.definitionEventId = issuance.definitionEventId ?? null;
+  }
+  if (issuance.ballotScope !== undefined) {
+    next.ballotScope = sanitiseBallotScope(issuance.ballotScope);
+  }
+  if (issuance.definition !== undefined) {
+    next.definition = issuance.definition ?? null;
+  }
+  return next;
+}
+
+function sanitiseBlindBallotRequestRecord(
+  requests: Record<RequestId, BlindBallotRequest>,
+): Record<RequestId, BlindBallotRequest> {
+  const next: Record<RequestId, BlindBallotRequest> = {};
+  for (const request of Object.values(requests ?? {})) {
+    const sanitised = sanitiseBlindBallotRequest(request);
+    next[sanitised.requestId] = sanitised;
+  }
+  return next;
+}
+
+function sanitiseBlindBallotRequestRecordPreservingKeys(
+  requests: Record<string, BlindBallotRequest>,
+): Record<string, BlindBallotRequest> {
+  const next: Record<string, BlindBallotRequest> = {};
+  for (const [key, request] of Object.entries(requests ?? {})) {
+    next[key] = sanitiseBlindBallotRequest(request);
+  }
+  return next;
+}
+
+function sanitiseBlindBallotIssuanceRecord(
+  issuances: Record<RequestId, BlindBallotIssuance>,
+): Record<RequestId, BlindBallotIssuance> {
+  const next: Record<RequestId, BlindBallotIssuance> = {};
+  for (const issuance of Object.values(issuances ?? {})) {
+    const sanitised = sanitiseBlindBallotIssuance(issuance);
+    next[sanitised.requestId] = sanitised;
+  }
+  return next;
+}
+
+function sanitiseBlindBallotIssuanceRecordPreservingKeys(
+  issuances: Record<string, BlindBallotIssuance>,
+): Record<string, BlindBallotIssuance> {
+  const next: Record<string, BlindBallotIssuance> = {};
+  for (const [key, issuance] of Object.entries(issuances ?? {})) {
+    next[key] = sanitiseBlindBallotIssuance(issuance);
+  }
+  return next;
 }
 
 function findIssuanceByNpub(
@@ -411,6 +532,19 @@ function findIssuanceByNpubAndScope(
   return null;
 }
 
+function findPendingBlindRequestByNpubAndScope(
+  pendingBlindRequests: Record<RequestId, BlindBallotRequest>,
+  invitedNpub: Npub,
+  scope: BallotScope | null | undefined,
+): BlindBallotRequest | null {
+  for (const request of Object.values(pendingBlindRequests)) {
+    if (request.invitedNpub === invitedNpub && sameBallotScope(request.ballotScope, scope)) {
+      return request;
+    }
+  }
+  return null;
+}
+
 function sameBlindBallotRequest(left: BlindBallotRequest, right: BlindBallotRequest) {
   return left.type === right.type
     && left.schemaVersion === right.schemaVersion
@@ -418,41 +552,11 @@ function sameBlindBallotRequest(left: BlindBallotRequest, right: BlindBallotRequ
     && left.requestId === right.requestId
     && left.invitedNpub === right.invitedNpub
     && left.blindedMessage === right.blindedMessage
-    && left.tokenCommitment === right.tokenCommitment
     && left.blindSigningKeyId === right.blindSigningKeyId
     && left.clientNonce === right.clientNonce
     && left.createdAt === right.createdAt
     && (left.inviteCodeHash ?? null) === (right.inviteCodeHash ?? null)
     && sameBallotScope(left.ballotScope, right.ballotScope);
-}
-
-function findIssuanceByTokenCommitment(
-  issuedBlindResponses: Record<RequestId, BlindBallotIssuance>,
-  tokenCommitment: string,
-): BlindBallotIssuance | null {
-  for (const issuance of Object.values(issuedBlindResponses)) {
-    if (issuance.tokenCommitment === tokenCommitment) {
-      return issuance;
-    }
-  }
-  return null;
-}
-
-function findAcceptedSubmissionByNpub(
-  receivedSubmissions: Record<SubmissionId, BallotSubmission>,
-  acceptanceResults: Record<SubmissionId, BallotAcceptanceResult>,
-  invitedNpub: Npub,
-): BallotSubmission | null {
-  for (const [submissionId, result] of Object.entries(acceptanceResults)) {
-    if (!result.accepted) {
-      continue;
-    }
-    const submission = receivedSubmissions[submissionId];
-    if (submission?.invitedNpub === invitedNpub) {
-      return submission;
-    }
-  }
-  return null;
 }
 
 function submissionCredentialBundle(submission: BallotSubmission): BallotCredentialProof[] {
@@ -608,26 +712,27 @@ export function reduceVoterEvent(
   }
 
   if (event.type === "BLIND_REQUEST_CREATED") {
-    if (event.request.electionId !== next.electionId) {
+    const request = sanitiseBlindBallotRequest(event.request);
+    if (request.electionId !== next.electionId) {
       return reduceVoterError(state, "election_id_mismatch");
     }
     if (!next.loginVerified) {
       return reduceVoterError(state, "login_not_verified");
     }
-    const scopeKey = ballotScopeKey(event.request.ballotScope);
+    const scopeKey = ballotScopeKey(request.ballotScope);
     if (
       next.blindIssuances?.[scopeKey]
-      || (next.blindIssuance && sameBallotScope(next.blindIssuance.ballotScope, event.request.ballotScope))
+      || (next.blindIssuance && sameBallotScope(next.blindIssuance.ballotScope, request.ballotScope))
     ) {
       return reduceVoterError(state, "issuance_conflict");
     }
     const existingScopedRequest = next.blindRequests?.[scopeKey] ?? null;
     if (existingScopedRequest) {
-      const sameRequest = sameBlindBallotRequest(existingScopedRequest, event.request);
-      if (sameRequest && existingScopedRequest.lastSentAt !== event.request.lastSentAt) {
+      const sameRequest = sameBlindBallotRequest(existingScopedRequest, request);
+      if (sameRequest && existingScopedRequest.lastSentAt !== request.lastSentAt) {
         const updatedRequest = {
           ...existingScopedRequest,
-          lastSentAt: event.request.lastSentAt ?? existingScopedRequest.lastSentAt ?? null,
+          lastSentAt: request.lastSentAt ?? existingScopedRequest.lastSentAt ?? null,
         };
         next.blindRequests = {
           ...(next.blindRequests ?? {}),
@@ -642,15 +747,15 @@ export function reduceVoterEvent(
         : reduceVoterError(state, "issuance_conflict");
     }
     if (next.blindRequest && ballotScopeKey(next.blindRequest.ballotScope) === "__questionnaire__") {
-      const sameRequest = sameBlindBallotRequest(next.blindRequest, event.request);
+      const sameRequest = sameBlindBallotRequest(next.blindRequest, request);
       return sameRequest
         ? { state: next, ok: true }
         : reduceVoterError(state, "issuance_conflict");
     }
-    next.blindRequest = next.blindRequest ?? event.request;
+    next.blindRequest = next.blindRequest ?? request;
     next.blindRequests = {
       ...(next.blindRequests ?? {}),
-      [scopeKey]: event.request,
+      [scopeKey]: request,
     };
     next.lastUpdatedAt = new Date().toISOString();
     return { state: next, ok: true };
@@ -685,39 +790,40 @@ export function reduceVoterEvent(
   }
 
   if (event.type === "BLIND_ISSUANCE_RECEIVED") {
-    if (event.issuance.electionId !== next.electionId) {
+    const issuance = sanitiseBlindBallotIssuance(event.issuance);
+    if (issuance.electionId !== next.electionId) {
       return reduceVoterError(state, "election_id_mismatch");
     }
-    const issuanceScopeKey = ballotScopeKey(event.issuance.ballotScope);
+    const issuanceScopeKey = ballotScopeKey(issuance.ballotScope);
     const scopedRequest = next.blindRequests?.[issuanceScopeKey] ?? null;
     if (
-      (!next.blindRequest || next.blindRequest.requestId !== event.issuance.requestId)
-      && (!scopedRequest || scopedRequest.requestId !== event.issuance.requestId)
+      (!next.blindRequest || next.blindRequest.requestId !== issuance.requestId)
+      && (!scopedRequest || scopedRequest.requestId !== issuance.requestId)
     ) {
       return reduceVoterError(state, "issuance_conflict");
     }
     const existingScopedIssuance = next.blindIssuances?.[issuanceScopeKey] ?? null;
     if (existingScopedIssuance) {
-      const sameIssuance = existingScopedIssuance.issuanceId === event.issuance.issuanceId
-        && existingScopedIssuance.blindSignature === event.issuance.blindSignature;
+      const sameIssuance = existingScopedIssuance.issuanceId === issuance.issuanceId
+        && existingScopedIssuance.blindSignature === issuance.blindSignature;
       if (!sameIssuance) {
         return reduceVoterError(state, "issuance_conflict");
       }
     }
-    if (next.blindIssuance && sameBallotScope(next.blindIssuance.ballotScope, event.issuance.ballotScope)) {
-      const sameIssuance = next.blindIssuance.issuanceId === event.issuance.issuanceId
-        && next.blindIssuance.blindSignature === event.issuance.blindSignature;
+    if (next.blindIssuance && sameBallotScope(next.blindIssuance.ballotScope, issuance.ballotScope)) {
+      const sameIssuance = next.blindIssuance.issuanceId === issuance.issuanceId
+        && next.blindIssuance.blindSignature === issuance.blindSignature;
       if (!sameIssuance) {
         return reduceVoterError(state, "issuance_conflict");
       }
     }
-    next.blindIssuance = next.blindIssuance ?? event.issuance;
+    next.blindIssuance = next.blindIssuance ?? issuance;
     next.blindIssuances = {
       ...(next.blindIssuances ?? {}),
-      [issuanceScopeKey]: event.issuance,
+      [issuanceScopeKey]: issuance,
     };
     next.credentialReady = true;
-    next.lastUpdatedAt = event.issuance.issuedAt;
+    next.lastUpdatedAt = issuance.issuedAt;
     return { state: next, ok: true };
   }
 
@@ -859,84 +965,93 @@ export function reduceCoordinatorEvent(
   }
 
   if (event.type === "BLIND_REQUEST_RECEIVED") {
-    if (event.request.electionId !== next.election.electionId) {
+    const request = sanitiseBlindBallotRequest(event.request);
+    if (request.electionId !== next.election.electionId) {
       return reduceCoordinatorError(state, "election_id_mismatch");
     }
     if (next.election.state === "closed" || next.election.state === "counted") {
       return reduceCoordinatorError(state, "election_not_open");
     }
-    const entry = next.whitelist[event.request.invitedNpub];
+    const entry = next.whitelist[request.invitedNpub];
     if (!entry) {
       return reduceCoordinatorError(state, "not_whitelisted");
     }
     if (CLAIM_STATE_ORDER[entry.claimState] < CLAIM_STATE_ORDER.claimed) {
       return reduceCoordinatorError(state, "state_transition_rejected");
     }
-    const existingRequest = next.pendingBlindRequests[event.request.requestId];
+    const existingRequest = next.pendingBlindRequests[request.requestId];
     if (existingRequest) {
-      const same = sameBlindBallotRequest(existingRequest, event.request);
+      const same = sameBlindBallotRequest(existingRequest, request);
       if (!same) {
         return reduceCoordinatorError(state, "issuance_conflict");
       }
-      next.pendingBlindRequests[event.request.requestId] = {
+      next.pendingBlindRequests[request.requestId] = {
         ...existingRequest,
-        lastSentAt: event.request.lastSentAt ?? existingRequest.lastSentAt ?? null,
+        lastSentAt: request.lastSentAt ?? existingRequest.lastSentAt ?? null,
       };
-      next.lastUpdatedAt = event.request.lastSentAt ?? event.request.createdAt;
+      next.lastUpdatedAt = request.lastSentAt ?? request.createdAt;
       return { state: next, ok: true };
+    }
+    const existingScopedRequest = findPendingBlindRequestByNpubAndScope(
+      next.pendingBlindRequests,
+      request.invitedNpub,
+      request.ballotScope,
+    );
+    if (existingScopedRequest) {
+      return sameBlindBallotRequest(existingScopedRequest, request)
+        ? { state: next, ok: true }
+        : reduceCoordinatorError(state, "already_issued");
     }
     const existingIssuance = findIssuanceByNpubAndScope(
       next.issuedBlindResponses,
-      event.request.invitedNpub,
-      event.request.ballotScope,
+      request.invitedNpub,
+      request.ballotScope,
     );
     if (existingIssuance) {
       return reduceCoordinatorError(state, "already_issued");
     }
-    next.pendingBlindRequests[event.request.requestId] = event.request;
+    next.pendingBlindRequests[request.requestId] = request;
     entry.claimState = maxClaimState(entry.claimState, "blind_request_received");
-    next.lastUpdatedAt = event.request.createdAt;
+    next.lastUpdatedAt = request.createdAt;
     return { state: next, ok: true };
   }
 
   if (event.type === "BLIND_SIGNATURE_ISSUED") {
-    if (event.issuance.electionId !== next.election.electionId) {
+    const issuance = sanitiseBlindBallotIssuance(event.issuance);
+    if (issuance.electionId !== next.election.electionId) {
       return reduceCoordinatorError(state, "election_id_mismatch");
     }
-    const entry = next.whitelist[event.issuance.invitedNpub];
+    const entry = next.whitelist[issuance.invitedNpub];
     if (!entry) {
       return reduceCoordinatorError(state, "not_whitelisted");
     }
-    const request = next.pendingBlindRequests[event.issuance.requestId];
+    const request = next.pendingBlindRequests[issuance.requestId];
     if (!request) {
       return reduceCoordinatorError(state, "request_missing");
     }
-    if (
-      request.tokenCommitment !== event.issuance.tokenCommitment
-      || request.blindSigningKeyId !== event.issuance.blindSigningKeyId
-    ) {
+    if (request.blindSigningKeyId !== issuance.blindSigningKeyId) {
       return reduceCoordinatorError(state, "issuance_conflict");
     }
-    const existing = next.issuedBlindResponses[event.issuance.requestId];
+    const existing = next.issuedBlindResponses[issuance.requestId];
     if (existing) {
-      const same = existing.issuanceId === event.issuance.issuanceId
-        && existing.blindSignature === event.issuance.blindSignature;
+      const same = existing.issuanceId === issuance.issuanceId
+        && existing.blindSignature === issuance.blindSignature;
       return same
-        ? { state, ok: true }
+        ? { state: next, ok: true }
         : reduceCoordinatorError(state, "issuance_conflict");
     }
     const existingForVoter = findIssuanceByNpubAndScope(
       next.issuedBlindResponses,
-      event.issuance.invitedNpub,
-      event.issuance.ballotScope,
+      issuance.invitedNpub,
+      issuance.ballotScope,
     );
     if (existingForVoter) {
       return reduceCoordinatorError(state, "already_issued");
     }
-    next.issuedBlindResponses[event.issuance.requestId] = event.issuance;
-    entry.issuanceId = event.issuance.issuanceId;
+    next.issuedBlindResponses[issuance.requestId] = issuance;
+    entry.issuanceId = issuance.issuanceId;
     entry.claimState = maxClaimState(entry.claimState, "blind_signature_issued");
-    next.lastUpdatedAt = event.issuance.issuedAt;
+    next.lastUpdatedAt = issuance.issuedAt;
     return { state: next, ok: true };
   }
 
@@ -947,25 +1062,15 @@ export function reduceCoordinatorEvent(
     if (next.election.state !== "open") {
       return reduceCoordinatorError(state, "election_not_open");
     }
-    const issuance = findIssuanceByTokenCommitment(next.issuedBlindResponses, event.submission.tokenCommitment);
-    if (!issuance) {
-      return reduceCoordinatorError(state, "issuance_missing");
-    }
-    if (issuance.blindSigningKeyId !== event.submission.blindSigningKeyId) {
+    const expectedKeyId = next.election.blindSigningPublicKey?.keyId?.trim() ?? "";
+    if (expectedKeyId && event.submission.blindSigningKeyId !== expectedKeyId) {
       return reduceCoordinatorError(state, "invalid_credential");
     }
     if (!validateResponsesSchema(event.submission.payload.responses)) {
       return reduceCoordinatorError(state, "schema_invalid");
     }
     for (const proof of submissionCredentialBundle(event.submission)) {
-      const issuance = findIssuanceByTokenCommitment(next.issuedBlindResponses, proof.tokenCommitment);
-      if (!issuance) {
-        return reduceCoordinatorError(state, "issuance_missing");
-      }
-      if (
-        issuance.blindSigningKeyId !== proof.blindSigningKeyId
-        || !sameBallotScope(issuance.ballotScope, proof.ballotScope)
-      ) {
+      if (expectedKeyId && proof.blindSigningKeyId !== expectedKeyId) {
         return reduceCoordinatorError(state, "invalid_credential");
       }
     }
@@ -982,8 +1087,6 @@ export function reduceCoordinatorEvent(
   if (!submission) {
     return reduceCoordinatorError(state, "submission_missing");
   }
-  const issuedForSubmission = findIssuanceByTokenCommitment(next.issuedBlindResponses, submission.tokenCommitment);
-  const entry = issuedForSubmission ? next.whitelist[issuedForSubmission.invitedNpub] : null;
 
   if (event.type === "BALLOT_ACCEPTED") {
     const existingAcceptance = next.acceptanceResults[submission.submissionId];
@@ -1017,18 +1120,11 @@ export function reduceCoordinatorEvent(
       next.acceptedNullifiers[proof.nullifier] = submission.submissionId;
     }
     next.acceptanceResults[submission.submissionId] = result;
-    if (entry) {
-      entry.submissionId = submission.submissionId;
-      entry.claimState = "vote_accepted";
-    }
     next.lastUpdatedAt = result.decidedAt;
     return { state: next, ok: true };
   }
 
   next.acceptanceResults[submission.submissionId] = result;
-  if (entry) {
-    entry.claimState = "vote_rejected";
-  }
   next.lastUpdatedAt = result.decidedAt;
   return { state: next, ok: true };
 }
@@ -1043,11 +1139,11 @@ export function restoreCoordinatorElectionState(input: {
   const merged = cloneCoordinatorState(input.persisted);
   merged.pendingBlindRequests = {
     ...merged.pendingBlindRequests,
-    ...(input.canonicalRequests ?? {}),
+    ...sanitiseBlindBallotRequestRecord(input.canonicalRequests ?? {}),
   };
   merged.issuedBlindResponses = {
     ...merged.issuedBlindResponses,
-    ...(input.canonicalIssuances ?? {}),
+    ...sanitiseBlindBallotIssuanceRecord(input.canonicalIssuances ?? {}),
   };
   merged.receivedSubmissions = {
     ...merged.receivedSubmissions,
@@ -1083,26 +1179,6 @@ export function restoreCoordinatorElectionState(input: {
       entry.issuanceId = issuance.issuanceId;
       entry.claimState = maxClaimState(entry.claimState, "blind_signature_issued");
     }
-    const accepted = findAcceptedSubmissionByNpub(
-      merged.receivedSubmissions,
-      merged.acceptanceResults,
-      entry.invitedNpub,
-    );
-    if (accepted) {
-      entry.submissionId = accepted.submissionId;
-      entry.claimState = "vote_accepted";
-      continue;
-    }
-    const rejected = Object.entries(merged.acceptanceResults).find(([submissionId, result]) => {
-      if (result.accepted) {
-        return false;
-      }
-      const submission = merged.receivedSubmissions[submissionId];
-      return submission?.invitedNpub === entry.invitedNpub;
-    });
-    if (rejected) {
-      entry.claimState = maxClaimState(entry.claimState, "vote_rejected");
-    }
   }
 
   return merged;
@@ -1114,7 +1190,9 @@ export function restoreVoterElectionLocalState(input: {
   canonicalAcceptance?: BallotAcceptanceResult | null;
 }): VoterElectionLocalState {
   const next = cloneVoterState(input.persisted);
-  const issuance = input.canonicalIssuance ?? next.blindIssuance ?? null;
+  const issuance = input.canonicalIssuance
+    ? sanitiseBlindBallotIssuance(input.canonicalIssuance)
+    : next.blindIssuance ?? null;
   if (issuance && (!next.blindIssuance || next.blindIssuance.requestId === issuance.requestId)) {
     next.blindIssuance = issuance;
     next.credentialReady = true;

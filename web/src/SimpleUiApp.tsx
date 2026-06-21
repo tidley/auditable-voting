@@ -1582,7 +1582,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       onIdentityChange?.("");
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(SIMPLE_IDENTITY_UPDATED_EVENT, {
-          detail: { role: "voter", npub: "" },
+          detail: { role: "voter", npub: "", nsec: "" },
         }));
       }
       return;
@@ -1592,10 +1592,10 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     onIdentityChange?.(npub);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(SIMPLE_IDENTITY_UPDATED_EVENT, {
-        detail: { role: "voter", npub },
+        detail: { role: "voter", npub, nsec: voterKeypair?.nsec?.trim() ?? "" },
       }));
     }
-  }, [activeVoterNpub, onIdentityChange]);
+  }, [activeVoterNpub, onIdentityChange, voterKeypair?.nsec]);
 
   useEffect(() => {
     setLiveVoteChoice(null);
@@ -3612,6 +3612,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               nsec={signerNpub ? '' : (voterKeypair?.nsec ?? '')}
               title='Identity'
               onRestoreNsec={restoreIdentity}
+              onLogin={() => void loginWithSigner()}
               restoreMessage={identityStatus}
               onDownloadBackup={identityReady ? downloadBackup : undefined}
               onRestoreBackupFile={restoreBackup}

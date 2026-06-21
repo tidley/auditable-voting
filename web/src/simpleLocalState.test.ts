@@ -33,9 +33,11 @@ describe("simpleLocalState", () => {
 
     expect(bundle.role).toBe("voter");
     expect(bundle.type).toBe("auditable-voting.simple-backup");
+    expect(bundle.identityWords?.split(" ")).toHaveLength(3);
 
     const parsed = parseSimpleActorBackupBundle(JSON.stringify(bundle));
     expect(parsed).toEqual(bundle);
+    expect(parsed?.identityWords).toBe(bundle.identityWords);
     expect(parsed?.cache).toEqual({
       manualCoordinators: ["npub1coord"],
       selectedVotingId: "round-1",
@@ -96,8 +98,10 @@ describe("simpleLocalState", () => {
       });
 
       expect(downloadedText).toContain("\"auditable-voting.simple-backup.encrypted\"");
+      expect(downloadedText).toContain("\"identityWords\"");
       const restored = await parseEncryptedSimpleActorBackupBundle(downloadedText, "secret-passphrase");
       expect(restored?.role).toBe("coordinator");
+      expect(restored?.identityWords?.split(" ")).toHaveLength(3);
       expect(restored?.cache).toEqual({
         roundBlindPrivateKeys: { "vote-1": { keyId: "key-1" } },
       });

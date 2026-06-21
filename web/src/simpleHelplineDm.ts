@@ -21,6 +21,8 @@ const HELPLINE_DM_PUBLISH_MAX_WAIT_MS = 1500;
 const HELPLINE_DM_PUBLISH_STAGGER_MS = 250;
 const HELPLINE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const HELPLINE_DM_READ_RELAYS_MAX = 5;
+const HELPLINE_DM_LIVE_LOOKBACK_SECONDS = 60;
+const HELPLINE_DM_LIVE_LIMIT = 50;
 const HELPLINE_DM_SUBJECT = "Auditable Voting helpline";
 
 export type HelplineDmMessage = {
@@ -242,6 +244,177 @@ export function mergeHelplineDmMessages(messages: HelplineDmMessage[]) {
   return sortMessagesChronologically([...byId.values()]);
 }
 
+type HelplineDmActor = ReturnType<typeof decodeNsecSecretKey>;
+
+type HelplineDmFeedListener = {
+  allowedPeers: Set<string>;
+  onMessages: (messages: HelplineDmMessage[]) => void;
+  onError?: (error: Error) => void;
+};
+
+type HelplineDmFeed = {
+  key: string;
+  actor: HelplineDmActor;
+  relays?: string[];
+  limit: number;
+  hideReceivedQuestionnaireInviteLinks: boolean;
+  messages: Map<string, HelplineDmMessage>;
+  listeners: Set<HelplineDmFeedListener>;
+  started: boolean;
+  historyLoaded: boolean;
+  closed: boolean;
+  subscription: { close: () => void } | null;
+};
+
+const helplineDmFeeds = new Map<string, HelplineDmFeed>();
+
+function allowedPeerSet(values?: string[]) {
+  return new Set((values ?? []).map((value) => value.trim()).filter(Boolean));
+}
+
+function helplineDmFeedKey(input: {
+  actorNpub: string;
+  relays?: string[];
+  limit: number;
+  hideReceivedQuestionnaireInviteLinks: boolean;
+}) {
+  return [
+    input.actorNpub,
+    normalizeRelaysRust(input.relays ?? []).join("|"),
+    String(input.limit),
+    input.hideReceivedQuestionnaireInviteLinks ? "hide-invite-links" : "all-messages",
+  ].join("::");
+}
+
+function messagesForListener(feed: HelplineDmFeed, listener: HelplineDmFeedListener) {
+  const messages = [...feed.messages.values()].filter((message) => {
+    if (listener.allowedPeers.size === 0) {
+      return true;
+    }
+    return listener.allowedPeers.has(message.peerNpub);
+  });
+  return mergeHelplineDmMessages(messages);
+}
+
+function publishFeedMessages(feed: HelplineDmFeed) {
+  for (const listener of feed.listeners) {
+    listener.onMessages(messagesForListener(feed, listener));
+  }
+}
+
+function publishFeedError(feed: HelplineDmFeed, error: Error) {
+  for (const listener of feed.listeners) {
+    listener.onError?.(error);
+  }
+}
+
+function rememberFeedMessage(feed: HelplineDmFeed, message: HelplineDmMessage) {
+  const isNewMessage = !feed.messages.has(message.id);
+  feed.messages.set(message.id, message);
+  return isNewMessage;
+}
+
+function closeFeedIfUnused(feed: HelplineDmFeed) {
+  if (feed.listeners.size > 0) {
+    return;
+  }
+  feed.closed = true;
+  feed.subscription?.close();
+  helplineDmFeeds.delete(feed.key);
+}
+
+async function fetchHelplineDmMessagesFromRelays(input: {
+  actor: HelplineDmActor;
+  dmRelays: string[];
+  limit?: number;
+  allowedPeerNpubs?: string[];
+  hideReceivedQuestionnaireInviteLinks?: boolean;
+}) {
+  const pool = getSharedNostrPool();
+  const wrappedEvents = await pool.querySync(input.dmRelays, {
+    kinds: [1059],
+    "#p": [input.actor.publicHex],
+    limit: input.limit ?? 300,
+  });
+  const allowedPeers = allowedPeerSet(input.allowedPeerNpubs);
+  const byLogicalId = new Map<string, HelplineDmMessage>();
+  for (const wrappedEvent of wrappedEvents) {
+    const message = parseHelplineMessageFromGiftWrap(wrappedEvent, input.actor.secretKey, input.actor.npub, {
+      hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
+    });
+    if (!message) {
+      continue;
+    }
+    if (allowedPeers.size > 0 && !allowedPeers.has(message.peerNpub)) {
+      continue;
+    }
+    byLogicalId.set(message.id, message);
+  }
+  return mergeHelplineDmMessages([...byLogicalId.values()]);
+}
+
+function startHelplineDmFeed(feed: HelplineDmFeed) {
+  if (feed.started) {
+    return;
+  }
+  feed.started = true;
+
+  void resolveRecipientInboxRelays(feed.actor.npub, feed.relays).then(async (inboxRelays) => {
+    if (feed.closed) {
+      return;
+    }
+    const dmRelays = selectDmReadRelays(inboxRelays);
+    const pool = getSharedNostrPool();
+    const since = Math.max(0, Math.floor(Date.now() / 1000) - HELPLINE_DM_LIVE_LOOKBACK_SECONDS);
+    feed.subscription = pool.subscribeMany(dmRelays, {
+      kinds: [1059],
+      "#p": [feed.actor.publicHex],
+      since,
+      limit: Math.min(feed.limit, HELPLINE_DM_LIVE_LIMIT),
+    }, {
+      onevent: (wrappedEvent) => {
+        const message = parseHelplineMessageFromGiftWrap(wrappedEvent, feed.actor.secretKey, feed.actor.npub, {
+          hideReceivedQuestionnaireInviteLinks: feed.hideReceivedQuestionnaireInviteLinks,
+        });
+        if (!message) {
+          return;
+        }
+        if (rememberFeedMessage(feed, message)) {
+          publishFeedMessages(feed);
+        }
+      },
+      onclose: (reasons) => {
+        recordRelayCloseReasons(reasons);
+      },
+    });
+
+    try {
+      const fetched = await fetchHelplineDmMessagesFromRelays({
+        actor: feed.actor,
+        dmRelays,
+        limit: feed.limit,
+        hideReceivedQuestionnaireInviteLinks: feed.hideReceivedQuestionnaireInviteLinks,
+      });
+      if (feed.closed) {
+        return;
+      }
+      for (const message of fetched) {
+        feed.messages.set(message.id, message);
+      }
+      feed.historyLoaded = true;
+      publishFeedMessages(feed);
+    } catch (error) {
+      if (!feed.closed && error instanceof Error) {
+        publishFeedError(feed, error);
+      }
+    }
+  }).catch((error) => {
+    if (!feed.closed && error instanceof Error) {
+      publishFeedError(feed, error);
+    }
+  });
+}
+
 export async function sendHelplineDmMessage(input: {
   senderNsec: string;
   recipientNpub: string;
@@ -336,27 +509,13 @@ export async function fetchHelplineDmMessages(input: {
   const actor = decodeNsecSecretKey(input.actorNsec);
   const inboxRelays = await resolveRecipientInboxRelays(actor.npub, input.relays);
   const dmRelays = selectDmReadRelays(inboxRelays);
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
-    kinds: [1059],
-    "#p": [actor.publicHex],
-    limit: input.limit ?? 300,
+  return fetchHelplineDmMessagesFromRelays({
+    actor,
+    dmRelays,
+    limit: input.limit,
+    allowedPeerNpubs: input.allowedPeerNpubs,
+    hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
   });
-  const allowedPeers = new Set((input.allowedPeerNpubs ?? []).map((value) => value.trim()).filter(Boolean));
-  const byLogicalId = new Map<string, HelplineDmMessage>();
-  for (const wrappedEvent of wrappedEvents) {
-    const message = parseHelplineMessageFromGiftWrap(wrappedEvent, actor.secretKey, actor.npub, {
-      hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
-    });
-    if (!message) {
-      continue;
-    }
-    if (allowedPeers.size > 0 && !allowedPeers.has(message.peerNpub)) {
-      continue;
-    }
-    byLogicalId.set(message.id, message);
-  }
-  return mergeHelplineDmMessages([...byLogicalId.values()]);
 }
 
 export function subscribeHelplineDmMessages(input: {
@@ -369,67 +528,56 @@ export function subscribeHelplineDmMessages(input: {
   onError?: (error: Error) => void;
 }) {
   const actor = decodeNsecSecretKey(input.actorNsec);
-  const allowedPeers = new Set((input.allowedPeerNpubs ?? []).map((value) => value.trim()).filter(Boolean));
-  const messages = new Map<string, HelplineDmMessage>();
-  let closed = false;
-  let subscription: { close: () => void } | null = null;
+  const limit = input.limit ?? 300;
+  const key = helplineDmFeedKey({
+    actorNpub: actor.npub,
+    relays: input.relays,
+    limit,
+    hideReceivedQuestionnaireInviteLinks: Boolean(input.hideReceivedQuestionnaireInviteLinks),
+  });
+  let feed = helplineDmFeeds.get(key);
+  if (!feed) {
+    feed = {
+      key,
+      actor,
+      relays: input.relays,
+      limit,
+      hideReceivedQuestionnaireInviteLinks: Boolean(input.hideReceivedQuestionnaireInviteLinks),
+      messages: new Map(),
+      listeners: new Set(),
+      started: false,
+      historyLoaded: false,
+      closed: false,
+      subscription: null,
+    };
+    helplineDmFeeds.set(key, feed);
+  }
 
-  const publishMessages = () => {
-    input.onMessages(mergeHelplineDmMessages([...messages.values()]));
+  const listener: HelplineDmFeedListener = {
+    allowedPeers: allowedPeerSet(input.allowedPeerNpubs),
+    onMessages: input.onMessages,
+    onError: input.onError,
   };
+  feed.listeners.add(listener);
 
-  void fetchHelplineDmMessages(input).then((fetched) => {
-    if (closed) {
-      return;
-    }
-    for (const message of fetched) {
-      messages.set(message.id, message);
-    }
-    publishMessages();
-  }).catch((error) => {
-    if (!closed && error instanceof Error) {
-      input.onError?.(error);
-    }
-  });
+  if (feed.historyLoaded || feed.messages.size > 0) {
+    listener.onMessages(messagesForListener(feed, listener));
+  }
 
-  void resolveRecipientInboxRelays(actor.npub, input.relays).then((inboxRelays) => {
-    if (closed) {
-      return;
-    }
-    const dmRelays = selectDmReadRelays(inboxRelays);
-    const pool = getSharedNostrPool();
-    subscription = pool.subscribeMany(dmRelays, {
-      kinds: [1059],
-      "#p": [actor.publicHex],
-      limit: input.limit ?? 300,
-    }, {
-      onevent: (wrappedEvent) => {
-        const message = parseHelplineMessageFromGiftWrap(wrappedEvent, actor.secretKey, actor.npub, {
-          hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
-        });
-        if (!message) {
-          return;
-        }
-        if (allowedPeers.size > 0 && !allowedPeers.has(message.peerNpub)) {
-          return;
-        }
-        messages.set(message.id, message);
-        publishMessages();
-      },
-      onclose: (reasons) => {
-        recordRelayCloseReasons(reasons);
-      },
-    });
-  }).catch((error) => {
-    if (!closed && error instanceof Error) {
-      input.onError?.(error);
-    }
-  });
+  startHelplineDmFeed(feed);
 
   return () => {
-    closed = true;
-    subscription?.close();
+    feed.listeners.delete(listener);
+    closeFeedIfUnused(feed);
   };
+}
+
+export function resetHelplineDmMessageFeedsForTests() {
+  for (const feed of helplineDmFeeds.values()) {
+    feed.closed = true;
+    feed.subscription?.close();
+  }
+  helplineDmFeeds.clear();
 }
 
 export function latestHelplineMessageByPeer(messages: HelplineDmMessage[]) {

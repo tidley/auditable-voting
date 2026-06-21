@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { deriveIdentityWords } from "./identityWords";
 
 const optionAStorageMocks = vi.hoisted(() => ({
   loadVoterState: vi.fn((): unknown => null),
@@ -167,6 +168,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       responseSubmitted: false,
       perQuestionMode: false,
       allQuestionResponsesSubmitted: false,
+      canAdvanceQuestionBeforeSubmit: false,
     };
 
     expect(formatVoteActionButtonText({ ...baseInput, submitInFlight: true })).toBe("Submitting...");
@@ -176,6 +178,14 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       responseSubmitted: true,
       submitInFlight: false,
     })).toBe("View results");
+    expect(formatVoteActionButtonText({
+      ...baseInput,
+      canSubmitNow: false,
+      requiredQuestionsAnswered: false,
+      perQuestionMode: true,
+      canAdvanceQuestionBeforeSubmit: true,
+      submitInFlight: false,
+    })).toBe("Next");
   });
 
   it("loads pending invites after signer login", async () => {
@@ -367,12 +377,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
     await waitFor(() => {
       expect([...selector.options].map((option) => option.textContent)).toEqual([
-        expect.stringContaining("Initial question"),
-        expect.stringContaining("Next question"),
+        expect.stringContaining("Initial question - q_initial_question"),
+        expect.stringContaining("Next question - q_next_question"),
       ]);
     });
 
-    await user.click(screen.getByRole("button", { name: /Answer next/ }));
+    expect(screen.queryByRole("button", { name: /Answer next/ })).toBeNull();
+    await user.selectOptions(selector, selector.options[1]?.value ?? "");
 
     await waitFor(() => {
       expect(requestedElectionIds).toContain("q_next_question");
@@ -416,6 +427,46 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       const electionId = typeof input === "object" && input && "electionId" in input
         ? String((input as { electionId?: unknown }).electionId ?? "")
         : "";
+      if (electionId === "q_pending_initial") {
+        return {
+          electionId: "q_pending_initial",
+          invitedNpub: localVoterNpub,
+          coordinatorNpub,
+          loginVerified: true,
+          loginVerifiedAt: "2026-06-17T11:59:00.000Z",
+          inviteMessage: null,
+          blindRequest: null,
+          blindRequests: {},
+          blindRequestSent: true,
+          blindRequestSentAt: "2026-06-17T11:59:00.000Z",
+          blindIssuance: null,
+          blindIssuances: {},
+          credentialReady: false,
+          blindTokenSecret: null,
+          blindTokenSecrets: {},
+          draftResponses: [],
+          submission: {
+            type: "ballot_submission",
+            schemaVersion: 1,
+            electionId: "q_pending_initial",
+            submissionId: "submission_pending_initial",
+            invitedNpub: localVoterNpub,
+            responseNpub: "npub1" + "i".repeat(58),
+            credential: "sig_pending_initial",
+            nullifier: "nullifier_pending_initial",
+            payload: {
+              electionId: "q_pending_initial",
+              responses: [{ questionId: "q_pending_initial_q1", type: "yes_no", answer: "yes" }],
+            },
+            submittedAt: "2026-06-17T11:59:30.000Z",
+          },
+          submissions: {},
+          submissionAccepted: null,
+          submissionAcceptedAt: null,
+          submissionDecisions: {},
+          lastUpdatedAt: "2026-06-17T11:59:30.000Z",
+        };
+      }
       if (electionId !== "q_pending_next") {
         return null;
       }
@@ -433,7 +484,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
           requestId: "request_pending_next",
           invitedNpub: localVoterNpub,
           blindedMessage: "blinded_pending_next",
-          tokenCommitment: "commitment_pending_next",
           blindSigningKeyId: nextDefinition.blindSigningPublicKey.keyId,
           clientNonce: "nonce_pending_next",
           createdAt: "2026-06-17T12:00:00.000Z",
@@ -515,6 +565,133 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
   });
 
+  it("prefetches the next questionnaire ballot when Answer next appears", async () => {
+    const localVoterNpub = "npub1" + "p".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const makeDefinition = (questionnaireId: string, title: string, prompt: string) => ({
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      responseMode: "blind_token" as const,
+      questionnaireId,
+      title,
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1" as const,
+        keyId: `${questionnaireId}_blind_key`,
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: `${questionnaireId}_q1`,
+        type: "yes_no" as const,
+        prompt,
+        required: true,
+      }],
+    });
+    const initialDefinition = makeDefinition("q_prefetch_initial", "Prefetch initial", "Prefetch initial prompt");
+    const nextDefinition = makeDefinition("q_prefetch_next", "Prefetch next", "Prefetch next prompt");
+    optionAStorageMocks.loadVoterState.mockImplementation((input: unknown) => {
+      const electionId = typeof input === "object" && input && "electionId" in input
+        ? String((input as { electionId?: unknown }).electionId ?? "")
+        : "";
+      if (electionId !== "q_prefetch_initial") {
+        return null;
+      }
+      return {
+        electionId: "q_prefetch_initial",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        loginVerified: true,
+        loginVerifiedAt: "2026-06-19T12:00:00.000Z",
+        inviteMessage: null,
+        blindRequest: null,
+        blindRequests: {},
+        blindRequestSent: true,
+        blindRequestSentAt: "2026-06-19T12:00:00.000Z",
+        blindIssuance: null,
+        blindIssuances: {},
+        credentialReady: false,
+        blindTokenSecret: null,
+        blindTokenSecrets: {},
+        draftResponses: [],
+        submission: {
+          type: "ballot_submission",
+          schemaVersion: 1,
+          electionId: "q_prefetch_initial",
+          submissionId: "submission_prefetch_initial",
+          invitedNpub: localVoterNpub,
+          responseNpub: "npub1" + "z".repeat(58),
+          credential: "sig_prefetch_initial",
+          nullifier: "nullifier_prefetch_initial",
+          payload: {
+            electionId: "q_prefetch_initial",
+            responses: [{ questionId: "q_prefetch_initial_q1", type: "yes_no", answer: "yes" }],
+          },
+          submittedAt: "2026-06-19T12:00:30.000Z",
+        },
+        submissions: {},
+        submissionAccepted: null,
+        submissionAcceptedAt: null,
+        submissionDecisions: {},
+        lastUpdatedAt: "2026-06-19T12:00:30.000Z",
+      };
+    });
+    optionAStorageMocks.listInvitesFromMailbox.mockReturnValue([
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_prefetch_initial",
+        title: "Prefetch initial",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_prefetch_initial",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: initialDefinition.blindSigningPublicKey,
+        definition: initialDefinition,
+        expiresAt: null,
+      },
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_prefetch_next",
+        title: "Prefetch next",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_prefetch_next",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: nextDefinition.blindSigningPublicKey,
+        definition: nextDefinition,
+        expiresAt: null,
+      },
+    ]);
+    const requestCalls: string[] = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        requestCalls.push(this.getSnapshot()?.electionId ?? "");
+        return this.getSnapshot()!;
+      });
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        announcedQuestionnaireIds={["q_prefetch_initial"]}
+        localVoterNpub={localVoterNpub}
+        localVoterNsec='nsec1prefetch'
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: /Answer next/ })).toBeTruthy();
+    await waitFor(() => {
+      expect(requestCalls).toContain("q_prefetch_next");
+    });
+  });
+
   it("keeps the current public questionnaire in the selector when a new admitted invite arrives", async () => {
     const user = userEvent.setup();
     const localVoterNpub = "npub1" + "s".repeat(58);
@@ -583,13 +760,14 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
     await waitFor(() => {
       expect([...selector.options].map((option) => option.textContent)).toEqual([
-        expect.stringContaining("Public initial"),
-        expect.stringContaining("Public next"),
+        expect.stringContaining("Public initial - q_public_initial"),
+        expect.stringContaining("Public next - q_public_next"),
       ]);
     });
     expect(screen.getByText(/Initial public prompt/)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: /Answer next/ }));
+    expect(screen.queryByRole("button", { name: /Answer next/ })).toBeNull();
+    await user.selectOptions(selector, selector.options[1]?.value ?? "");
 
     await waitFor(() => {
       expect(requestedElectionIds).toContain("q_public_next");
@@ -665,6 +843,10 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(await screen.findByText("Private invite already used")).toBeTruthy();
     expect(screen.getByText(/This private invite can only be used once/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open general invite" })).toBeTruthy();
+    expect(screen.queryByText("Used private questionnaire")).toBeNull();
+    expect(screen.queryByText("Private description")).toBeNull();
+    expect(screen.queryByText("Private prompt")).toBeNull();
+    expect(screen.queryByText("q_private_used")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Message organiser" }));
     await user.click(screen.getByRole("button", { name: "Back to Join" }));
 
@@ -847,7 +1029,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         requestId: "request_ballot_debug",
         invitedNpub: localVoterNpub,
         blindedMessage: "blinded_debug",
-        tokenCommitment: "commitment_ballot_debug",
         blindSigningKeyId: "blind_key_debug",
         clientNonce: "nonce_debug",
         createdAt: "2026-04-18T00:00:01.000Z",
@@ -861,7 +1042,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         requestId: "request_ballot_debug",
         issuanceId: "issuance_ballot_debug",
         invitedNpub: localVoterNpub,
-        tokenCommitment: "commitment_ballot_debug",
         blindSigningKeyId: "blind_key_debug",
         blindSignature: "sig_ballot_debug",
         issuedAt: "2026-04-18T00:00:03.000Z",
@@ -888,7 +1068,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(within(details).getByText("Credential ID")).toBeTruthy();
     expect(within(details).getByText("issuance_ballot_debug")).toBeTruthy();
     expect(within(details).getByText("Token commitment")).toBeTruthy();
-    expect(within(details).getByText("commitment_ballot_debug")).toBeTruthy();
+    expect(within(details).queryByText("commitment_ballot_debug")).toBeNull();
     expect(within(details).queryByText("sig_ballot_debug")).toBeNull();
   });
 
@@ -910,7 +1090,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         requestId: "request_waiting_resend",
         invitedNpub: localVoterNpub,
         blindedMessage: "blinded_waiting_resend",
-        tokenCommitment: "commitment_waiting_resend",
         blindSigningKeyId: "blind_key",
         clientNonce: "nonce_waiting_resend",
         createdAt: "2026-04-18T00:00:00.000Z",
@@ -987,7 +1166,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         requestId: "request_waiting_resend_delay",
         invitedNpub: localVoterNpub,
         blindedMessage: "blinded_waiting_resend_delay",
-        tokenCommitment: "commitment_waiting_resend_delay",
         blindSigningKeyId: "blind_key",
         clientNonce: "nonce_waiting_resend_delay",
         createdAt: "2026-04-18T00:00:00.000Z",
@@ -1063,7 +1241,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         requestId: "request_waiting_auto_retry",
         invitedNpub: localVoterNpub,
         blindedMessage: "blinded_waiting_auto_retry",
-        tokenCommitment: "commitment_waiting_auto_retry",
         blindSigningKeyId: "blind_key",
         clientNonce: "nonce_waiting_auto_retry",
         createdAt: "2026-04-18T00:00:00.000Z",
@@ -1761,17 +1938,395 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
-    const identityRegion = await screen.findByRole("region", { name: "Anonymous ID used to vote" });
+    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
     expect(screen.getAllByLabelText(/Open Colour ID for token/i).length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
-    expect(within(identityRegion).getByText("Questionnaire ID")).toBeTruthy();
-    expect(within(identityRegion).getByText("q_submitted_marker")).toBeTruthy();
-    expect(screen.getByText("Submission ID")).toBeTruthy();
-    expect(screen.getByText("submission_submitted_marker")).toBeTruthy();
-    expect(screen.getAllByText("Anonymous ID used to vote").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("rrrrrrr").length).toBeGreaterThan(0);
-    expect(screen.getByText("Submitter identity - full")).toBeTruthy();
-    expect(screen.getByText("npub1" + "r".repeat(58))).toBeTruthy();
+    expect(within(receiptRegion).getByText("Vote receipt")).toBeTruthy();
+    expect(screen.getAllByText("Anonymous voting identity").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("rrr-rrr").length).toBeGreaterThan(0);
+    expect(within(receiptRegion).queryByText("Identity words")).toBeNull();
+    expect(within(receiptRegion).getByText("Find your vote")).toBeTruthy();
+    expect(within(receiptRegion).getByText(deriveIdentityWords("npub1" + "r".repeat(58)))).toBeTruthy();
+    expect(within(receiptRegion).getByText("Advanced details")).toBeTruthy();
+    await userEvent.click(within(receiptRegion).getByText("Advanced details"));
+    expect(within(receiptRegion).getByText("Questionnaire ID")).toBeTruthy();
+    expect(within(receiptRegion).getByText("q_submitted_marker")).toBeTruthy();
+    expect(within(receiptRegion).getByText("Submission ID")).toBeTruthy();
+    expect(within(receiptRegion).getByText("submission_submitted_marker")).toBeTruthy();
+    expect(within(receiptRegion).getByText("Anonymous identity npub")).toBeTruthy();
+    expect(within(receiptRegion).getByText("npub1" + "r".repeat(58))).toBeTruthy();
+  });
+
+  it("shows one question at a time for grouped ballot questions", async () => {
+    const localVoterNpub = "npub1" + "g".repeat(58);
+    const responseNpub = "npub1" + "k".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      questionnaireId: "q_grouped_complete",
+      title: "Grouped complete",
+      description: "",
+      createdAt: 1781540000,
+      openAt: 1781540000,
+      closeAt: 1781543600,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseMode: "course_feedback" as const,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question" as const,
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no" as const,
+          prompt: "First grouped question",
+          required: true,
+          ballotSlot: { slotId: "shared-slot", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q2",
+          type: "yes_no" as const,
+          prompt: "Second grouped question",
+          required: true,
+          ballotSlot: { slotId: "shared-slot", slotIndex: 1, version: 1 },
+        },
+      ],
+    };
+    const submission = {
+      type: "ballot_submission" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_grouped_complete",
+      submissionId: "submission_grouped_complete",
+      invitedNpub: localVoterNpub,
+      responseNpub,
+      credential: "sig_grouped_complete",
+      nullifier: "nullifier_grouped_complete",
+      payload: {
+        electionId: "q_grouped_complete",
+        responses: [
+          { questionId: "q1", type: "yes_no" as const, answer: "yes" as const },
+          { questionId: "q2", type: "yes_no" as const, answer: "no" as const },
+        ],
+      },
+      submittedAt: "2026-06-15T23:01:00.000Z",
+    };
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_grouped_complete",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: "npub1" + "b".repeat(58),
+      loginVerified: true,
+      loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: null,
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-06-15T23:00:00.000Z",
+      blindIssuance: {
+        type: "blind_ballot_response",
+        schemaVersion: 1,
+        electionId: "q_grouped_complete",
+        requestId: "request_grouped_complete",
+        issuanceId: "issuance_grouped_complete",
+        invitedNpub: localVoterNpub,
+        blindSignature: "sig_grouped_complete",
+        definition,
+        issuedAt: "2026-06-15T23:00:00.000Z",
+      },
+      blindIssuances: {
+        "slot:1:v1": {
+          type: "blind_ballot_response",
+          schemaVersion: 1,
+          electionId: "q_grouped_complete",
+          requestId: "request_grouped_complete",
+          issuanceId: "issuance_grouped_complete",
+          invitedNpub: localVoterNpub,
+          blindSignature: "sig_grouped_complete",
+          ballotScope: { slotId: "shared-slot", slotIndex: 1, version: 1 },
+          definition,
+          issuedAt: "2026-06-15T23:00:00.000Z",
+        },
+      },
+      credentialReady: true,
+      draftResponses: [],
+      submissions: {
+        q1: submission,
+        q2: submission,
+      },
+      submissionDecisions: {
+        q1: { accepted: true, decidedAt: "2026-06-15T23:02:00.000Z" },
+        q2: { accepted: true, decidedAt: "2026-06-15T23:02:00.000Z" },
+      },
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-06-15T23:02:00.000Z",
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_complete"]} localVoterNpub={localVoterNpub} />);
+
+    expect(await screen.findByText("Ballot 1 · Question 1/2 · Complete")).toBeTruthy();
+    expect(screen.queryByText("Ballot 1 · 2 questions · Complete")).toBeNull();
+    expect(screen.getAllByText("Q1: First grouped question").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Q2: Second grouped question")).toBeNull();
+    expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Ballot 1 · Question 2/2 · Complete")).toBeTruthy();
+    expect(screen.queryByText("Q1: First grouped question")).toBeNull();
+    expect(screen.getAllByText("Q2: Second grouped question").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "View results" })).toBeTruthy();
+    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
+    expect(within(receiptRegion).queryByText("Q2: Second grouped question")).toBeNull();
+    expect(within(receiptRegion).getByText("Submitted")).toBeTruthy();
+    expect(within(receiptRegion).getByText("Find your vote")).toBeTruthy();
+  });
+
+  it("advances answered grouped ballot questions before showing the final required gate", async () => {
+    const localVoterNpub = "npub1" + "g".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      questionnaireId: "q_grouped_draft_next",
+      title: "Grouped draft",
+      description: "",
+      createdAt: 1781540000,
+      openAt: 1781540000,
+      closeAt: 1781543600,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseMode: "course_feedback" as const,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question" as const,
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no" as const,
+          prompt: "First grouped question",
+          required: true,
+          ballotSlot: { slotId: "shared-slot", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q2",
+          type: "yes_no" as const,
+          prompt: "Second grouped question",
+          required: true,
+          ballotSlot: { slotId: "shared-slot", slotIndex: 1, version: 1 },
+        },
+      ],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_grouped_draft_next",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: "npub1" + "b".repeat(58),
+      loginVerified: true,
+      loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: null,
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-06-15T23:00:00.000Z",
+      blindIssuance: {
+        type: "blind_ballot_response",
+        schemaVersion: 1,
+        electionId: "q_grouped_draft_next",
+        requestId: "request_grouped_draft_next",
+        issuanceId: "issuance_grouped_draft_next",
+        invitedNpub: localVoterNpub,
+        blindSignature: "sig_grouped_draft_next",
+        definition,
+        issuedAt: "2026-06-15T23:00:00.000Z",
+      },
+      blindIssuances: {
+        "slot:1:v1": {
+          type: "blind_ballot_response",
+          schemaVersion: 1,
+          electionId: "q_grouped_draft_next",
+          requestId: "request_grouped_draft_next",
+          issuanceId: "issuance_grouped_draft_next",
+          invitedNpub: localVoterNpub,
+          blindSignature: "sig_grouped_draft_next",
+          ballotScope: { slotId: "shared-slot", slotIndex: 1, version: 1 },
+          definition,
+          issuedAt: "2026-06-15T23:00:00.000Z",
+        },
+      },
+      credentialReady: true,
+      draftResponses: [],
+      submissions: {},
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-06-15T23:00:00.000Z",
+    });
+
+    const { container } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_draft_next"]} localVoterNpub={localVoterNpub} />);
+    const controls = () => within(container.querySelector(".simple-optiona-voter-controls") as HTMLElement);
+
+    expect(await screen.findByText("Ballot 1 · Question 1/2")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    expect(controls().queryByRole("button", { name: "Please answer all required questions" })).toBeNull();
+    await userEvent.click(controls().getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByText("Ballot 1 · Question 2/2")).toBeTruthy();
+    expect(controls().getByRole("button", { name: "Please answer all required questions" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "No" }));
+    expect(controls().getByRole("button", { name: "Submit response" })).toBeTruthy();
+  });
+
+  it("does not mark a per-question session all answered after only one ballot submission", async () => {
+    const localVoterNpub = "npub1" + "p".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const makeDefinition = (questionnaireId: string, title: string, questionCount: number) => ({
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      questionnaireId,
+      title,
+      description: "",
+      createdAt: 1781540000,
+      openAt: 1781540000,
+      closeAt: 1781543600,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseMode: "blind_token" as const,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question" as const,
+      questions: Array.from({ length: questionCount }, (_, index) => ({
+        questionId: `q${index + 1}`,
+        type: "yes_no" as const,
+        prompt: `Question ${index + 1}`,
+        required: true,
+        ballotSlot: { slotId: `slot-${index + 1}`, slotIndex: index + 1, version: 1 },
+      })),
+    });
+    const firstDefinition = makeDefinition("q_first_session", "First session", 1);
+    const secondDefinition = makeDefinition("q_second_session", "Second session", 2);
+    storeCachedQuestionnaireDefinition(firstDefinition);
+    storeCachedQuestionnaireDefinition(secondDefinition);
+    const firstSubmission = {
+      type: "ballot_submission" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_first_session",
+      submissionId: "submission_first",
+      invitedNpub: localVoterNpub,
+      responseNpub: "npub1" + "1".repeat(58),
+      credential: "sig_first",
+      nullifier: "nullifier_first",
+      payload: {
+        electionId: "q_first_session",
+        responses: [{ questionId: "q1", type: "yes_no" as const, answer: "yes" as const }],
+      },
+      submittedAt: "2026-06-15T23:01:00.000Z",
+    };
+    const partialSecondSubmission = {
+      type: "ballot_submission" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_second_session",
+      submissionId: "submission_second_q1",
+      invitedNpub: localVoterNpub,
+      responseNpub: "npub1" + "2".repeat(58),
+      credential: "sig_second_q1",
+      nullifier: "nullifier_second_q1",
+      payload: {
+        electionId: "q_second_session",
+        responses: [{ questionId: "q1", type: "yes_no" as const, answer: "yes" as const }],
+      },
+      submittedAt: "2026-06-15T23:02:00.000Z",
+    };
+    optionAStorageMocks.loadVoterState.mockImplementation((input: unknown) => {
+      const electionId = typeof input === "object" && input && "electionId" in input
+        ? String((input as { electionId?: unknown }).electionId ?? "")
+        : "";
+      if (electionId === "q_first_session") {
+        return {
+          electionId,
+          invitedNpub: localVoterNpub,
+          coordinatorNpub,
+          loginVerified: true,
+          loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+          inviteMessage: null,
+          blindRequest: null,
+          blindRequestSent: true,
+          blindIssuance: null,
+          blindIssuances: {
+            "slot:1:v1": {
+              type: "blind_ballot_response",
+              schemaVersion: 1,
+              electionId,
+              requestId: "request_first",
+              issuanceId: "issuance_first",
+              invitedNpub: localVoterNpub,
+              blindSignature: "sig_first",
+              definition: firstDefinition,
+              issuedAt: "2026-06-15T23:00:00.000Z",
+            },
+          },
+          credentialReady: true,
+          draftResponses: [],
+          submission: firstSubmission,
+          submissions: { q1: firstSubmission },
+          submissionAccepted: null,
+          submissionAcceptedAt: null,
+          lastUpdatedAt: "2026-06-15T23:01:00.000Z",
+        };
+      }
+      if (electionId === "q_second_session") {
+        return {
+          electionId,
+          invitedNpub: localVoterNpub,
+          coordinatorNpub,
+          loginVerified: true,
+          loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+          inviteMessage: null,
+          blindRequest: null,
+          blindRequestSent: true,
+          blindIssuance: null,
+          blindIssuances: {
+            "slot:1:v1": {
+              type: "blind_ballot_response",
+              schemaVersion: 1,
+              electionId,
+              requestId: "request_second_q1",
+              issuanceId: "issuance_second_q1",
+              invitedNpub: localVoterNpub,
+              blindSignature: "sig_second_q1",
+              definition: secondDefinition,
+              issuedAt: "2026-06-15T23:00:00.000Z",
+            },
+            "slot:2:v1": {
+              type: "blind_ballot_response",
+              schemaVersion: 1,
+              electionId,
+              requestId: "request_second_q2",
+              issuanceId: "issuance_second_q2",
+              invitedNpub: localVoterNpub,
+              blindSignature: "sig_second_q2",
+              definition: secondDefinition,
+              issuedAt: "2026-06-15T23:00:00.000Z",
+            },
+          },
+          credentialReady: true,
+          draftResponses: [],
+          submission: partialSecondSubmission,
+          submissions: { q1: partialSecondSubmission },
+          submissionAccepted: null,
+          submissionAcceptedAt: null,
+          lastUpdatedAt: "2026-06-15T23:02:00.000Z",
+        };
+      }
+      return null;
+    });
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        announcedQuestionnaireIds={["q_first_session", "q_second_session"]}
+        localVoterNpub={localVoterNpub}
+      />,
+    );
+
+    expect(await screen.findByText("Ballot 2 · Question 2/2")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Please answer all required questions" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "All answered" })).toBeNull();
   });
 
   it("shows the selected per-question submission identity", async () => {
@@ -1890,16 +2445,17 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_per_question_identity"]} localVoterNpub={localVoterNpub} />);
 
     expect(screen.queryByRole("region", { name: "Current question ballot IDs" })).toBeNull();
-    const identityRegion = await screen.findByRole("region", { name: "Anonymous ID used to vote" });
-    expect(within(identityRegion).getByText("submission_question_one")).toBeTruthy();
-    expect(within(identityRegion).getByText(firstResponseNpub)).toBeTruthy();
-    expect(within(identityRegion).queryByText("submission_legacy")).toBeNull();
-    expect(within(identityRegion).queryByText(staleLegacyResponseNpub)).toBeNull();
+    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
+    await userEvent.click(within(receiptRegion).getByText("Advanced details"));
+    expect(within(receiptRegion).getByText("submission_question_one")).toBeTruthy();
+    expect(within(receiptRegion).getByText(firstResponseNpub)).toBeTruthy();
+    expect(within(receiptRegion).queryByText("submission_legacy")).toBeNull();
+    expect(within(receiptRegion).queryByText(staleLegacyResponseNpub)).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
 
-    expect(await within(identityRegion).findByText("submission_question_two")).toBeTruthy();
-    expect(within(identityRegion).getByText(secondResponseNpub)).toBeTruthy();
-    expect(within(identityRegion).queryByText(firstResponseNpub)).toBeNull();
+    expect(await within(receiptRegion).findByText("submission_question_two")).toBeTruthy();
+    expect(within(receiptRegion).getByText(secondResponseNpub)).toBeTruthy();
+    expect(within(receiptRegion).queryByText(firstResponseNpub)).toBeNull();
   });
 });

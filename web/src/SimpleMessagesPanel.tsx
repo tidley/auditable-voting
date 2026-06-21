@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   latestHelplineMessageByPeer,
@@ -31,6 +31,61 @@ function formatMessageTime(value: string) {
 function previewText(value: string) {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length > 80 ? `${compact.slice(0, 77)}...` : compact;
+}
+
+const MESSAGE_URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+const TRAILING_URL_PUNCTUATION_PATTERN = /[\])}.,!?;:]+$/;
+
+function splitTrailingUrlPunctuation(value: string) {
+  const trailing = value.match(TRAILING_URL_PUNCTUATION_PATTERN)?.[0] ?? "";
+  return {
+    url: trailing ? value.slice(0, -trailing.length) : value,
+    trailing,
+  };
+}
+
+function hrefForMessageUrl(value: string) {
+  return value.toLowerCase().startsWith("www.") ? `https://${value}` : value;
+}
+
+function renderMessageBody(value: string): ReactNode {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+
+  for (const match of value.matchAll(MESSAGE_URL_PATTERN)) {
+    const rawMatch = match[0] ?? "";
+    const matchIndex = match.index ?? 0;
+    const { url, trailing } = splitTrailingUrlPunctuation(rawMatch);
+    if (!url) {
+      continue;
+    }
+    if (matchIndex > cursor) {
+      nodes.push(value.slice(cursor, matchIndex));
+    }
+    nodes.push(
+      <a
+        key={`${matchIndex}:${url}`}
+        className='simple-messages-link'
+        href={hrefForMessageUrl(url)}
+        target='_blank'
+        rel='noopener noreferrer'
+      >
+        {url}
+      </a>,
+    );
+    if (trailing) {
+      nodes.push(trailing);
+    }
+    cursor = matchIndex + rawMatch.length;
+  }
+
+  if (nodes.length === 0) {
+    return value;
+  }
+  if (cursor < value.length) {
+    nodes.push(value.slice(cursor));
+  }
+  return nodes;
 }
 
 function uniqueNonEmpty(values: string[]) {
@@ -198,7 +253,7 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
                     key={`${message.id}:${message.dmEventId}`}
                     className={`simple-messages-bubble ${message.direction === "sent" ? "is-sent" : "is-received"}`}
                   >
-                    <p>{message.body}</p>
+                    <p>{renderMessageBody(message.body)}</p>
                     <span>{formatMessageTime(message.createdAt)}</span>
                   </article>
                 ))

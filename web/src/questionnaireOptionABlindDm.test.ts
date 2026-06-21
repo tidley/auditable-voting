@@ -84,7 +84,6 @@ function makeIssuance(
     requestId,
     issuanceId: `issuance_${requestId}`,
     invitedNpub: "npub1voter",
-    tokenCommitment: "commitment",
     blindSigningKeyId: "key",
     blindSignature: "signature",
     ballotScope: {
@@ -106,7 +105,6 @@ function makeRequest(input: { requestId: string; invitedNpub: string; padding?: 
     requestId: input.requestId,
     invitedNpub: input.invitedNpub,
     blindedMessage: `blind_${input.requestId}${input.padding ?? ""}`,
-    tokenCommitment: `commitment_${input.requestId}`,
     blindSigningKeyId: "key",
     clientNonce: `nonce_${input.requestId}`,
     createdAt: "2026-06-18T00:00:00.000Z",
@@ -167,6 +165,7 @@ describe("questionnaireOptionABlindDm", () => {
       tags: [
         ["relay", "wss://recipient.one"],
         ["relay", "wss://recipient.two"],
+        ["relay", "wss://relay.nostr.info"],
         ["relay", "wss://recipient.three"],
         ["relay", "wss://recipient.four"],
       ],
@@ -188,7 +187,6 @@ describe("questionnaireOptionABlindDm", () => {
         requestId: "request_1",
         invitedNpub: nip19.npubEncode(getPublicKey(generateSecretKey())),
         blindedMessage: "blind_1",
-        tokenCommitment: "token_1",
         blindSigningKeyId: "key_1",
         clientNonce: "nonce_1",
         createdAt: new Date().toISOString(),
@@ -201,6 +199,7 @@ describe("questionnaireOptionABlindDm", () => {
       "wss://recipient.two",
       "wss://relay.nostr.net",
     ]);
+    expect(relays).not.toContain("wss://relay.nostr.info");
   });
 
   it("builds issuance bundles with a shared definition hash and no definition payload", () => {
@@ -257,11 +256,21 @@ describe("questionnaireOptionABlindDm", () => {
       type: "optiona_blind_request_bundle_dm" as const,
       schemaVersion: 1 as const,
       requests: [
-        makeRequest({
-          requestId: "request_compressed_1",
-          invitedNpub: recipientNpub,
-          padding: "x".repeat(16_000),
-        }),
+        {
+          ...makeRequest({
+            requestId: "request_compressed_1",
+            invitedNpub: recipientNpub,
+            padding: "x".repeat(16_000),
+          }),
+          tokenCommitment: "legacy-request-leak",
+          ballotScope: {
+            questionId: "request_compressed_1",
+            slotId: "request_compressed_1:1",
+            slotIndex: 1,
+            version: 1,
+            tokenCommitment: "legacy-nested-leak",
+          },
+        } as unknown as BlindBallotRequest,
       ],
       sentAt: "2026-06-18T00:00:00.000Z",
     };
@@ -287,6 +296,8 @@ describe("questionnaireOptionABlindDm", () => {
 
     expect(fetchedRequests).toHaveLength(1);
     expect(fetchedRequests[0]?.requestId).toBe("request_compressed_1");
+    expect(fetchedRequests[0] as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    expect(fetchedRequests[0]?.ballotScope as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
   });
 
   it("decodes compressed blind issuance bundles for voter intake", async () => {
@@ -298,11 +309,21 @@ describe("questionnaireOptionABlindDm", () => {
     const issuances = Array.from({ length: 24 }, (_, index) => ({
       ...makeIssuance(`q${index + 1}`, definition),
       blindSignature: `signature_${index}_${"y".repeat(600)}`,
+      tokenCommitment: `legacy-issuance-leak-${index + 1}`,
+      ballotScope: {
+        questionId: `q${index + 1}`,
+        slotId: `q${index + 1}:1`,
+        slotIndex: 1,
+        version: 1,
+        tokenCommitment: `legacy-nested-leak-${index + 1}`,
+      },
     }));
     const envelope = buildOptionABlindIssuanceBundleEnvelope({
       issuances,
       sentAt: "2026-06-18T00:00:01.000Z",
     });
+    (envelope.issuances[0] as unknown as Record<string, unknown>).tokenCommitment = "legacy-issuance-leak";
+    (envelope.issuances[0]?.ballotScope as unknown as Record<string, unknown>).tokenCommitment = "legacy-nested-leak";
     const content = encodeOptionADmEnvelopeContent(envelope);
     const wrapper = JSON.parse(content) as { type?: string; innerType?: string };
 
@@ -325,6 +346,8 @@ describe("questionnaireOptionABlindDm", () => {
 
     expect(fetchedIssuances).toHaveLength(24);
     expect(fetchedIssuances[0]?.definitionHash).toBe(questionnaireDefinitionHash(definition));
+    expect(fetchedIssuances[0] as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
+    expect(fetchedIssuances[0]?.ballotScope as unknown as Record<string, unknown>).not.toHaveProperty("tokenCommitment");
     expect(fetchedIssuances.at(-1)?.issuanceId).toBe("issuance_q24");
   });
 
@@ -503,8 +526,8 @@ describe("questionnaireOptionABlindDm", () => {
     expect(relays).toEqual([
       "wss://relay.nostr.net",
       "wss://nos.lol",
-      "wss://relay.nostr.info",
     ]);
+    expect(relays).not.toContain("wss://relay.nostr.info");
     expect(relays).not.toContain("wss://relay.damus.io");
     expect(relays).not.toContain("wss://relay.primal.net");
     expect(relays).not.toContain("wss://nostr.wine");

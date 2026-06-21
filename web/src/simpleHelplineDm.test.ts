@@ -3,6 +3,9 @@ import { generateSecretKey, getPublicKey, nip17, nip19 } from "nostr-tools";
 import {
   contentIsQuestionnaireInviteLinkOnly,
   fetchHelplineDmMessages,
+  resetHelplineDmMessageFeedsForTests,
+  subscribeHelplineDmMessages,
+  type HelplineDmMessage,
 } from "./simpleHelplineDm";
 
 const querySync = vi.fn();
@@ -15,9 +18,12 @@ vi.mock("./sharedNostrPool", () => ({
 
 describe("simpleHelplineDm", () => {
   beforeEach(() => {
+    resetHelplineDmMessageFeedsForTests();
     querySync.mockReset();
+    querySync.mockResolvedValue([]);
     publish.mockReset();
     subscribeMany.mockReset();
+    subscribeMany.mockReturnValue({ close: vi.fn() });
   });
 
   it("recognises a bare voter questionnaire link", () => {
@@ -81,5 +87,60 @@ describe("simpleHelplineDm", () => {
     });
 
     expect(messages.map((message) => message.body)).toEqual([link]);
+  });
+
+  it("shares one actor feed between listeners and replays cached live messages", async () => {
+    const actorSecret = generateSecretKey();
+    const actorHex = getPublicKey(actorSecret);
+    const actorNsec = nip19.nsecEncode(actorSecret);
+    const peerSecret = generateSecretKey();
+    const peerNpub = nip19.npubEncode(getPublicKey(peerSecret));
+    const firstSnapshots: HelplineDmMessage[][] = [];
+    const secondSnapshots: HelplineDmMessage[][] = [];
+    let liveEventHandler: ((event: ReturnType<typeof nip17.wrapEvent>) => void) | undefined;
+
+    subscribeMany.mockImplementation((_relays, _filter, handlers) => {
+      liveEventHandler = handlers.onevent;
+      return { close: vi.fn() };
+    });
+
+    const unsubscribeFirst = subscribeHelplineDmMessages({
+      actorNsec,
+      relays: ["wss://relay.example"],
+      onMessages: (messages) => firstSnapshots.push(messages),
+    });
+
+    await vi.waitFor(() => {
+      expect(querySync).toHaveBeenCalledTimes(1);
+      expect(subscribeMany).toHaveBeenCalledTimes(1);
+    });
+
+    const liveMessage = nip17.wrapEvent(
+      peerSecret,
+      { publicKey: actorHex, relayUrl: "wss://relay.example" },
+      "Message already seen by the unread badge.",
+      "Auditable Voting helpline",
+    );
+    liveEventHandler?.(liveMessage);
+
+    expect(firstSnapshots.at(-1)?.map((message) => message.body)).toEqual([
+      "Message already seen by the unread badge.",
+    ]);
+
+    const unsubscribeSecond = subscribeHelplineDmMessages({
+      actorNsec,
+      relays: ["wss://relay.example"],
+      allowedPeerNpubs: [peerNpub],
+      onMessages: (messages) => secondSnapshots.push(messages),
+    });
+
+    expect(querySync).toHaveBeenCalledTimes(1);
+    expect(subscribeMany).toHaveBeenCalledTimes(1);
+    expect(secondSnapshots.at(-1)?.map((message) => message.body)).toEqual([
+      "Message already seen by the unread badge.",
+    ]);
+
+    unsubscribeFirst();
+    unsubscribeSecond();
   });
 });

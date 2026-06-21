@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
+import { deriveIdentityWords } from "./identityWords";
 import type {
   QuestionnaireQuestion,
   QuestionnaireResponseAnswer,
   QuestionnaireResultQuestionSummary,
 } from "./questionnaireProtocol";
+
+const SUBMITTED_VOTES_PAGE_SIZE = 100;
 
 export type QuestionnaireResultsDashboardQuestionnaire = {
   questionnaireId: string;
@@ -45,6 +48,9 @@ type QuestionnaireResultsDashboardProps = {
   responseDetails: QuestionnaireResultsDashboardResponseDetail[];
   displayValidCount: number;
   displayInvalidCount?: number;
+  loadedValidCount?: number;
+  loadedInvalidCount?: number;
+  publishedTotalsAvailable?: boolean;
   showSubmittedVotes?: boolean;
   variant?: "default" | "session";
   topControls?: ReactNode;
@@ -73,13 +79,34 @@ export function questionnaireResponseDetailMatchesSearch(
   }
   const submitterIdentityFull = entry.response.authorPubkey.trim();
   const submitterIdentityShort = deriveActorDisplayId(submitterIdentityFull);
+  const submitterIdentityWords = deriveIdentityWords(submitterIdentityFull);
   return (
     entry.response.responseId.toLowerCase().includes(query)
     || submitterIdentityShort.toLowerCase().includes(query)
+    || submitterIdentityWords.toLowerCase().includes(query)
     || submitterIdentityFull.toLowerCase().includes(query)
     || (entry.response.tokenNullifier ?? "").toLowerCase().includes(query)
     || (entry.rejectionReason ?? "").toLowerCase().includes(query)
   );
+}
+
+function compareResponseDetailsByShortId(
+  left: QuestionnaireResultsDashboardResponseDetail,
+  right: QuestionnaireResultsDashboardResponseDetail,
+) {
+  const leftShortId = deriveActorDisplayId(left.response.authorPubkey).toLowerCase();
+  const rightShortId = deriveActorDisplayId(right.response.authorPubkey).toLowerCase();
+  const shortIdOrder = leftShortId.localeCompare(rightShortId, undefined, { numeric: true });
+  if (shortIdOrder !== 0) {
+    return shortIdOrder;
+  }
+  const leftResponseId = left.response.responseId.toLowerCase();
+  const rightResponseId = right.response.responseId.toLowerCase();
+  const responseIdOrder = leftResponseId.localeCompare(rightResponseId, undefined, { numeric: true });
+  if (responseIdOrder !== 0) {
+    return responseIdOrder;
+  }
+  return String(left.event.id).localeCompare(String(right.event.id));
 }
 
 export default function QuestionnaireResultsDashboard({
@@ -88,6 +115,9 @@ export default function QuestionnaireResultsDashboard({
   responseDetails,
   displayValidCount,
   displayInvalidCount = responseDetails.filter((entry) => !entry.accepted).length,
+  loadedValidCount,
+  loadedInvalidCount,
+  publishedTotalsAvailable = false,
   showSubmittedVotes = true,
   variant = "default",
   topControls,
@@ -107,6 +137,7 @@ export default function QuestionnaireResultsDashboard({
 }: QuestionnaireResultsDashboardProps) {
   const [voterSearchQuery, setVoterSearchQuery] = useState("");
   const [showInvalidVotes, setShowInvalidVotes] = useState(false);
+  const [submittedPageIndex, setSubmittedPageIndex] = useState(0);
   const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
 
   const selectedQuestionById = useMemo(
@@ -138,6 +169,9 @@ export default function QuestionnaireResultsDashboard({
     [responseDetails],
   );
   const hasInvalidResponses = invalidResponseCount > 0;
+  const loadedAcceptedCount = loadedValidCount ?? responseDetails.filter((entry) => entry.accepted).length;
+  const loadedRejectedCount = loadedInvalidCount ?? invalidResponseCount;
+  const loadedTotalCount = loadedAcceptedCount + loadedRejectedCount;
 
   useEffect(() => {
     if (!hasInvalidResponses && showInvalidVotes) {
@@ -149,8 +183,34 @@ export default function QuestionnaireResultsDashboard({
     const visibilityFiltered = showInvalidVotes
       ? responseDetails.filter((entry) => !entry.accepted)
       : responseDetails.filter((entry) => entry.accepted);
-    return visibilityFiltered.filter((entry) => questionnaireResponseDetailMatchesSearch(entry, voterSearchQuery));
+    return visibilityFiltered
+      .filter((entry) => questionnaireResponseDetailMatchesSearch(entry, voterSearchQuery))
+      .sort(compareResponseDetailsByShortId);
   }, [responseDetails, showInvalidVotes, voterSearchQuery]);
+  const submittedPageCount = Math.max(1, Math.ceil(filteredResponseDetails.length / SUBMITTED_VOTES_PAGE_SIZE));
+  const clampedSubmittedPageIndex = Math.min(submittedPageIndex, submittedPageCount - 1);
+  const visibleResponseDetails = useMemo(() => {
+    const pageStart = clampedSubmittedPageIndex * SUBMITTED_VOTES_PAGE_SIZE;
+    return filteredResponseDetails.slice(pageStart, pageStart + SUBMITTED_VOTES_PAGE_SIZE);
+  }, [clampedSubmittedPageIndex, filteredResponseDetails]);
+  const visibleResponseStart = filteredResponseDetails.length > 0
+    ? clampedSubmittedPageIndex * SUBMITTED_VOTES_PAGE_SIZE + 1
+    : 0;
+  const visibleResponseEnd = Math.min(
+    filteredResponseDetails.length,
+    visibleResponseStart + visibleResponseDetails.length - 1,
+  );
+  const shouldShowSubmittedPager = filteredResponseDetails.length > SUBMITTED_VOTES_PAGE_SIZE;
+
+  useEffect(() => {
+    setSubmittedPageIndex(0);
+  }, [showInvalidVotes, voterSearchQuery]);
+
+  useEffect(() => {
+    if (submittedPageIndex !== clampedSubmittedPageIndex) {
+      setSubmittedPageIndex(clampedSubmittedPageIndex);
+    }
+  }, [clampedSubmittedPageIndex, submittedPageIndex]);
 
   const displayTotalCount = Math.max(0, displayValidCount + displayInvalidCount);
   const displayValidityPercent = displayTotalCount > 0
@@ -160,6 +220,8 @@ export default function QuestionnaireResultsDashboard({
   const displayValidityPercentLabel = displayTotalCount > 0
     ? `${Math.round(displayValidityPercentNumber)}%`
     : "0%";
+  const publishedProgressLabel = `${displayValidCount}/${displayTotalCount || 0} accepted (${displayValidityPercentLabel})`;
+  const loadedResponsesLabel = `${loadedTotalCount} loaded · ${loadedAcceptedCount} accepted${loadedRejectedCount > 0 ? ` · ${loadedRejectedCount} invalid` : ""}`;
   const closingStatus = getClosingStatus(questionnaire);
   const questionnaireDescription = questionnaire?.description?.trim() ?? "";
   const isSessionVariant = variant === "session";
@@ -239,8 +301,7 @@ export default function QuestionnaireResultsDashboard({
     Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
       <details className='simple-auditor-response-disclosure'>
         <summary>
-          <span>Responses</span>
-          <span>{entry.response.answers.length}</span>
+          <span>Responses ({entry.response.answers.length})</span>
         </summary>
         <div className='simple-auditor-response-set'>
           {renderAnswerList(entry)}
@@ -250,6 +311,15 @@ export default function QuestionnaireResultsDashboard({
       <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
     )
   );
+
+  const renderResponseIdentityWords = (identity: string) => {
+    const words = deriveIdentityWords(identity);
+    return words ? (
+      <span className='simple-identity-words-badge'>
+        {words}
+      </span>
+    ) : null;
+  };
 
   return (
     <>
@@ -262,6 +332,16 @@ export default function QuestionnaireResultsDashboard({
         {isSessionVariant ? (
           <div className='simple-session-results-heading'>
             <h2 className='simple-voter-section-title'>Live Results</h2>
+            <div className='simple-session-live-status' aria-label='Live status'>
+              <span className='simple-session-live-status-value'>
+                {publishedTotalsAvailable ? publishedProgressLabel : loadedResponsesLabel}
+              </span>
+              {publishedTotalsAvailable ? (
+                <div className='simple-auditor-results-progress' aria-hidden='true'>
+                  <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
         {questionnaire ? (
@@ -303,11 +383,20 @@ export default function QuestionnaireResultsDashboard({
                 </dl>
               </article>
               <article className='simple-auditor-status-card'>
-                <p className='simple-auditor-summary-label'>Progress</p>
-                <p className='simple-auditor-status-value'>{displayValidCount}/{displayTotalCount || 0} accepted ({displayValidityPercentLabel})</p>
-                <div className='simple-auditor-results-progress' aria-hidden='true'>
-                  <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
-                </div>
+                <p className='simple-auditor-summary-label'>{publishedTotalsAvailable ? "Published total" : "Loaded responses"}</p>
+                <p className='simple-auditor-status-value'>
+                  {publishedTotalsAvailable ? publishedProgressLabel : `${loadedTotalCount} loaded`}
+                </p>
+                {publishedTotalsAvailable ? (
+                  <div className='simple-auditor-results-progress' aria-hidden='true'>
+                    <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
+                  </div>
+                ) : null}
+                <p className='simple-voter-note'>
+                  {publishedTotalsAvailable
+                    ? `Loaded responses: ${loadedResponsesLabel}`
+                    : `${loadedAcceptedCount} accepted in loaded responses${loadedRejectedCount > 0 ? `; ${loadedRejectedCount} invalid` : ""}.`}
+                </p>
               </article>
               <article className='simple-auditor-status-card'>
                 <p className='simple-auditor-summary-label'>Published / Closed</p>
@@ -338,16 +427,6 @@ export default function QuestionnaireResultsDashboard({
             {questionSummaries.length > 0 ? (
               <>
                 <div className={`simple-auditor-question-grid${isSessionVariant ? " simple-session-question-grid" : ""}`}>
-                  {isSessionVariant ? (
-                    <article className='simple-auditor-question-card simple-session-live-card'>
-                      <p className='simple-auditor-summary-label'>Live status</p>
-                      <p className='simple-auditor-score'>{displayValidCount}/{displayTotalCount || 0}</p>
-                      <p className='simple-voter-note'>accepted ({displayValidityPercentLabel})</p>
-                      <div className='simple-auditor-results-progress' aria-hidden='true'>
-                        <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
-                      </div>
-                    </article>
-                  ) : null}
                   {questionSummaries.map((summary) => {
                     const questionNumber = selectedQuestionNumberById.get(summary.questionId);
                     const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
@@ -403,9 +482,9 @@ export default function QuestionnaireResultsDashboard({
               <p className='simple-voter-empty'>{emptyQuestionSummaryText}</p>
             )}
           </>
-        ) : (
+        ) : emptySelectionText ? (
           <p className='simple-voter-empty'>{emptySelectionText}</p>
-        )}
+        ) : null}
       </section>
 
       {showSubmittedVotes ? (
@@ -419,7 +498,7 @@ export default function QuestionnaireResultsDashboard({
               <div className={`simple-auditor-submitted-toolbar${isSessionVariant ? " simple-session-submitted-toolbar" : ""}`}>
                 {!isSessionVariant ? (
                 <div className='simple-auditor-submitted-stat'>
-                  <p className='simple-auditor-summary-label'>Total responses</p>
+                  <p className='simple-auditor-summary-label'>Loaded responses</p>
                   <p className='simple-auditor-score'>{responseDetails.length}</p>
                 </div>
                 ) : null}
@@ -430,7 +509,7 @@ export default function QuestionnaireResultsDashboard({
                     className='simple-voter-input'
                     value={voterSearchQuery}
                     onChange={(event) => setVoterSearchQuery(event.target.value)}
-                    placeholder='Search by Submission ID, Submittor identity - short/full, or token...'
+                    placeholder='Search by Submission ID, identity words, full identity, or token...'
                   />
                   {hasInvalidResponses ? (
                     <label className='simple-voter-note simple-auditor-invalid-toggle'>
@@ -450,12 +529,43 @@ export default function QuestionnaireResultsDashboard({
                   </div>
                 ) : null}
               </div>
+              {filteredResponseDetails.length > 0 ? (
+                <div className='simple-auditor-submitted-pager' aria-label='Submitted vote page controls'>
+                  <p>
+                    Showing {visibleResponseStart}-{visibleResponseEnd} of {filteredResponseDetails.length}
+                    {" "}
+                    <span>Sorted by short ID</span>
+                  </p>
+                  {shouldShowSubmittedPager ? (
+                    <div className='simple-auditor-submitted-pager-actions'>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => setSubmittedPageIndex((previous) => Math.max(0, previous - 1))}
+                        disabled={clampedSubmittedPageIndex <= 0}
+                        aria-label='Previous submitted votes'
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => setSubmittedPageIndex((previous) => Math.min(submittedPageCount - 1, previous + 1))}
+                        disabled={clampedSubmittedPageIndex >= submittedPageCount - 1}
+                        aria-label='Next submitted votes'
+                      >
+                        Next
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {isSessionVariant ? (
                 <div className='simple-session-table-wrap'>
                   <table className='simple-session-submissions-table'>
                     <thead>
                       <tr>
-                        <th>Colour ID</th>
+                        <th>Identity marker</th>
                         <th>Submittor identity</th>
                         <th>Submission time</th>
                         <th>Response ID</th>
@@ -464,17 +574,24 @@ export default function QuestionnaireResultsDashboard({
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredResponseDetails.map((entry) => (
+                      {visibleResponseDetails.map((entry) => (
                         <tr key={entry.event.id}>
                           <td>
-                            <TokenFingerprint
-                              tokenId={entry.response.authorPubkey}
-                              compact
-                              hideMetadata
-                              fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
-                            />
+                            <div className='simple-session-response-marker-cell'>
+                              <span className='simple-response-short-id'>{deriveActorDisplayId(entry.response.authorPubkey)}</span>
+                              <TokenFingerprint
+                                tokenId={entry.response.authorPubkey}
+                                compact
+                                hideMetadata
+                                fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
+                              />
+                            </div>
                           </td>
-                          <td title={entry.response.authorPubkey}>{deriveActorDisplayId(entry.response.authorPubkey)}</td>
+                          <td title={entry.response.authorPubkey}>
+                            <div className='simple-response-identity-cell'>
+                              {renderResponseIdentityWords(entry.response.authorPubkey)}
+                            </div>
+                          </td>
                           <td>{formatQuestionnaireTime(entry.response.submittedAt ?? entry.event.created_at ?? 0)}</td>
                           <td className='simple-session-response-id'>{entry.response.responseId}</td>
                           <td>{renderResponseDisclosure(entry)}</td>
@@ -495,10 +612,13 @@ export default function QuestionnaireResultsDashboard({
                 </div>
               ) : (
                 <ul className='simple-voter-list simple-auditor-result-list'>
-                {filteredResponseDetails.map((entry) => (
+                {visibleResponseDetails.map((entry) => (
                   <li key={entry.event.id} className='simple-voter-list-item'>
                     <div className='simple-auditor-result-row'>
                       <div className='simple-auditor-result-marker'>
+                        <div className='simple-auditor-result-marker-label'>
+                          <span>{deriveActorDisplayId(entry.response.authorPubkey)}</span>
+                        </div>
                         <TokenFingerprint
                           tokenId={entry.response.authorPubkey}
                           compact
@@ -506,9 +626,6 @@ export default function QuestionnaireResultsDashboard({
                           hideMetadata
                           fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
                         />
-                        <div className='simple-auditor-result-marker-label'>
-                          <span data-tooltip='Colour ID: a visual fingerprint for checking this submission identity at a glance.'>Colour ID</span>
-                        </div>
                         {!entry.accepted ? (
                           <p className='simple-auditor-status-chip simple-auditor-status-chip-invalid'>
                             Invalid
@@ -518,8 +635,9 @@ export default function QuestionnaireResultsDashboard({
                       <div className='simple-auditor-result-body'>
                         <dl className='simple-auditor-submission-meta'>
                           <div className='simple-auditor-submission-meta-identity'>
-                            <dt>Submittor identity</dt>
-                            <dd title={entry.response.authorPubkey}>{deriveActorDisplayId(entry.response.authorPubkey)}</dd>
+                            <dd title={entry.response.authorPubkey}>
+                              {renderResponseIdentityWords(entry.response.authorPubkey)}
+                            </dd>
                           </div>
                           <div className='simple-auditor-submission-meta-time'>
                             <dt>Submission time</dt>
@@ -758,7 +876,7 @@ function formatFreeTextAnswer(text: string) {
 }
 
 function formatVoteShare(count: number, percent: number) {
-  return `${percent.toFixed(0)}% | ${count} vote${count === 1 ? "" : "s"}`;
+  return `${percent.toFixed(0)}% ${count} ${count === 1 ? "VOTE" : "VOTES"}`;
 }
 
 function formatBooleanVoteShare(count: number, percent: number) {

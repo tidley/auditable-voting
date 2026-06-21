@@ -45,7 +45,9 @@ import { deriveActorDisplayId } from "./actorDisplay";
 
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
-const AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT = 400;
+const AUDITOR_QUESTIONNAIRE_RESPONSE_PAGE_LIMIT = 500;
+const AUDITOR_QUESTIONNAIRE_RESPONSE_MAX_PAGES = 32;
+const AUDITOR_QUESTIONNAIRE_RESPONSE_TIME_BUDGET_MS = 30_000;
 const AUDITOR_RESPONSE_AUTO_REFRESH_MS = 8_000;
 const AUDITOR_LIST_AUTO_REFRESH_MS = 30_000;
 
@@ -121,6 +123,20 @@ function writeSelectedQuestionnaireIdToUrl(questionnaireId: string) {
     url.searchParams.delete("election_id");
   }
   window.history.replaceState({}, "", url.toString());
+}
+
+function calculateAuditorResponseFetchLimit(...counts: Array<number | null | undefined>) {
+  const expectedCount = Math.max(
+    0,
+    ...counts
+      .map((count) => Number(count ?? 0))
+      .filter((count) => Number.isFinite(count) && count > 0),
+  );
+  if (expectedCount <= 0) {
+    return AUDITOR_QUESTIONNAIRE_RESPONSE_PAGE_LIMIT;
+  }
+  const headroom = Math.max(50, Math.ceil(expectedCount * 0.1));
+  return Math.max(AUDITOR_QUESTIONNAIRE_RESPONSE_PAGE_LIMIT, expectedCount + headroom);
 }
 
 export default function SimpleAuditorApp() {
@@ -334,56 +350,86 @@ export default function SimpleAuditorApp() {
     try {
       const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
       const questionnaireRelays = selectedQuestionnaire?.questionnaireRelays;
-      const definitionEntries = await fetchQuestionnaireDefinitions({
-        questionnaireId: selectedId,
-        limit: 50,
-        readRelayLimit: 8,
-        preferKindOnly: true,
-        relays: questionnaireRelays,
-      }).catch(() => []);
-      const responseEntries = await fetchQuestionnaireBlindResponses({
-        questionnaireId: selectedId,
-        limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
-        readRelayLimit: 2,
-        preferKindOnly: true,
-        relays: questionnaireRelays,
-      });
-      const decisionEntries = await fetchQuestionnaireSubmissionDecisions({
-        questionnaireId: selectedId,
-        limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
-        readRelayLimit: 2,
-        preferKindOnly: true,
-        relays: questionnaireRelays,
-      }).catch(() => []);
-      const resultEntries = await fetchQuestionnaireResultSummary({
-        questionnaireId: selectedId,
-        limit: 50,
-        readRelayLimit: 2,
-        preferKindOnly: true,
-        relays: questionnaireRelays,
-      }).catch(() => []);
-      const stateEntries = await fetchQuestionnaireState({
-        questionnaireId: selectedId,
-        limit: 50,
-        readRelayLimit: 2,
-        preferKindOnly: true,
-        relays: questionnaireRelays,
-      }).catch(() => []);
-      const delegationStatus = await fetchQuestionnaireWorkerDelegationStatus({
-        questionnaireId: selectedId,
-        readRelayLimit: 2,
-        relays: questionnaireRelays,
-      }).catch(() => null);
-      const participantCountEntries = await fetchQuestionnaireParticipantCount({
-        questionnaireId: selectedId,
-        limit: 50,
-        readRelayLimit: 2,
-        preferKindOnly: true,
-        relays: questionnaireRelays,
-      }).catch(() => []);
+      const [
+        definitionEntries,
+        resultEntries,
+        stateEntries,
+        delegationStatus,
+        participantCountEntries,
+      ] = await Promise.all([
+        fetchQuestionnaireDefinitions({
+          questionnaireId: selectedId,
+          limit: 50,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          relays: questionnaireRelays,
+        }).catch(() => []),
+        fetchQuestionnaireResultSummary({
+          questionnaireId: selectedId,
+          limit: 50,
+          readRelayLimit: 5,
+          preferKindOnly: true,
+          maxPages: 32,
+          timeBudgetMs: AUDITOR_QUESTIONNAIRE_RESPONSE_TIME_BUDGET_MS,
+          relays: questionnaireRelays,
+        }).catch(() => []),
+        fetchQuestionnaireState({
+          questionnaireId: selectedId,
+          limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
+          relays: questionnaireRelays,
+        }).catch(() => []),
+        fetchQuestionnaireWorkerDelegationStatus({
+          questionnaireId: selectedId,
+          readRelayLimit: 2,
+          relays: questionnaireRelays,
+        }).catch(() => null),
+        fetchQuestionnaireParticipantCount({
+          questionnaireId: selectedId,
+          limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
+          relays: questionnaireRelays,
+        }).catch(() => []),
+      ]);
       const latestDefinition = [...definitionEntries]
         .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]
         ?.definition ?? null;
+      const latestResult = [...resultEntries]
+        .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0];
+      const latestParticipantCount = selectedQuestionnaire
+        ? selectLatestParticipantCount(participantCountEntries, selectedId, selectedQuestionnaire.coordinatorNpub)
+        : null;
+      const expectedResponseTotal = latestResult?.summary
+        ? latestResult.summary.acceptedResponseCount + latestResult.summary.rejectedResponseCount
+        : null;
+      const responseFetchLimit = calculateAuditorResponseFetchLimit(
+        expectedResponseTotal,
+        latestResult?.summary.publishedResponseRefs?.length,
+        latestParticipantCount?.expectedInviteeCount,
+        selectedQuestionnaire?.expectedInviteeCount,
+      );
+      const [responseEntries, decisionEntries] = await Promise.all([
+        fetchQuestionnaireBlindResponses({
+          questionnaireId: selectedId,
+          limit: responseFetchLimit,
+          readRelayLimit: 5,
+          preferKindOnly: true,
+          maxPages: AUDITOR_QUESTIONNAIRE_RESPONSE_MAX_PAGES,
+          timeBudgetMs: AUDITOR_QUESTIONNAIRE_RESPONSE_TIME_BUDGET_MS,
+          relays: questionnaireRelays,
+        }),
+        fetchQuestionnaireSubmissionDecisions({
+          questionnaireId: selectedId,
+          limit: responseFetchLimit,
+          readRelayLimit: 5,
+          preferKindOnly: true,
+          maxPages: AUDITOR_QUESTIONNAIRE_RESPONSE_MAX_PAGES,
+          timeBudgetMs: AUDITOR_QUESTIONNAIRE_RESPONSE_TIME_BUDGET_MS,
+          relays: questionnaireRelays,
+        }).catch(() => []),
+      ]);
       const verifiedResponseIds = await verifyQuestionnaireBlindResponseProofs({
         entries: responseEntries,
         publicKey: latestDefinition?.blindSigningPublicKey ?? selectedQuestionnaire?.blindSigningPublicKey ?? null,
@@ -392,9 +438,8 @@ export default function SimpleAuditorApp() {
         entries: responseEntries,
         decisionEntries,
         verifiedResponseIds,
+        requireVerifiedProofs: true,
       });
-      const latestResult = [...resultEntries]
-        .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0];
       const latestState = [...stateEntries]
         .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0];
       const latestPublishAt = latestResult?.event.created_at ?? null;
@@ -440,7 +485,6 @@ export default function SimpleAuditorApp() {
         if (entry.questionnaireId !== selectedId) {
           return entry;
         }
-        const latestParticipantCount = selectLatestParticipantCount(participantCountEntries, selectedId, entry.coordinatorNpub);
         return {
           ...entry,
           ...(latestParticipantCount ? { expectedInviteeCount: latestParticipantCount.expectedInviteeCount } : {}),
@@ -574,7 +618,7 @@ export default function SimpleAuditorApp() {
       ],
       relays: selectedQuestionnaire?.questionnaireRelays,
       readRelayLimit: 8,
-      limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+      limit: AUDITOR_QUESTIONNAIRE_RESPONSE_PAGE_LIMIT,
       parseQuestionnaireIdFromEvent: (event) => {
         if (event.kind === QUESTIONNAIRE_DEFINITION_KIND) {
           return parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null;
@@ -875,6 +919,9 @@ export default function SimpleAuditorApp() {
           responseDetails={displayResponseDetails}
           displayValidCount={displayValidCount}
           displayInvalidCount={displayInvalidCount}
+          loadedValidCount={liveAcceptedCount}
+          loadedInvalidCount={liveRejectedCount}
+          publishedTotalsAvailable={Boolean(selectedResultSummary)}
           coordinatorLabel={selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub ? "Proxy" : "Organiser"}
           coordinatorText={selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub
             ? normalizeToNpub(selectedWorkerDelegationStatus.workerNpub)
@@ -903,7 +950,7 @@ export default function SimpleAuditorApp() {
           )}
           fallbackQuestionSummaryNote={
             selectedResultSummary && !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0
-              ? "Published result summary contains counts only; showing live per-question aggregates from verified submissions."
+              ? "Published result summary contains counts only; showing loaded per-question aggregates from verified submissions."
               : null
           }
           emptyQuestionSummaryText={

@@ -13,6 +13,7 @@ import {
 } from "./questionnaireOptionARuntime";
 import type { BallotScope, ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalState } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
+import { deriveIdentityWords } from "./identityWords";
 import {
   loadElectionSummary,
   loadVoterState,
@@ -25,6 +26,7 @@ import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition }
 import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
 import {
   normaliseQuestionBallotSlot,
+  questionBallotScopeKey,
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
 } from "./questionnaireProtocol";
@@ -32,6 +34,8 @@ import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import TokenFingerprint from "./TokenFingerprint";
 import { decodeNsec } from "./nostrIdentity";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
+import { tryWriteClipboard } from "./clipboard";
+import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import {
   hashQuestionnaireInviteCode,
   hashQuestionnairePrivateInviteClaim,
@@ -325,7 +329,84 @@ type QuestionnaireRoundProgress = {
   submitted: boolean;
 };
 
-function getQuestionnaireRoundProgress(state: VoterElectionLocalState | null | undefined): QuestionnaireRoundProgress {
+function resolveRoundProgressDefinition(
+  state: VoterElectionLocalState | null | undefined,
+  fallbackDefinition?: QuestionnaireDefinition | null,
+) {
+  const electionId = state?.electionId?.trim() ?? fallbackDefinition?.questionnaireId?.trim() ?? "";
+  const definitions = [
+    fallbackDefinition ?? null,
+    state?.inviteMessage?.definition ?? null,
+    state?.blindIssuance?.definition ?? null,
+    ...Object.values(state?.blindIssuances ?? {}).map((issuance) => issuance.definition ?? null),
+    electionId ? readCachedQuestionnaireDefinition(electionId) : null,
+  ];
+  return definitions.find((definition): definition is QuestionnaireDefinition => (
+    Boolean(definition) && (!electionId || definition.questionnaireId === electionId)
+  )) ?? null;
+}
+
+function collectSubmittedQuestionGroupKeys(
+  state: VoterElectionLocalState | null | undefined,
+  definition: QuestionnaireDefinition,
+) {
+  const questionById = new Map(definition.questions.map((question, index) => [
+    question.questionId,
+    { question, index },
+  ]));
+  const keys = new Set<string>();
+  const addQuestionId = (questionId: string) => {
+    const entry = questionById.get(questionId);
+    if (entry) {
+      keys.add(questionBallotScopeKey(entry.question, entry.index));
+    }
+  };
+  for (const questionId of Object.keys(state?.submissions ?? {})) {
+    addQuestionId(questionId);
+  }
+  const submissions = [
+    state?.submission ?? null,
+    ...Object.values(state?.submissions ?? {}),
+  ];
+  for (const submission of submissions) {
+    for (const response of submission?.payload?.responses ?? []) {
+      addQuestionId(response.questionId);
+    }
+  }
+  return keys;
+}
+
+function perQuestionRoundIsFullySubmitted(
+  state: VoterElectionLocalState | null | undefined,
+  definition: QuestionnaireDefinition,
+) {
+  const requiredGroupKeys = new Set(
+    definition.questions.map((question, index) => questionBallotScopeKey(question, index)),
+  );
+  if (requiredGroupKeys.size === 0) {
+    return Boolean(state?.submission);
+  }
+  const submittedGroupKeys = collectSubmittedQuestionGroupKeys(state, definition);
+  return [...requiredGroupKeys].every((key) => submittedGroupKeys.has(key));
+}
+
+function getQuestionnaireRoundProgress(
+  state: VoterElectionLocalState | null | undefined,
+  definition?: QuestionnaireDefinition | null,
+): QuestionnaireRoundProgress {
+  const progressDefinition = resolveRoundProgressDefinition(state, definition);
+  if (progressDefinition && questionnaireUsesPerQuestionCredentials(progressDefinition)) {
+    if (perQuestionRoundIsFullySubmitted(state, progressDefinition)) {
+      return { label: "submitted", submitted: true };
+    }
+    if (Object.keys(state?.blindIssuances ?? {}).length > 0 || state?.credentialReady) {
+      return { label: "ready", submitted: false };
+    }
+    if (Object.keys(state?.blindRequests ?? {}).length > 0 || state?.blindRequestSent) {
+      return { label: "awaiting ballot", submitted: false };
+    }
+    return { label: "not started", submitted: false };
+  }
   if (state?.submissionAccepted === true) {
     return { label: "accepted", submitted: true };
   }
@@ -350,7 +431,11 @@ function formatQuestionnaireRoundOptionLabel(input: {
   total: number;
   progress: QuestionnaireRoundProgress;
 }) {
-  return `${input.index + 1}/${input.total} ${resolveInviteDisplayTitle(input.invite)} · ${input.progress.label}`;
+  const title = resolveInviteDisplayTitle(input.invite);
+  const titleWithId = title === input.invite.electionId
+    ? input.invite.electionId
+    : `${title} - ${input.invite.electionId}`;
+  return `${input.index + 1}/${input.total} ${titleWithId} · ${input.progress.label}`;
 }
 
 export function formatVoteActionButtonText(input: {
@@ -364,6 +449,7 @@ export function formatVoteActionButtonText(input: {
   responseSubmitted: boolean;
   perQuestionMode: boolean;
   allQuestionResponsesSubmitted: boolean;
+  canAdvanceQuestionBeforeSubmit?: boolean;
   submitInFlight: boolean;
 }) {
   const snapshot = input.snapshot;
@@ -375,6 +461,9 @@ export function formatVoteActionButtonText(input: {
   }
   if (input.responseSubmitted || (input.perQuestionMode && input.allQuestionResponsesSubmitted)) {
     return "View results";
+  }
+  if (input.canAdvanceQuestionBeforeSubmit) {
+    return "Next";
   }
   if (!input.requiredQuestionsAnswered) {
     return "Please answer all required questions";
@@ -544,10 +633,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [manualResendClockMs, setManualResendClockMs] = useState(() => Date.now());
   const [privateInviteBootstrapRetryNonce, setPrivateInviteBootstrapRetryNonce] = useState(0);
+  const { isCopied: isReceiptCopyActive, showCopied: showReceiptCopied } = useTransientCopiedLabel();
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const autoRequestInFlightForRef = useRef<Record<string, true>>({});
   const autoRequestLastAttemptAtRef = useRef<Record<string, number>>({});
   const autoRequestDelayedForRef = useRef<Record<string, true>>({});
+  const answerNextPrefetchInFlightForRef = useRef<Record<string, true>>({});
+  const answerNextPrefetchSentForRef = useRef<Record<string, true>>({});
+  const answerNextPrefetchLastAttemptAtRef = useRef<Record<string, number>>({});
   const requestRetryAtRef = useRef<Record<string, number>>({});
   const autoSignerLoginForRef = useRef<Record<string, true>>({});
   const bearerInviteBootstrapForRef = useRef<Record<string, true>>({});
@@ -1423,10 +1516,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const visibleQuestionEntries = useMemo(
     () => (
       perQuestionMode
-        ? activeQuestionGroupEntries
+        ? activeQuestion
+          ? [{ question: activeQuestion, index: activeQuestionIndex }]
+          : []
         : questions.map((question, index) => ({ question, index }))
     ),
-    [activeQuestionGroupEntries, perQuestionMode, questions],
+    [activeQuestion, activeQuestionIndex, perQuestionMode, questions],
   );
   const requiredQuestions = useMemo(
     () => answerableQuestions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
@@ -1792,6 +1887,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   async function openInvite(invite: ElectionInviteMessage, requestAfterLogin = false) {
     try {
+      setPrivateInviteBlock(null);
       const voterRuntime = new QuestionnaireOptionAVoterRuntime(createVoterSignerService(props.localVoterNsec), invite.electionId, props.localVoterNsec);
       const localVoterNpub = props.localVoterNpub?.trim() ?? "";
       const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
@@ -2157,23 +2253,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
-  function findAdjacentQuestionGroupIndex(fromIndex: number, direction: -1 | 1) {
+  function findAdjacentQuestionIndex(fromIndex: number, direction: -1 | 1) {
     if (!perQuestionMode || questions.length === 0) {
       return -1;
     }
-    const currentGroupKey = questions[fromIndex]
-      ? groupKeyForQuestionId(questions[fromIndex].questionId)
-      : "";
-    for (let offset = 1; offset <= questions.length; offset += 1) {
-      const index = fromIndex + (offset * direction);
-      if (index < 0 || index >= questions.length) {
-        break;
-      }
-      if (groupKeyForQuestionId(questions[index].questionId) !== currentGroupKey) {
-        return index;
-      }
+    const index = fromIndex + direction;
+    if (index < 0 || index >= questions.length) {
+      return -1;
     }
-    return -1;
+    return index;
   }
 
   function findNextUnsubmittedQuestionIndex(fromIndex: number, justSubmittedQuestionIds: string[] = []) {
@@ -2190,6 +2278,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     for (let offset = 1; offset <= questions.length; offset += 1) {
       const index = (fromIndex + offset) % questions.length;
       if (!isSubmitted(questions[index].questionId)) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  function findNextQuestionIndexInActiveGroup(fromIndex: number) {
+    if (!perQuestionMode || questions.length === 0 || !activeQuestionScopeKey) {
+      return -1;
+    }
+    for (let index = fromIndex + 1; index < questions.length; index += 1) {
+      if (groupKeyForQuestionId(questions[index].questionId) === activeQuestionScopeKey) {
         return index;
       }
     }
@@ -2714,7 +2814,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             coordinatorNpub: invite.coordinatorNpub,
           })
           : null;
-      map.set(key, getQuestionnaireRoundProgress(localState));
+      map.set(key, getQuestionnaireRoundProgress(localState, invite.definition ?? null));
     }
     return map;
   }, [
@@ -2729,9 +2829,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     : inviteDropdownOptions[0] ?? null;
   const currentInviteDropdownKey = selectedInviteKey || (currentInviteForDropdown ? inviteMessageKey(currentInviteForDropdown) : "");
   const currentInviteDropdownIndex = inviteDropdownOptions.findIndex((invite) => inviteMessageKey(invite) === currentInviteDropdownKey);
-  const currentRoundProgress = currentInviteDropdownKey
-    ? inviteDropdownProgressByKey.get(currentInviteDropdownKey) ?? getQuestionnaireRoundProgress(null)
-    : getQuestionnaireRoundProgress(null);
   const nextInviteDropdownOption = useMemo(() => {
     if (inviteDropdownOptions.length <= 1) {
       return null;
@@ -2759,9 +2856,79 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ? "Opening..."
     : nextInviteDropdownOption
       ? `Answer next (${nextInviteDropdownIndex + 1}/${inviteDropdownOptions.length})`
-      : inviteDropdownOptions.length > 1 && currentRoundProgress.submitted
-        ? "All answered"
-        : "Answer next";
+      : "Answer next";
+  const showAnswerNextButton = responseSubmittedForCurrentQuestionnaire
+    && inviteDropdownOptions.length > 1
+    && Boolean(nextInviteDropdownOption);
+
+  useEffect(() => {
+    if (settingsMode || !showAnswerNextButton || !nextInviteDropdownOption) {
+      return;
+    }
+    const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    const localVoterNsec = props.localVoterNsec?.trim() ?? "";
+    if (!localVoterNpub || !localVoterNsec) {
+      return;
+    }
+    const invitedNpub = nextInviteDropdownOption.invitedNpub?.trim() || localVoterNpub;
+    if (invitedNpub !== localVoterNpub) {
+      return;
+    }
+    const nextElectionId = nextInviteDropdownOption.electionId.trim();
+    if (!nextElectionId || nextElectionId === currentQuestionnaireId) {
+      return;
+    }
+    const requestKey = `${nextElectionId}:${invitedNpub}:answer-next-prefetch`;
+    if (answerNextPrefetchSentForRef.current[requestKey] || answerNextPrefetchInFlightForRef.current[requestKey]) {
+      return;
+    }
+    const lastAttemptAt = answerNextPrefetchLastAttemptAtRef.current[requestKey] ?? 0;
+    if (Date.now() - lastAttemptAt < AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS) {
+      return;
+    }
+    const existingState = loadVoterState({
+      voterNpub: invitedNpub,
+      electionId: nextElectionId,
+      coordinatorNpub: nextInviteDropdownOption.coordinatorNpub,
+    });
+    if (existingState?.blindRequestSent || existingState?.credentialReady || existingState?.submission) {
+      answerNextPrefetchSentForRef.current[requestKey] = true;
+      return;
+    }
+
+    answerNextPrefetchInFlightForRef.current[requestKey] = true;
+    answerNextPrefetchLastAttemptAtRef.current[requestKey] = Date.now();
+    void (async () => {
+      const prefetchRuntime = new QuestionnaireOptionAVoterRuntime(createVoterSignerService(localVoterNsec), nextElectionId, localVoterNsec);
+      const next = prefetchRuntime.bootstrapWithLocalIdentity({
+        invitedNpub,
+        coordinatorNpub: nextInviteDropdownOption.coordinatorNpub,
+        invite: nextInviteDropdownOption,
+        allowInviteRecipientMismatch: true,
+        allowInviteMissing: true,
+      });
+      if (next.blindRequestSent || next.credentialReady || next.submission) {
+        answerNextPrefetchSentForRef.current[requestKey] = true;
+        return;
+      }
+      await prefetchRuntime.requestBlindBallot();
+      answerNextPrefetchSentForRef.current[requestKey] = true;
+      markSignerWaitRecoveryBaseline();
+      scheduleSignerInitialPull();
+      setRefreshNonce((value) => value + 1);
+    })().catch(() => {
+      // Best-effort prefetch. The visible Answer next path still requests explicitly.
+    }).finally(() => {
+      delete answerNextPrefetchInFlightForRef.current[requestKey];
+    });
+  }, [
+    currentQuestionnaireId,
+    nextInviteDropdownOption,
+    props.localVoterNpub,
+    props.localVoterNsec,
+    settingsMode,
+    showAnswerNextButton,
+  ]);
 
   useEffect(() => {
     const selectedQuestionnaireId = currentQuestionnaireId;
@@ -2828,6 +2995,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const answerableQuestionsHaveResponse = answerableQuestions.some(questionHasResponse);
   const activeQuestionGroupHasRequiredResponses = requiredQuestions.every(questionHasResponse);
   const activeQuestionGroupHasAnyResponse = answerableQuestions.some(questionHasResponse);
+  const activeQuestionHasResponse = Boolean(activeQuestion && questionHasResponse(activeQuestion));
   const requiredQuestionsAnsweredForAction = perQuestionMode
     ? Boolean(activeQuestion && activeQuestionGroupHasRequiredResponses)
     : requiredQuestionsAnswered;
@@ -2845,11 +3013,30 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && answerableQuestionsHaveResponseForAction
     && !responseSubmittedForCurrentQuestionnaire;
   const canAdvanceQuestion = perQuestionMode && responseSubmittedForCurrentQuestionnaire && !allQuestionResponsesSubmitted;
+  const nextQuestionIndexInActiveGroup = perQuestionMode ? findNextQuestionIndexInActiveGroup(activeQuestionIndex) : -1;
+  const canAdvanceQuestionBeforeSubmit = perQuestionMode
+    && !responseSubmittedForCurrentQuestionnaire
+    && !canSubmitNow
+    && activeQuestionHasResponse
+    && nextQuestionIndexInActiveGroup >= 0;
   const canViewResults = perQuestionMode
     ? allQuestionResponsesSubmitted
     : Boolean(snapshot?.submission);
-  const previousQuestionGroupIndex = perQuestionMode ? findAdjacentQuestionGroupIndex(activeQuestionIndex, -1) : -1;
-  const nextQuestionGroupIndex = perQuestionMode ? findAdjacentQuestionGroupIndex(activeQuestionIndex, 1) : -1;
+  const previousQuestionIndex = perQuestionMode ? findAdjacentQuestionIndex(activeQuestionIndex, -1) : -1;
+  const nextQuestionIndex = perQuestionMode ? findAdjacentQuestionIndex(activeQuestionIndex, 1) : -1;
+  const hasAdjacentQuestion = previousQuestionIndex >= 0 || nextQuestionIndex >= 0;
+  const activeQuestionProgressLabel = (() => {
+    const questionPosition = Math.min(activeQuestionIndex + 1, Math.max(questions.length, 1));
+    const questionCountLabel = questions.length > 1
+      ? `Question ${questionPosition}/${questions.length}`
+      : "1 question";
+    const scopeLabel = activeQuestionScope?.slotIndex
+      ? `Ballot ${activeQuestionScope.slotIndex} · ${questionCountLabel}`
+      : questionCountLabel;
+    return responseSubmittedForCurrentQuestionnaire
+      ? `${scopeLabel} · Complete`
+      : scopeLabel;
+  })();
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
     || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
     || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
@@ -2866,6 +3053,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     responseSubmitted: responseSubmittedForCurrentQuestionnaire,
     perQuestionMode,
     allQuestionResponsesSubmitted,
+    canAdvanceQuestionBeforeSubmit,
     submitInFlight,
   });
   useEffect(() => {
@@ -2895,6 +3083,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       responseSubmitted: responseSubmittedForCurrentQuestionnaire,
       perQuestionMode,
       allQuestionResponsesSubmitted,
+      canAdvanceQuestionBeforeSubmit,
       submitInFlight,
     });
     const questionnaireSeen = questions.length > 0 || Boolean(autoRequestDefinition);
@@ -2902,6 +3091,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ? "submitting"
       : responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted
         ? null
+        : canAdvanceQuestionBeforeSubmit
+          ? null
         : !requiredQuestionsAnsweredForAction
           ? "required_questions_unanswered"
           : !answerableQuestionsHaveResponseForAction
@@ -2938,7 +3129,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : snapshotForTarget?.submission ? 1 : 0,
       submitButtonPresent: true,
       submitButtonVisible: !settingsMode,
-      submitButtonDisabled: submitInFlight || !(canSubmitNow || responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted),
+      submitButtonDisabled: submitInFlight || !(canSubmitNow || canAdvanceQuestionBeforeSubmit || responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted),
       submitButtonText: debugSubmitButtonText,
       perQuestionMode,
       activeQuestionIndex,
@@ -3060,6 +3251,45 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? displaySubmission?.invitedNpub
     ?? (!perQuestionMode ? snapshot?.responseNpub ?? "" : "");
   const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
+  const submittedMarkerWords = submittedMarkerNpub ? deriveIdentityWords(submittedMarkerNpub) : "";
+  const receiptStatusLabel = snapshot?.submissionAccepted === true
+    ? "Accepted"
+    : snapshot?.submissionAccepted === false
+      ? "Rejected"
+      : displaySubmission
+        ? `Waiting for ${decisionActorName}`
+        : "Not submitted";
+  const submittedAtLabel = displaySubmission?.submittedAt
+    ? new Date(displaySubmission.submittedAt).toLocaleString()
+    : "";
+  const receiptRows = [
+    { key: "submitted", label: "Submitted", value: submittedAtLabel || "Recorded locally" },
+    { key: "find", label: "Find your vote", value: submittedMarkerWords || "Not available" },
+  ];
+  async function copyReceiptValue(value: string, key: string) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (await tryWriteClipboard(trimmed)) {
+      showReceiptCopied(key);
+    }
+  }
+  const advancedReceiptRows = [
+    { label: "Questionnaire ID", value: submittedQuestionnaireId },
+    { label: "Question ID", value: displaySubmissionQuestion?.questionId ?? null },
+    { label: "Submission ID", value: displaySubmission?.submissionId ?? null },
+    { label: "Anonymous identity npub", value: submittedMarkerNpub || null },
+    { label: "Token commitment", value: displaySubmission?.tokenCommitment ?? null },
+    { label: "Response nullifier", value: displaySubmission?.nullifier ?? null },
+    { label: "Credential signature", value: displaySubmission?.credential ?? null },
+    { label: "Credential bundle size", value: displaySubmission?.credentialBundle?.length ?? null },
+    { label: "Blind signing key", value: displaySubmission?.blindSigningKeyId ?? null },
+    { label: "Request ID", value: activeQuestionRequest?.requestId ?? snapshot?.blindRequest?.requestId ?? null },
+    { label: "Credential ID", value: activeQuestionIssuance?.issuanceId ?? snapshot?.blindIssuance?.issuanceId ?? null },
+    { label: "Submitted at", value: displaySubmission?.submittedAt ?? null },
+    { label: "Decision time", value: snapshot?.submissionAcceptedAt ?? null },
+  ];
   const voterIdentityForDetails = snapshot?.invitedNpub?.trim()
     || signedInNpub.trim()
     || props.localVoterNpub?.trim()
@@ -3094,13 +3324,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     },
     {
       label: "Token commitment",
-      value: snapshot?.blindIssuance?.tokenCommitment ?? snapshot?.blindRequest?.tokenCommitment ?? snapshot?.submission?.tokenCommitment ?? "Not created",
+      value: snapshot?.submission?.tokenCommitment ?? "Not created",
     },
     { label: "Response", value: submissionStateText },
     { label: "Submission ID", value: snapshot?.submission?.submissionId ?? "Not submitted" },
     { label: "Submission time", value: snapshot?.submission?.submittedAt ?? "Not submitted" },
     {
-      label: "Private submission identity",
+      label: "Anonymous voting identity",
       value: submittedMarkerNpub ? `${submittedMarkerLabel} (${submittedMarkerNpub})` : "Not created",
     },
     { label: "Response nullifier", value: snapshot?.submission?.nullifier ?? "Not created" },
@@ -3232,6 +3462,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     );
   }
 
+  if (privateInviteBlockCard) {
+    return (
+      <div className='simple-voter-card simple-optiona-voter-page'>
+        {privateInviteBlockCard}
+      </div>
+    );
+  }
+
   return (
     <div className='simple-voter-card simple-optiona-voter-page'>
       {props.showLoginAction !== false && !snapshot?.loginVerified ? (
@@ -3273,23 +3511,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               );
             })}
           </select>
-          <button
-            type='button'
-            className='simple-voter-primary simple-questionnaire-answer-next'
-            disabled={answerNextDisabled}
-            onClick={() => {
-              if (nextInviteDropdownOption && !answerNextDisabled) {
-                const key = inviteMessageKey(nextInviteDropdownOption);
-                setAnswerNextPendingKey(key);
-                void openInvite(nextInviteDropdownOption, true)
-                  .finally(() => {
-                    setAnswerNextPendingKey((current) => current === key ? "" : current);
-                  });
-              }
-            }}
-          >
-            {answerNextButtonText}
-          </button>
         </div>
       ) : null}
       {visiblePendingInvites.length > 0 ? (
@@ -3324,15 +3545,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       {privateInviteBlockCard}
       <section className='simple-questionnaire-voter-overview' aria-label='Questionnaire summary'>
         <div className='simple-questionnaire-voter-title-block'>
-          <p className='simple-questionnaire-voter-number'>
-            Questionnaire
-            <span className='simple-questionnaire-voter-number-id'>{questionnaireDisplayId || "Missing"}</span>
-          </p>
           <h4 className='simple-questionnaire-voter-prompt'>{questionnaireHeadingText}</h4>
           {showQuestionnaireDescription ? (
             <p className='simple-questionnaire-voter-description'>{questionnaireDescriptionText}</p>
           ) : null}
         </div>
+        <p className='simple-questionnaire-voter-number simple-questionnaire-voter-overview-id'>
+          Questionnaire
+          <span className='simple-questionnaire-voter-number-id'>{questionnaireDisplayId || "Missing"}</span>
+        </p>
       </section>
 
       {questions.length === 0 ? (
@@ -3344,39 +3565,40 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ) : (
         <div className='simple-questionnaire-voter-list'>
           {perQuestionMode ? (
-            <div className='simple-questionnaire-question-stepper' aria-label='Question progress'>
-              <button
-                type='button'
-                className='simple-voter-secondary simple-questionnaire-stepper-button'
-                disabled={previousQuestionGroupIndex < 0}
-                onClick={() => {
-                  if (previousQuestionGroupIndex >= 0) {
-                    setActiveQuestionIndex(previousQuestionGroupIndex);
-                  }
-                }}
-              >
-                Previous
-              </button>
+            <div className={`simple-questionnaire-question-stepper${hasAdjacentQuestion ? "" : " is-single-group"}`} aria-label='Question progress'>
+              {hasAdjacentQuestion ? (
+                <button
+                  type='button'
+                  className='simple-voter-secondary simple-questionnaire-stepper-button'
+                  disabled={previousQuestionIndex < 0}
+                  onClick={() => {
+                    if (previousQuestionIndex >= 0) {
+                      setActiveQuestionIndex(previousQuestionIndex);
+                    }
+                  }}
+                >
+                  <span className='simple-questionnaire-stepper-arrow is-left' aria-hidden='true' />
+                  <span>Previous</span>
+                </button>
+              ) : null}
               <p className='simple-questionnaire-question-progress'>
-                {activeQuestionScope?.slotIndex
-                  ? `Ballot ${activeQuestionScope.slotIndex}`
-                  : `Question ${Math.min(activeQuestionIndex + 1, questions.length)}/${questions.length}`}
-                {activeQuestionGroupEntries.length > 1
-                  ? ` · ${activeQuestionGroupEntries.length} questions`
-                  : ` · Question ${Math.min(activeQuestionIndex + 1, questions.length)}/${questions.length}`}
+                {activeQuestionProgressLabel}
               </p>
-              <button
-                type='button'
-                className='simple-voter-secondary simple-questionnaire-stepper-button'
-                disabled={nextQuestionGroupIndex < 0}
-                onClick={() => {
-                  if (nextQuestionGroupIndex >= 0) {
-                    setActiveQuestionIndex(nextQuestionGroupIndex);
-                  }
-                }}
-              >
-                Next
-              </button>
+              {hasAdjacentQuestion ? (
+                <button
+                  type='button'
+                  className='simple-voter-secondary simple-questionnaire-stepper-button'
+                  disabled={nextQuestionIndex < 0}
+                  onClick={() => {
+                    if (nextQuestionIndex >= 0) {
+                      setActiveQuestionIndex(nextQuestionIndex);
+                    }
+                  }}
+                >
+                  <span>Next</span>
+                  <span className='simple-questionnaire-stepper-arrow is-right' aria-hidden='true' />
+                </button>
+              ) : null}
             </div>
           ) : null}
           {visibleQuestionEntries.map(({ question, index }) => {
@@ -3393,7 +3615,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
               : null;
             const requirementLabel = questionAccepted
-              ? "Accepted"
+              ? null
               : questionSubmitted
                 ? "Submitted"
                 : rankRequirement?.label ?? (questionHasResponse(question) ? null : (question.required ? "Required" : "Optional"));
@@ -3452,7 +3674,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                       : [];
                     const checked = selected.includes(option.optionId);
                     return (
-                      <label key={option.optionId} className='simple-questionnaire-choice-row'>
+                      <label key={option.optionId} className={`simple-questionnaire-choice-row${checked ? " is-selected" : ""}`}>
                         <input
                           type={question.multiSelect ? "checkbox" : "radio"}
                           checked={checked}
@@ -3625,9 +3847,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <button
           type='button'
           className='simple-voter-primary'
-          disabled={submitInFlight || !(canSubmitNow || canAdvanceQuestion || canViewResults)}
+          disabled={submitInFlight || !(canSubmitNow || canAdvanceQuestionBeforeSubmit || canAdvanceQuestion || canViewResults)}
           onClick={() => {
             if (submitInFlight) {
+              return;
+            }
+            if (canAdvanceQuestionBeforeSubmit) {
+              if (nextQuestionIndexInActiveGroup >= 0) {
+                setActiveQuestionIndex(nextQuestionIndexInActiveGroup);
+              }
               return;
             }
             if (canAdvanceQuestion) {
@@ -3646,6 +3874,25 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         >
           {voteActionButtonText}
         </button>
+        {showAnswerNextButton ? (
+          <button
+            type='button'
+            className='simple-voter-primary simple-questionnaire-answer-next'
+            disabled={answerNextDisabled}
+            onClick={() => {
+              if (nextInviteDropdownOption && !answerNextDisabled) {
+                const key = inviteMessageKey(nextInviteDropdownOption);
+                setAnswerNextPendingKey(key);
+                void openInvite(nextInviteDropdownOption, true)
+                  .finally(() => {
+                    setAnswerNextPendingKey((current) => current === key ? "" : current);
+                  });
+              }
+            }}
+          >
+            {answerNextButtonText}
+          </button>
+        ) : null}
         {manualResendRequestVisible && !privateInviteBlock ? (
           <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
             Resend request
@@ -3653,63 +3900,94 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ) : null}
       </div>
       {displaySubmission ? (
-        <section className='simple-settings-card simple-submission-identity-card' aria-label='Anonymous ID used to vote'>
-          <div className='simple-submission-identity-header'>
+        <section className='simple-settings-card simple-submission-identity-card simple-vote-receipt-card' aria-label='Vote receipt'>
+          <div className='simple-submission-identity-header simple-vote-receipt-header'>
             <div>
-              <p className='simple-questionnaire-voter-number'>Private submission identity</p>
-              <h4 className='simple-voter-section-title'>
-                {displaySubmissionQuestion ? "Identity used for this question" : "Anonymous ID used to vote"}
-              </h4>
+              <h4 className='simple-voter-section-title'>Vote receipt</h4>
             </div>
+            <span className={snapshot?.submissionAccepted === false ? "simple-vote-receipt-status is-rejected" : "simple-vote-receipt-status"}>
+              {receiptStatusLabel}
+            </span>
           </div>
-          <div className='simple-submission-identity-body'>
-            <div className='simple-submission-identity-visuals'>
-              <TokenFingerprint
-                tokenId={submittedMarkerNpub}
-                label={displaySubmissionQuestion ? "Identity used for this question" : "Anonymous ID used to vote"}
-                large
-                showQr
-                hideMetadata
-                fingerprintTitle='Colour ID: a visual fingerprint for checking this private submission identity at a glance.'
-                qrTitle='QR code: scan this to copy the full private submission identity.'
-              />
-              <div className='simple-submission-identity-visual-labels'>
-                <span data-tooltip='Colour ID: a visual fingerprint for checking this private submission identity at a glance.'>Colour ID</span>
-                <span data-tooltip='QR code: scan this to copy the full private submission identity.'>QR code</span>
+          <div className='simple-submission-identity-body simple-vote-receipt-body'>
+            <div className='simple-vote-receipt-identity-panel'>
+              <div className='simple-vote-receipt-identity-copy'>
+                <span>Anonymous voting identity</span>
+                <div className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-identity'>
+                  <strong>{submittedMarkerLabel}</strong>
+                  {submittedMarkerNpub ? (
+                    <button
+                      type='button'
+                      className='simple-vote-receipt-copy-button'
+                      onClick={() => void copyReceiptValue(submittedMarkerNpub, "receipt-anonymous-identity")}
+                      aria-label={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied anonymous voting identity" : "Copy anonymous voting identity"}
+                      title={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied" : "Copy anonymous voting identity"}
+                      data-copied={isReceiptCopyActive("receipt-anonymous-identity") ? "true" : undefined}
+                    >
+                      <span className='simple-copy-icon' aria-hidden='true' />
+                      <span className='simple-vote-receipt-copy-feedback'>Copied</span>
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div className='simple-submission-identity-visuals'>
+                <TokenFingerprint
+                  tokenId={submittedMarkerNpub}
+                  label='Anonymous voting identity'
+                  large
+                  showQr
+                  hideMetadata
+                  fingerprintTitle='Visual marker for checking this vote receipt at a glance.'
+                  qrTitle='QR code: scan this to copy the full anonymous voting identity.'
+                />
+                <div className='simple-submission-identity-visual-labels'>
+                  <span data-tooltip='Visual marker for checking this vote receipt at a glance.'>Identity marker</span>
+                  <span data-tooltip='QR code: scan this to copy the full anonymous voting identity.'>QR code</span>
+                </div>
               </div>
             </div>
-            <dl className='simple-submission-identity-details'>
-              <div>
-                <dt>Questionnaire ID</dt>
-                <dd>{submittedQuestionnaireId}</dd>
-              </div>
-              {displaySubmissionQuestion ? (
-                <div>
-                  <dt>Question</dt>
+            <dl className='simple-vote-receipt-summary'>
+              {receiptRows.map((row) => (
+                <div key={row.key} className={row.key === "find" ? "is-identity-words" : ""}>
+                  <dt>
+                    <span className={`simple-vote-receipt-fact-icon is-${row.key}`} aria-hidden='true' />
+                    <span>{row.label}</span>
+                  </dt>
                   <dd>
-                    {activeQuestionGroupEntries.length > 1
-                      ? activeQuestionGroupEntries.map(({ question, index }) => `Q${index + 1}: ${question.prompt || question.questionId}`).join("; ")
-                      : `Q${activeQuestionIndex + 1}: ${displaySubmissionQuestion.prompt || displaySubmissionQuestion.questionId}`}
+                    {row.key === "find" ? (
+                      <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-words'>
+                        <span className='simple-identity-words-badge'>{row.value}</span>
+                        {row.value !== "Not available" ? (
+                          <button
+                            type='button'
+                            className='simple-vote-receipt-copy-button'
+                            onClick={() => void copyReceiptValue(row.value, "receipt-identity-words")}
+                            aria-label={isReceiptCopyActive("receipt-identity-words") ? "Copied vote finder words" : "Copy vote finder words"}
+                            title={isReceiptCopyActive("receipt-identity-words") ? "Copied" : "Copy vote finder words"}
+                            data-copied={isReceiptCopyActive("receipt-identity-words") ? "true" : undefined}
+                          >
+                            <span className='simple-copy-icon' aria-hidden='true' />
+                            <span className='simple-vote-receipt-copy-feedback'>Copied</span>
+                          </button>
+                        ) : null}
+                      </span>
+                    ) : row.value}
                   </dd>
                 </div>
-              ) : null}
-              <div>
-                <dt>Submission ID</dt>
-                <dd>{displaySubmission.submissionId}</dd>
-              </div>
-              {submittedMarkerNpub ? (
-                <>
-                  <div>
-                    <dt>Submitter identity - short</dt>
-                    <dd>{submittedMarkerLabel}</dd>
-                  </div>
-                  <div>
-                    <dt>Submitter identity - full</dt>
-                    <dd>{submittedMarkerNpub}</dd>
-                  </div>
-                </>
-              ) : null}
+              ))}
             </dl>
+            <details className='simple-vote-receipt-advanced'>
+              <summary>Advanced details</summary>
+              <p className='simple-voter-note'>Raw Nostr and cryptographic fields for troubleshooting and audit checks.</p>
+              <dl className='simple-submission-identity-details simple-vote-receipt-advanced-grid'>
+                {advancedReceiptRows.map((row) => (
+                  <div key={row.label}>
+                    <dt>{row.label}</dt>
+                    <dd>{formatBallotDetailValue(row.value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
           </div>
         </section>
       ) : null}

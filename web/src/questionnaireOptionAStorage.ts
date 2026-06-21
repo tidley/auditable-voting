@@ -1,6 +1,8 @@
 import {
   buildCoordinatorStorageKeys,
   buildVoterStorageKeys,
+  sanitiseBlindBallotIssuance,
+  sanitiseBlindBallotRequest,
   type BallotAcceptanceResult,
   type BallotSubmission,
   type BearerInviteCodeEntry,
@@ -153,6 +155,48 @@ function normaliseAdmittedVoterRecord(record: AdmittedVoterRecord): AdmittedVote
   };
 }
 
+function sanitiseBlindBallotRequestRecord(
+  requests: Record<string, BlindBallotRequest> | null | undefined,
+): Record<string, BlindBallotRequest> {
+  const next: Record<string, BlindBallotRequest> = {};
+  for (const request of Object.values(requests ?? {})) {
+    const sanitised = sanitiseBlindBallotRequest(request);
+    next[sanitised.requestId] = sanitised;
+  }
+  return next;
+}
+
+function sanitiseBlindBallotRequestRecordPreservingKeys(
+  requests: Record<string, BlindBallotRequest> | null | undefined,
+): Record<string, BlindBallotRequest> {
+  const next: Record<string, BlindBallotRequest> = {};
+  for (const [key, request] of Object.entries(requests ?? {})) {
+    next[key] = sanitiseBlindBallotRequest(request);
+  }
+  return next;
+}
+
+function sanitiseBlindBallotIssuanceRecord(
+  issuances: Record<string, BlindBallotIssuance> | null | undefined,
+): Record<string, BlindBallotIssuance> {
+  const next: Record<string, BlindBallotIssuance> = {};
+  for (const issuance of Object.values(issuances ?? {})) {
+    const sanitised = sanitiseBlindBallotIssuance(issuance);
+    next[sanitised.requestId] = sanitised;
+  }
+  return next;
+}
+
+function sanitiseBlindBallotIssuanceRecordPreservingKeys(
+  issuances: Record<string, BlindBallotIssuance> | null | undefined,
+): Record<string, BlindBallotIssuance> {
+  const next: Record<string, BlindBallotIssuance> = {};
+  for (const [key, issuance] of Object.entries(issuances ?? {})) {
+    next[key] = sanitiseBlindBallotIssuance(issuance);
+  }
+  return next;
+}
+
 export function loadAdmittedVoters(input: {
   coordinatorNpub: Npub;
 }): Record<Npub, AdmittedVoterRecord> {
@@ -303,8 +347,8 @@ export function saveCoordinatorState(input: {
   writeJson(keys.election, input.state.election);
   writeJson(keys.whitelist, input.state.whitelist);
   writeJson(keys.bearerInviteCodes, input.state.bearerInviteCodes ?? {});
-  writeJson(keys.requests, input.state.pendingBlindRequests);
-  writeJson(keys.issuances, input.state.issuedBlindResponses);
+  writeJson(keys.requests, sanitiseBlindBallotRequestRecord(input.state.pendingBlindRequests));
+  writeJson(keys.issuances, sanitiseBlindBallotIssuanceRecord(input.state.issuedBlindResponses));
   writeJson(keys.submissions, input.state.receivedSubmissions);
   writeJson(`${keys.election}:blindSigningPrivateKey`, input.state.blindSigningPrivateKey ?? null);
   writeJson(keys.acceptance, {
@@ -328,8 +372,12 @@ export function loadCoordinatorState(input: {
   });
   const whitelist = readJson<Record<Npub, WhitelistEntry>>(keys.whitelist, {});
   const bearerInviteCodes = readJson<Record<string, BearerInviteCodeEntry>>(keys.bearerInviteCodes, {});
-  const pendingBlindRequests = readJson<Record<string, BlindBallotRequest>>(keys.requests, {});
-  const issuedBlindResponses = readJson<Record<string, BlindBallotIssuance>>(keys.issuances, {});
+  const pendingBlindRequests = sanitiseBlindBallotRequestRecord(
+    readJson<Record<string, BlindBallotRequest>>(keys.requests, {}),
+  );
+  const issuedBlindResponses = sanitiseBlindBallotIssuanceRecord(
+    readJson<Record<string, BlindBallotIssuance>>(keys.issuances, {}),
+  );
   const receivedSubmissions = readJson<Record<string, BallotSubmission>>(keys.submissions, {});
   const blindSigningPrivateKey = readJson<CoordinatorElectionState["blindSigningPrivateKey"]>(
     `${keys.election}:blindSigningPrivateKey`,
@@ -409,16 +457,16 @@ export function saveVoterState(input: {
     loginVerifiedAt: input.state.loginVerifiedAt,
   });
   writeJson(keys.blindRequest, {
-    blindRequest: input.state.blindRequest,
-    blindRequests: input.state.blindRequests ?? {},
+    blindRequest: input.state.blindRequest ? sanitiseBlindBallotRequest(input.state.blindRequest) : null,
+    blindRequests: sanitiseBlindBallotRequestRecordPreservingKeys(input.state.blindRequests ?? {}),
     blindRequestSent: input.state.blindRequestSent,
     blindRequestSentAt: input.state.blindRequestSentAt,
     blindTokenSecret: input.state.blindTokenSecret,
     blindTokenSecrets: input.state.blindTokenSecrets ?? {},
   });
   writeJson(keys.issuance, {
-    blindIssuance: input.state.blindIssuance,
-    blindIssuances: input.state.blindIssuances ?? {},
+    blindIssuance: input.state.blindIssuance ? sanitiseBlindBallotIssuance(input.state.blindIssuance) : null,
+    blindIssuances: sanitiseBlindBallotIssuanceRecordPreservingKeys(input.state.blindIssuances ?? {}),
   });
   writeJson(keys.draftResponses, input.state.draftResponses);
   writeJson(keys.submission, {
@@ -472,11 +520,12 @@ export function loadVoterState(input: {
   const issuanceRecord = issuancePart && typeof issuancePart === "object" && !("type" in issuancePart)
     ? issuancePart
     : null;
-  const blindIssuance = issuancePart && typeof issuancePart === "object" && "type" in issuancePart
+  const blindIssuanceRaw = issuancePart && typeof issuancePart === "object" && "type" in issuancePart
     ? issuancePart
     : (issuanceRecord?.blindIssuance ?? null);
+  const blindIssuance = blindIssuanceRaw ? sanitiseBlindBallotIssuance(blindIssuanceRaw) : null;
   const blindIssuances = issuanceRecord
-    ? issuanceRecord.blindIssuances ?? {}
+    ? sanitiseBlindBallotIssuanceRecordPreservingKeys(issuanceRecord.blindIssuances ?? {})
     : (blindIssuance ? { __questionnaire__: blindIssuance } : {});
   const draftResponses = readJson<VoterElectionLocalState["draftResponses"]>(keys.draftResponses, []);
   const submissionPart = readJson<{
@@ -525,8 +574,10 @@ export function loadVoterState(input: {
     loginVerified: login.loginVerified,
     loginVerifiedAt: login.loginVerifiedAt ?? null,
     inviteMessage,
-    blindRequest: requestPart.blindRequest,
-    blindRequests: requestPart.blindRequests ?? (requestPart.blindRequest ? { __questionnaire__: requestPart.blindRequest } : {}),
+    blindRequest: requestPart.blindRequest ? sanitiseBlindBallotRequest(requestPart.blindRequest) : null,
+    blindRequests: sanitiseBlindBallotRequestRecordPreservingKeys(
+      requestPart.blindRequests ?? (requestPart.blindRequest ? { __questionnaire__: requestPart.blindRequest } : {}),
+    ),
     blindRequestSent: requestPart.blindRequestSent,
     blindRequestSentAt: requestPart.blindRequestSentAt ?? null,
     blindIssuance,
@@ -582,31 +633,40 @@ export function listInvitesForElectionFromMailbox(electionId: string) {
 
 export function enqueueBlindRequest(request: BlindBallotRequest) {
   const queue = readJson<BlindBallotRequest[]>(REQUEST_QUEUE_KEY, []);
-  const next = queue.filter((entry) => entry.requestId !== request.requestId);
-  next.push(request);
+  const sanitised = sanitiseBlindBallotRequest(request);
+  const next = queue
+    .map((entry) => sanitiseBlindBallotRequest(entry))
+    .filter((entry) => entry.requestId !== sanitised.requestId);
+  next.push(sanitised);
   writeJson(REQUEST_QUEUE_KEY, next);
 }
 
 export function listBlindRequests(electionId: string) {
   const queue = readJson<BlindBallotRequest[]>(REQUEST_QUEUE_KEY, []);
-  return queue.filter((entry) => entry.electionId === electionId);
+  return queue
+    .map((entry) => sanitiseBlindBallotRequest(entry))
+    .filter((entry) => entry.electionId === electionId);
 }
 
 export function dequeueBlindRequest(requestId: string) {
   const queue = readJson<BlindBallotRequest[]>(REQUEST_QUEUE_KEY, []);
-  const next = queue.filter((entry) => entry.requestId !== requestId);
+  const next = queue
+    .map((entry) => sanitiseBlindBallotRequest(entry))
+    .filter((entry) => entry.requestId !== requestId);
   writeJson(REQUEST_QUEUE_KEY, next);
 }
 
 export function storeBlindIssuance(issuance: BlindBallotIssuance) {
   const mailbox = readJson<Record<string, BlindBallotIssuance>>(ISSUANCE_MAILBOX_KEY, {});
-  mailbox[issuance.requestId] = issuance;
+  const sanitised = sanitiseBlindBallotIssuance(issuance);
+  mailbox[sanitised.requestId] = sanitised;
   writeJson(ISSUANCE_MAILBOX_KEY, mailbox);
 }
 
 export function readBlindIssuance(requestId: string) {
   const mailbox = readJson<Record<string, BlindBallotIssuance>>(ISSUANCE_MAILBOX_KEY, {});
-  return mailbox[requestId] ?? null;
+  const issuance = mailbox[requestId] ?? null;
+  return issuance ? sanitiseBlindBallotIssuance(issuance) : null;
 }
 
 export function readBlindIssuanceDeliveryRecord(requestId: string) {

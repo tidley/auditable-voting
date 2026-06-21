@@ -69,6 +69,7 @@ import {
 } from "./questionnaireWorkerDelegation";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
 import type { ElectionSummary } from "./questionnaireOptionA";
+import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -136,6 +137,7 @@ type QuestionnaireCoordinatorPanelProps = {
   canApplyAdmissionsOnPublish?: boolean;
   onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
   onResponseDetailsChange?: (responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => void;
+  onReadinessChange?: (items: QuestionnaireReadinessItem[]) => void;
   onStatusChange?: (status: {
     questionnaireId: string;
     state: QuestionnaireStateValue | null;
@@ -143,6 +145,13 @@ type QuestionnaireCoordinatorPanelProps = {
     rejectedCount: number;
     payloadMode: "Encrypted" | "Public";
   }) => void;
+};
+
+export type QuestionnaireReadinessItem = {
+  id: "title" | "description" | "question" | "answers" | "publish";
+  label: string;
+  shortLabel: string;
+  complete: boolean;
 };
 
 type QuestionnaireBlindResponseEntry = {
@@ -416,6 +425,13 @@ const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
   "wss://nos.lol",
   "wss://relay.nostr.info",
 ]);
+const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
+  "wss://relay.nostr.net",
+  "wss://nos.lol",
+]);
+const WORKER_DM_REJECTING_RELAYS = new Set([
+  "wss://relay.nostr.info",
+]);
 const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
   [`wss://nip17.${"tomdwyer.uk"}`, "wss://nos.lol"],
@@ -490,6 +506,36 @@ function sanitizeWorkerRelays(value: string) {
     .filter((entry) => entry.length > 0)
     .map((entry) => DEPRECATED_WORKER_RELAY_REPLACEMENTS.get(entry) ?? entry);
   return normalizeRelaysRust(relays);
+}
+
+function deriveWorkerDmRelays(workerRelays: string) {
+  const relays = sanitizeWorkerRelays(workerRelays)
+    .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay));
+  return relays.length > 0 ? relays : DEFAULT_WORKER_DM_RELAYS;
+}
+
+function questionnaireSessionSortTimeMs(id: string, eventCreatedAtById?: Map<string, number>) {
+  const summary = loadElectionSummary(id);
+  const summaryTime = Date.parse(summary?.openedAt ?? summary?.closedAt ?? "");
+  if (Number.isFinite(summaryTime)) {
+    return summaryTime;
+  }
+  const eventCreatedAt = eventCreatedAtById?.get(id);
+  if (Number.isFinite(eventCreatedAt)) {
+    return Math.max(0, Math.floor(eventCreatedAt as number)) * 1000;
+  }
+  return null;
+}
+
+function sortQuestionnaireIdsBySessionOrder(ids: Iterable<string>, eventCreatedAtById?: Map<string, number>) {
+  return [...ids].sort((left, right) => {
+    const leftTime = questionnaireSessionSortTimeMs(left, eventCreatedAtById);
+    const rightTime = questionnaireSessionSortTimeMs(right, eventCreatedAtById);
+    if (leftTime !== null || rightTime !== null) {
+      return (leftTime ?? Number.MAX_SAFE_INTEGER) - (rightTime ?? Number.MAX_SAFE_INTEGER);
+    }
+    return left.localeCompare(right);
+  });
 }
 
 function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
@@ -782,6 +828,7 @@ function buildWorkerLauncherContents(input: {
   const workerNsec = input.workerNsec.trim() || "nsec1...";
   const workerNpub = input.workerNpub.trim();
   const workerRelays = sanitizeWorkerRelays(input.workerRelays).join(",");
+  const workerDmRelays = deriveWorkerDmRelays(input.workerRelays).join(",");
 
   if (input.target.shell === "powershell") {
     const coordinator = escapeForPowerShellSingleQuotedString(coordinatorNpub);
@@ -790,6 +837,7 @@ function buildWorkerLauncherContents(input: {
       ? `Write-Host 'Expected audit proxy npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n`
       : "";
     const relays = escapeForPowerShellSingleQuotedString(workerRelays);
+    const dmRelays = escapeForPowerShellSingleQuotedString(workerDmRelays);
     const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim();
     return [
       "$ErrorActionPreference = 'Stop'",
@@ -813,6 +861,7 @@ function buildWorkerLauncherContents(input: {
       `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsec}' }`,
       `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${coordinator}' }`,
       `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${relays}' }`,
+      `if (-not $env:WORKER_DM_RELAYS) { $env:WORKER_DM_RELAYS = '${dmRelays}' }`,
       `if (-not $env:WORKER_POLL_SECONDS) { $env:WORKER_POLL_SECONDS = '${WORKER_DEFAULT_POLL_SECONDS}' }`,
       "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
       "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
@@ -843,6 +892,7 @@ function buildWorkerLauncherContents(input: {
   const coordinator = escapeForDoubleQuotedBash(coordinatorNpub);
   const nsec = escapeForDoubleQuotedBash(workerNsec);
   const relays = escapeForDoubleQuotedBash(workerRelays);
+  const dmRelays = escapeForDoubleQuotedBash(workerDmRelays);
   const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim() ?? "";
   const expectedNpubComment = workerNpub
     ? `# Expected audit proxy npub: ${escapeForDoubleQuotedBash(workerNpub)}\n`
@@ -885,6 +935,7 @@ function buildWorkerLauncherContents(input: {
     `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
     `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${coordinator}}"`,
     `export WORKER_RELAYS="\${WORKER_RELAYS:-${relays}}"`,
+    `export WORKER_DM_RELAYS="\${WORKER_DM_RELAYS:-${dmRelays}}"`,
     `export WORKER_POLL_SECONDS="\${WORKER_POLL_SECONDS:-${WORKER_DEFAULT_POLL_SECONDS}}"`,
     'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
     'mkdir -p "$WORKER_STATE_DIR"',
@@ -930,6 +981,7 @@ function buildWorkerDirectCommand(input: {
   const coordinatorNpub = input.coordinatorNpub.trim() || "npub1...";
   const workerNsec = input.workerNsec.trim() || "nsec1...";
   const workerRelays = sanitizeWorkerRelays(input.workerRelays).join(",");
+  const workerDmRelays = deriveWorkerDmRelays(input.workerRelays).join(",");
 
   if (input.target.shell === "powershell") {
     const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim();
@@ -941,6 +993,7 @@ function buildWorkerDirectCommand(input: {
       `$env:WORKER_NSEC='${escapeForPowerShellSingleQuotedString(workerNsec)}'`,
       `$env:COORDINATOR_NPUB='${escapeForPowerShellSingleQuotedString(coordinatorNpub)}'`,
       `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
+      `$env:WORKER_DM_RELAYS='${escapeForPowerShellSingleQuotedString(workerDmRelays)}'`,
       `$env:WORKER_POLL_SECONDS='${WORKER_DEFAULT_POLL_SECONDS}'`,
       "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR='.worker-state' }",
       "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
@@ -978,6 +1031,7 @@ function buildWorkerDirectCommand(input: {
   const escapedWorkerNsec = escapeForDoubleQuotedBash(workerNsec);
   const escapedCoordinatorNpub = escapeForDoubleQuotedBash(coordinatorNpub);
   const escapedWorkerRelays = escapeForDoubleQuotedBash(workerRelays);
+  const escapedWorkerDmRelays = escapeForDoubleQuotedBash(workerDmRelays);
   return [
     "start_auditable_voting_proxy() {",
     `  curl -L --fail "${escapeForDoubleQuotedBash(input.target.assetUrl)}" -o "${escapeForDoubleQuotedBash(input.target.assetFilename)}" || return 1`,
@@ -1019,6 +1073,7 @@ function buildWorkerDirectCommand(input: {
     `  export WORKER_NSEC="${escapedWorkerNsec}"`,
     `  export COORDINATOR_NPUB="${escapedCoordinatorNpub}"`,
     `  export WORKER_RELAYS="${escapedWorkerRelays}"`,
+    `  export WORKER_DM_RELAYS="${escapedWorkerDmRelays}"`,
     `  export WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}"`,
     '  export WORKER_STATE_DIR="${WORKER_STATE_DIR:-./.worker-state}"',
     '  mkdir -p "$WORKER_STATE_DIR" || return 1',
@@ -1041,6 +1096,7 @@ function buildAutoconfiguredWorkerLauncherHref(input: {
     target: input.targetKey,
     coordinator_npub: input.coordinatorNpub.trim() || "npub1...",
     worker_relays: sanitizeWorkerRelays(input.workerRelays).join(","),
+    worker_dm_relays: deriveWorkerDmRelays(input.workerRelays).join(","),
     rust_log: WORKER_DEFAULT_RUST_LOG,
     worker_poll_seconds: WORKER_DEFAULT_POLL_SECONDS,
   });
@@ -1416,6 +1472,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
+  const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -1916,6 +1973,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         entries: publicResponseEntries,
         decisionEntries: publicDecisionEntries,
         verifiedResponseIds: input.verifiedResponseIds,
+        requireVerifiedProofs: true,
       });
       const acceptedFromSubmissions = admissions.accepted.map((entry) => publicBlindResponseToAcceptedResponse({
         entry,
@@ -2108,6 +2166,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         }
         const eventTitleCandidatesById = new Map<string, { title: string; createdAt: number }>();
         const eventDefinitionCandidatesById = new Map<string, { definition: QuestionnaireDefinition; createdAt: number }>();
+        const eventCreatedAtById = new Map<string, number>();
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
@@ -2122,6 +2181,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             publishedIds.add(parsedId);
             const eventTitle = parsed.title.trim();
             const createdAt = Number(event.created_at ?? parsed.createdAt ?? 0);
+            const existingCreatedAt = eventCreatedAtById.get(parsedId);
+            if (Number.isFinite(createdAt) && (!Number.isFinite(existingCreatedAt) || createdAt < (existingCreatedAt ?? Number.MAX_SAFE_INTEGER))) {
+              eventCreatedAtById.set(parsedId, createdAt);
+            }
             if (eventTitle) {
               const existing = eventTitleCandidatesById.get(parsedId);
               if (!existing || createdAt >= existing.createdAt) {
@@ -2149,16 +2212,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         if (selectedId && view !== "responses") {
           ids.add(selectedId);
         }
-        setAvailableQuestionnaireIds([...ids].sort((left, right) => {
-          const leftSummary = loadElectionSummary(left);
-          const rightSummary = loadElectionSummary(right);
-          const leftTime = Date.parse(leftSummary?.openedAt ?? leftSummary?.closedAt ?? "");
-          const rightTime = Date.parse(rightSummary?.openedAt ?? rightSummary?.closedAt ?? "");
-          if (Number.isFinite(leftTime) || Number.isFinite(rightTime)) {
-            return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
-          }
-          return left.localeCompare(right);
-        }));
+        setAvailableQuestionnaireIds(sortQuestionnaireIdsBySessionOrder(ids, eventCreatedAtById));
         setAvailableQuestionnaireTitles(titlesById);
         setAvailablePublishedQuestionnaireIds([...publishedIds]);
       } catch {
@@ -2210,7 +2264,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         if (selectedId && view !== "responses") {
           ids.add(selectedId);
         }
-        setAvailableQuestionnaireIds([...ids]);
+        setAvailableQuestionnaireIds(sortQuestionnaireIdsBySessionOrder(ids));
         setAvailableQuestionnaireTitles(titlesById);
         setAvailablePublishedQuestionnaireIds([...publishedIds]);
       }
@@ -2888,6 +2942,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     () => parseDelegatedControlRelays(delegatedWorkerControlRelays).join(","),
     [delegatedWorkerControlRelays],
   );
+  const helperDmRelayList = useMemo(
+    () => deriveWorkerDmRelays(helperRelayList).join(","),
+    [helperRelayList],
+  );
   const workerLauncherTargets = useMemo<Record<string, WorkerLauncherTarget>>(() => ({
     linuxX64: {
       assetFilename: "auditable-voting-worker-linux-x64.tar.gz",
@@ -3003,19 +3061,23 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const workerStartupCommand = useMemo(() => {
     const coordinator = coordinatorNpub.trim() || "npub1...";
     const workerNsec = generatedWorkerNsec.trim() || "nsec1...";
-    const relayOverride = delegatedWorkerControlRelays.trim();
     const lines = [
       `RUST_LOG=${WORKER_DEFAULT_RUST_LOG} \\`,
       `WORKER_NSEC=${workerNsec} \\`,
       `  COORDINATOR_NPUB=${coordinator} \\`,
       `  WORKER_POLL_SECONDS=${WORKER_DEFAULT_POLL_SECONDS} \\`,
+      `  WORKER_RELAYS=${helperRelayList} \\`,
+      `  WORKER_DM_RELAYS=${helperDmRelayList} \\`,
     ];
-    if (relayOverride) {
-      lines.push(`  WORKER_RELAYS=${helperRelayList} \\`);
-    }
     lines.push("  ./auditable-voting-worker-linux-x64");
     return lines.join("\n");
-  }, [coordinatorNpub, delegatedWorkerControlRelays, generatedWorkerNsec, helperRelayList]);
+  }, [coordinatorNpub, generatedWorkerNsec, helperDmRelayList, helperRelayList]);
+  async function copyWorkerCommand(value: string, key: string) {
+    const copied = await tryWriteClipboard(value);
+    if (copied) {
+      showCopyLabel(key);
+    }
+  }
   const lastParticipantCountPublishKeyRef = useRef("");
 
   const titleReady = title.trim().length > 0;
@@ -3091,6 +3153,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     ? "Add session"
     : buildStateLabel === "Open" ? "Active" : buildStateLabel;
   const checklistDescriptionAdded = description.trim().length > 0;
+  const readinessItems = useMemo<QuestionnaireReadinessItem[]>(() => ([
+    { id: "title", label: "Title", shortLabel: "Title", complete: titleReady },
+    { id: "description", label: "Description", shortLabel: "Desc", complete: checklistDescriptionAdded },
+    { id: "question", label: "1+ questions", shortLabel: "Q", complete: hasQuestion },
+    { id: "answers", label: "Questions complete", shortLabel: "Done", complete: questionsValid },
+    {
+      id: "publish",
+      label: "Published",
+      shortLabel: "Pub",
+      complete: Boolean(publishedDefinition),
+    },
+  ]), [checklistDescriptionAdded, hasQuestion, publishedDefinition, questionsValid, titleReady]);
+  useEffect(() => {
+    props.onReadinessChange?.(readinessItems);
+  }, [props.onReadinessChange, readinessItems]);
   const currentQuestionnaireId = questionnaireId.trim();
   const selectedQuestionnaireOptions = view === "build"
     ? (currentQuestionnaireId ? [currentQuestionnaireId] : [])
@@ -3664,6 +3741,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           entries: publicResponses,
           decisionEntries,
           verifiedResponseIds,
+          requireVerifiedProofs: true,
         });
         const acceptedResponses = admissions.accepted.map((entry) => publicBlindResponseToAcceptedResponse({
           entry,
@@ -4157,30 +4235,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     generateWorkerCredentials();
   }, [delegatedWorkerNpub, generatedWorkerNpub, generatedWorkerNsec, generateWorkerCredentials, view]);
 
-  const toolbarSentinelRef = useRef<HTMLDivElement | null>(null);
-  const [questionnaireToolbarStuck, setQuestionnaireToolbarStuck] = useState(false);
-  useEffect(() => {
-    const sentinel = toolbarSentinelRef.current;
-    if (!sentinel || typeof window === "undefined") {
-      return;
-    }
-
-    const updateToolbarState = () => {
-      const nextStuck = sentinel.getBoundingClientRect().top < 0;
-      setQuestionnaireToolbarStuck((current) => (current === nextStuck ? current : nextStuck));
-    };
-    updateToolbarState();
-    window.addEventListener("scroll", updateToolbarState, { passive: true });
-    window.addEventListener("resize", updateToolbarState);
-    return () => {
-      window.removeEventListener("scroll", updateToolbarState);
-      window.removeEventListener("resize", updateToolbarState);
-    };
-  }, [view]);
-
   const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
   const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
-  const questionnaireToolbarClassName = `simple-session-page-toolbar simple-questionnaire-sticky-toolbar${questionnaireToolbarStuck ? " is-stuck" : ""}`;
+  const hasBuildSideActions = Boolean(
+    (showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish)
+      || (!showNewRoundPublishOnly && publishedDefinition)
+      || !coordinatorNsec.trim()
+      || (publishValidation && !publishValidation.valid)
+      || statusNotice,
+  );
+  const questionnaireToolbarClassName = "simple-session-page-toolbar simple-questionnaire-sticky-toolbar";
   const questionnaireTopControls = (
     <div className='simple-session-controlbar simple-questionnaire-top-controlbar'>
       <select
@@ -4193,8 +4257,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           setQuestionnaireId(event.target.value);
         }}
       >
-        {selectedQuestionnaireOptions.map((id) => (
-          <option key={id} value={id}>{questionnaireOptionLabel(id)}</option>
+        {selectedQuestionnaireOptions.map((id, index) => (
+          <option key={id} value={id}>{`${index + 1}. ${questionnaireOptionLabel(id)}`}</option>
         ))}
       </select>
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight simple-session-control-actions'>
@@ -4269,6 +4333,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             ) : null}
           </>
         )}
+        {!showNewRoundPublishOnly && props.onInviteParticipants ? (
+          <button
+            type='button'
+            className='simple-voter-secondary simple-questionnaire-toolbar-invite-button'
+            onClick={props.onInviteParticipants}
+          >
+            Invite voters
+          </button>
+        ) : null}
         <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
           Refresh
         </button>
@@ -4289,13 +4362,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     );
   }
 
-  if (view === "responses") {
-    return (
-      <>
-        <div ref={toolbarSentinelRef} className='simple-questionnaire-toolbar-sentinel' aria-hidden='true' />
-        <div className={questionnaireToolbarClassName}>
-          {questionnaireTopControls}
-        </div>
+	  if (view === "responses") {
+	    return (
+	      <>
+	        <div className={questionnaireToolbarClassName}>
+	          {questionnaireTopControls}
+	        </div>
         <QuestionnaireResultsDashboard
           variant='session'
           questionnaire={activePublishedDefinition ? {
@@ -4319,7 +4391,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           publishedAtLabel='Published'
           publishedAtTime={activePublishedDefinition?.createdAt ?? null}
           emptyQuestionSummaryText='No question results yet.'
-          emptySelectionText='Publish a questionnaire to inspect results.'
+          emptySelectionText=''
           emptyResponsesText='No submitted responses found for this questionnaire yet.'
           emptyResponseSelectionText='Publish a questionnaire to inspect responses.'
         />
@@ -4330,13 +4402,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     );
   }
 
-  return (
-    <>
-      <section className='simple-voter-section simple-questionnaire-build-section'>
-        <div ref={toolbarSentinelRef} className='simple-questionnaire-toolbar-sentinel' aria-hidden='true' />
-        <div className={`simple-questionnaire-build-toolbar ${questionnaireToolbarClassName}`}>
-          {questionnaireTopControls}
-        </div>
+	  return (
+	    <>
+	      <section className='simple-voter-section simple-questionnaire-build-section'>
+	        <div className={`simple-questionnaire-build-toolbar ${questionnaireToolbarClassName}`}>
+	          {questionnaireTopControls}
+	        </div>
         <h2 className='simple-voter-section-title'>
           {setupHeadingStateLabel}{title.trim() ? `: ${title.trim()}` : ""}
         </h2>
@@ -4882,50 +4953,32 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               </fieldset>
 
             </div>
-          </div>
-          <aside className='simple-questionnaire-build-aside'>
-            <section className='simple-questionnaire-build-side-card'>
-              <h4 className='simple-voter-section-title'>Readiness checklist</h4>
-              <ul className='simple-vote-status-list simple-questionnaire-readiness-list'>
-                <li className={titleReady ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{titleReady ? "✓" : "•"}</span> Title added</li>
-                <li className={checklistDescriptionAdded ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{checklistDescriptionAdded ? "✓" : "•"}</span> Description added</li>
-                <li className={hasQuestion ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{hasQuestion ? "✓" : "•"}</span> At least one question added</li>
-                <li className={questionsValid ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{questionsValid ? "✓" : "•"}</span> Questions complete</li>
-                <li className={publishedDefinition ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{publishedDefinition ? "✓" : "•"}</span> {publishedDefinition ? "Questionnaire published" : "Questionnaire not yet published"}</li>
-              </ul>
-            </section>
-
-            <section className='simple-questionnaire-build-side-card simple-questionnaire-build-actions'>
-              {showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish ? (
-                <p className='simple-voter-note'>Enable Auto-ballot for at least one voter before publishing this round.</p>
-              ) : null}
-              {!showNewRoundPublishOnly && publishedDefinition ? (
-                <button
-                  type='button'
-                  className='simple-voter-primary'
-                  onClick={setupAuditProxyFromChecklist}
-                >
-                  Set up proxy
-                </button>
-              ) : null}
-              {!showNewRoundPublishOnly && props.onInviteParticipants ? (
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={props.onInviteParticipants}
-                >
-                  Invite voters
-                </button>
-              ) : null}
-              {!coordinatorNsec.trim() ? (
-                <p className='simple-voter-note'>Organiser key is not loaded yet.</p>
-              ) : null}
-              {publishValidation && !publishValidation.valid ? (
-                <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
-              ) : null}
-              {statusNotice}
-            </section>
-          </aside>
+	          </div>
+	          <aside className='simple-questionnaire-build-aside'>
+	            {hasBuildSideActions ? (
+	              <section className='simple-questionnaire-build-side-card simple-questionnaire-build-actions'>
+	                {showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish ? (
+	                  <p className='simple-voter-note'>Enable Auto-ballot for at least one voter before publishing this round.</p>
+	                ) : null}
+	                {!showNewRoundPublishOnly && publishedDefinition ? (
+	                  <button
+	                    type='button'
+	                    className='simple-voter-primary'
+	                    onClick={setupAuditProxyFromChecklist}
+	                  >
+	                    Set up proxy
+	                  </button>
+	                ) : null}
+	                {!coordinatorNsec.trim() ? (
+	                  <p className='simple-voter-note'>Organiser key is not loaded yet.</p>
+	                ) : null}
+	                {publishValidation && !publishValidation.valid ? (
+	                  <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
+	                ) : null}
+	                {statusNotice}
+	              </section>
+	            ) : null}
+	          </aside>
           <div id='delegated-worker-section' className='simple-questionnaire-build-proxy'>
             <SimpleCollapsibleSection title='Audit proxy' titleToggleLabel='Audit proxy' defaultCollapsed expandSignal={auditProxyExpandSignal}>
               <div className='simple-questionnaire-worker-section'>
@@ -5014,10 +5067,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   <button
                     type='button'
                     className='simple-voter-secondary'
-                    onClick={() => void tryWriteClipboard(workerStartupCommand)}
+                    onClick={() => void copyWorkerCommand(workerStartupCommand, "worker-quick-start")}
                     disabled={!coordinatorNpub.trim()}
                   >
-                    Copy quick start command
+                    {isCopyLabelActive("worker-quick-start") ? "Copied" : "Copy quick start command"}
                   </button>
                   <a className='simple-voter-secondary simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
                     Audit proxy details
@@ -5133,8 +5186,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.checksumUrl} target='_blank' rel='noreferrer'>
                           Download checksum
                         </a>
-                        <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(workerDirectCommand)}>
-                          Copy command
+                        <button type='button' className='simple-voter-secondary' onClick={() => void copyWorkerCommand(workerDirectCommand, "worker-direct-command")}>
+                          {isCopyLabelActive("worker-direct-command") ? "Copied" : "Copy command"}
                         </button>
                       </div>
                       <label className='simple-voter-label' htmlFor='worker-direct-command'>Direct command-line launch</label>

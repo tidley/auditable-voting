@@ -160,6 +160,53 @@ describe("questionnaireTransport blind admissions", () => {
     expect(result.accepted[0].response.responseId).toBe("resp-1");
   });
 
+  it("rejects unverified blind responses when proof verification is required", () => {
+    const response = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [response],
+      verifiedResponseIds: [],
+      requireVerifiedProofs: true,
+    });
+
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0].rejectionReason).toBe("invalid_token_proof");
+  });
+
+  it("does not let an accepted decision override missing local proof verification", () => {
+    const response = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+    const accepted = submissionDecision({
+      submissionId: "resp-1",
+      nullifier: "nullifier-x",
+      accepted: true,
+      createdAt: 1712537300,
+      eventId: "decision-accepted",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [response],
+      decisionEntries: [accepted],
+      verifiedResponseIds: [],
+      requireVerifiedProofs: true,
+    });
+
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0].rejectionReason).toBe("invalid_token_proof");
+    expect(result.rejected[0].decisionEventId).toBe(null);
+  });
+
   it("treats a republished response id as one logical submission", () => {
     const first = blindResponse({
       responseId: "resp-1",

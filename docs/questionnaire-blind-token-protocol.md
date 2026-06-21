@@ -122,6 +122,8 @@ Blind-token admission object:
 
 The token nullifier is also derived over the same optional `ballot_scope`. Legacy single-credential submissions omit the arrays and continue to use `tokenProof` and `tokenNullifier`.
 
+The final `tokenCommitment` is response-side proof material. It must not be included in blind request DMs, blind request bundle DMs, blind issuance DMs, or blind issuance bundle DMs. Issuers receive only the voter identity used for eligibility, the blinded message, key id, nonce, optional invite-code hash, and optional ballot scope. Issuance replies contain the blind signature, key id, request id, voter delivery identity, scope, and public definition reference. That means the organiser or proxy can authorise and sign but cannot later match a public `tokenCommitment` back to the eligible voter who requested the signature.
+
 Tags:
 
 - `["t", "questionnaire_response_blind"]`
@@ -174,7 +176,7 @@ Public verifier should be able to check:
 - questionnaire existence and shape
 - response object shape
 - every proof in a bundled response verifies against the questionnaire id, token commitment, and optional ballot scope
-- deterministic duplicate-nullifier rejection
+- deterministic duplicate-nullifier and duplicate-token-commitment rejection
 - summary/accounting consistency
 
 Organiser-side verification (especially in encrypted mode) additionally checks:

@@ -1,3 +1,8 @@
+import {
+  deriveIdentityWords,
+  formatIdentityWordsForFilename,
+} from "./identityWords";
+
 export type SimpleActorRole = "voter" | "coordinator";
 
 export type SimpleActorKeypair = {
@@ -18,6 +23,7 @@ export type SimpleActorBackupBundle = {
   role: SimpleActorRole;
   exportedAt: string;
   keypair: SimpleActorKeypair;
+  identityWords?: string;
   cache?: unknown;
 };
 
@@ -26,6 +32,7 @@ export type SimpleEncryptedActorBackupBundle = {
   type: "auditable-voting.simple-backup.encrypted";
   role: SimpleActorRole;
   exportedAt: string;
+  identityWords?: string;
   kdf: {
     name: "PBKDF2";
     hash: "SHA-256";
@@ -631,6 +638,7 @@ export function buildSimpleActorBackupBundle(
   keypair: SimpleActorKeypair,
   cache?: unknown,
 ): SimpleActorBackupBundle {
+  const identityWords = deriveIdentityWords(keypair.nsec || keypair.npub);
   return {
     version: 1,
     type: "auditable-voting.simple-backup",
@@ -640,6 +648,7 @@ export function buildSimpleActorBackupBundle(
       npub: keypair.npub,
       nsec: keypair.nsec,
     },
+    identityWords,
     cache,
   };
 }
@@ -667,6 +676,9 @@ export function parseSimpleActorBackupBundle(value: string): SimpleActorBackupBu
         npub: parsed.keypair.npub,
         nsec: parsed.keypair.nsec,
       },
+      identityWords: typeof parsed.identityWords === "string"
+        ? parsed.identityWords
+        : deriveIdentityWords(parsed.keypair.nsec || parsed.keypair.npub),
       cache: parsed.cache,
     };
   } catch {
@@ -916,7 +928,9 @@ export async function downloadSimpleActorBackup(
 
   const bundle = buildSimpleActorBackupBundle(role, keypair, cache);
   let contents = JSON.stringify(bundle, null, 2);
-  let filename = `auditable-voting-${role}-backup.json`;
+  const identityWordsSlug = formatIdentityWordsForFilename(bundle.identityWords ?? "");
+  const filenameSuffix = identityWordsSlug ? `-${identityWordsSlug}` : "";
+  let filename = `auditable-voting-${role}-backup${filenameSuffix}.json`;
 
   if (options?.passphrase?.trim()) {
     const passphrase = options.passphrase.trim();
@@ -935,6 +949,7 @@ export async function downloadSimpleActorBackup(
       type: "auditable-voting.simple-backup.encrypted",
       role,
       exportedAt: bundle.exportedAt,
+      identityWords: bundle.identityWords,
       kdf: {
         name: "PBKDF2",
         hash: "SHA-256",
@@ -948,7 +963,7 @@ export async function downloadSimpleActorBackup(
       ciphertext: bytesToBase64(new Uint8Array(encrypted)),
     };
     contents = JSON.stringify(encryptedBundle, null, 2);
-    filename = `auditable-voting-${role}-backup.encrypted.json`;
+    filename = `auditable-voting-${role}-backup${filenameSuffix}.encrypted.json`;
   }
 
   const blob = new Blob([contents], { type: "application/json" });

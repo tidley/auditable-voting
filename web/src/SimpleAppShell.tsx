@@ -13,6 +13,7 @@ import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
+import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
@@ -103,7 +104,7 @@ function isSimpleActorRole(role: SimpleRole): role is SimpleActorRole {
   return role === "voter" || role === "coordinator";
 }
 
-type MenuIconName = SimpleRole | "copy" | "new" | "key-refresh" | "login" | "signout" | "info" | "book";
+type MenuIconName = SimpleRole | "menu" | "copy" | "new" | "key-refresh" | "login" | "signout" | "info" | "book";
 
 function MenuIcon({ name }: { name: MenuIconName }) {
   return (
@@ -128,6 +129,12 @@ function MenuIcon({ name }: { name: MenuIconName }) {
           <path d='M5 8h14v12H5z' />
           <path d='M9 13h6' />
           <path d='M10.5 5.5l3 1.8' />
+        </>
+      ) : name === "menu" ? (
+        <>
+          <path d='M5 7h14' />
+          <path d='M5 12h14' />
+          <path d='M5 17h14' />
         </>
       ) : name === "copy" ? (
         <>
@@ -194,7 +201,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [voterMessagesUnread, setVoterMessagesUnread] = useState(false);
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
-  const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState<"colour" | "qr" | null>(null);
+  const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState<"qr" | null>(null);
   const [accountIdentityQrSrc, setAccountIdentityQrSrc] = useState<string | null>(null);
   const [newIdentityConfirmRole, setNewIdentityConfirmRole] = useState<SimpleActorRole | null>(null);
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
@@ -207,6 +214,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [gatewayNostrConnectUri, setGatewayNostrConnectUri] = useState("");
   const [gatewayNsecBunkerUri, setGatewayNsecBunkerUri] = useState("");
   const [gatewayShowConnectQr, setGatewayShowConnectQr] = useState(false);
+  const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const roleSwitchWrapRef = useRef<HTMLDivElement | null>(null);
   const preferredSignerLabel = useMemo(() => (isMobileBrowser() ? "Amber" : "NOS2X-FOX"), []);
   const preferredSignerIsAmber = preferredSignerLabel === "Amber";
@@ -249,11 +257,11 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         const loadedNpub = state?.keypair?.npub?.trim() || persistedSignerNpub;
         setAccountIdentityNpub((current) => loadedNpub || current);
       })
-      .catch(() => {
-        if (!cancelled) {
-          setAccountIdentityNpub((current) => persistedSignerNpub || current);
-        }
-      });
+        .catch(() => {
+          if (!cancelled) {
+            setAccountIdentityNpub((current) => persistedSignerNpub || current);
+          }
+        });
 
     return () => {
       cancelled = true;
@@ -322,7 +330,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     }
 
     const handleIdentityUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<{ role?: SimpleRole; npub?: string }>).detail;
+      const detail = (event as CustomEvent<{ role?: SimpleRole; npub?: string; nsec?: string }>).detail;
       if (!detail || detail.role !== role) {
         return;
       }
@@ -521,11 +529,22 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     return bundle;
   }
 
-  async function copyGatewayValue(value: string, label: string) {
+  async function copyValueWithFeedback(value: string, key: string) {
+    if (!value.trim()) {
+      return false;
+    }
+    const copied = await tryWriteClipboard(value);
+    if (copied) {
+      showCopyLabel(key);
+    }
+    return copied;
+  }
+
+  async function copyGatewayValue(value: string, label: string, key: string) {
     if (!value.trim()) {
       return;
     }
-    const copied = await tryWriteClipboard(value);
+    const copied = await copyValueWithFeedback(value, key);
     setGatewayStatus(copied ? `${label} copied.` : `Could not copy ${label.toLowerCase()}.`);
   }
 
@@ -533,7 +552,11 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     try {
       const bundle = await ensureAmberConnectLinks();
       const value = kind === "nostr-connect" ? bundle.nostrConnectUri : bundle.nsecBunkerUri;
-      await copyGatewayValue(value, kind === "nostr-connect" ? "Nostr Connect URL" : "nsec-bunker URL");
+      await copyGatewayValue(
+        value,
+        kind === "nostr-connect" ? "Nostr Connect URL" : "nsec-bunker URL",
+        `gateway-${kind}`,
+      );
     } catch (error) {
       setGatewayStatus(error instanceof Error && error.message.trim() ? error.message : "Could not prepare Nostr Connect links.");
     }
@@ -641,14 +664,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                   className='simple-voter-secondary'
                   onClick={() => void copyPreparedGatewayValue("nostr-connect")}
                 >
-                  Copy nostr-connect URL
+                  {isCopyLabelActive("gateway-nostr-connect") ? "Copied" : "Copy nostr-connect URL"}
                 </button>
                 <button
                   type='button'
                   className='simple-voter-secondary'
                   onClick={() => void copyPreparedGatewayValue("nsec-bunker")}
                 >
-                  Copy nsec-bunker URL
+                  {isCopyLabelActive("gateway-nsec-bunker") ? "Copied" : "Copy nsec-bunker URL"}
                 </button>
                 <button
                   type='button'
@@ -702,21 +725,44 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 {accountIdentityNpub || "Identity loading"}
               </span>
             </span>
-            <span className='simple-account-profile-caret' aria-hidden='true' />
+            <span className='simple-account-profile-menu-icon' aria-hidden='true'>
+              <span />
+              <span />
+              <span />
+            </span>
           </>
         ) : role === "voter" ? (
-          `Voter ${accountIdentityLabel}`
+          <>
+            <span className='simple-account-menu-trigger-icon' aria-hidden='true'>
+              <MenuIcon name='menu' />
+            </span>
+            <span className='simple-account-menu-trigger-text'>{`Voter ${accountIdentityLabel}`}</span>
+          </>
         ) : (
           "Menu"
         )}
       </button>
       {accountMenuOpen ? (
-        <div
-          id='simple-app-menu'
-          className='simple-account-menu simple-main-menu'
-          role='menu'
-          aria-label='App menu'
-        >
+        <>
+          <div
+            className='simple-account-menu-backdrop'
+            aria-hidden='true'
+            onClick={() => setAccountMenuOpen(false)}
+          />
+          <div
+            id='simple-app-menu'
+            className='simple-account-menu simple-main-menu'
+            role='menu'
+            aria-label='App menu'
+          >
+          <button
+            type='button'
+            className='simple-account-menu-close'
+            aria-label='Close menu'
+            onClick={() => setAccountMenuOpen(false)}
+          >
+            <span aria-hidden='true'>x</span>
+          </button>
           <div className='simple-account-menu-section' role='none'>
             <p className='simple-account-menu-kicker'>Switch</p>
             <div
@@ -779,94 +825,55 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 <p className='simple-account-menu-kicker'>Identity</p>
                 <p
                   className='simple-account-menu-title'
-                  data-tooltip={accountIdentityNpub ? `Short identity shown here. Full identity: ${accountIdentityNpub}` : undefined}
+                  data-tooltip={accountIdentityNpub ? `Full identity: ${accountIdentityNpub}` : undefined}
                 >
                   {accountIdentityLabel}
                 </p>
-                {role === "voter" || accountIdentityNpub ? (
+                {accountIdentityNpub ? (
                   <div className='simple-account-menu-identity-grid' role='none'>
-                    {role === "voter" ? (
-                      <button
-                        type='button'
-                        className='simple-account-menu-button simple-account-menu-tile'
-                        role='menuitem'
-                        onClick={() => {
-                          setAccountMenuOpen(false);
-                          if (typeof window !== "undefined") {
-                            window.dispatchEvent(new Event("auditable-voting:voter-login"));
-                          }
-                        }}
-                      >
-                        <MenuIcon name='login' />
-                        <span>Login</span>
-                      </button>
-                    ) : null}
-                    {accountIdentityNpub ? (
-                      <>
-                        <button
-                          type='button'
-                          className='simple-account-menu-button simple-account-menu-tile'
-                          role='menuitem'
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            void tryWriteClipboard(accountIdentityNpub);
-                          }}
-                        >
-                          <MenuIcon name='copy' />
-                          <span>Copy identity</span>
-                        </button>
-                        <button
-                          type='button'
-                          className='simple-account-menu-button simple-account-menu-tile'
-                          role='menuitem'
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            setNewIdentityConfirmRole(role);
-                          }}
-                        >
-                          <MenuIcon name='new' />
-                          <span>New identity</span>
-                        </button>
-                        <button
-                          type='button'
-                          className='simple-account-menu-button simple-account-menu-tile simple-account-menu-visual-tile'
-                          role='menuitem'
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            setAccountIdentityDialogOpen("colour");
-                          }}
-                        >
-                          <TokenFingerprint
-                            tokenId={accountIdentityNpub}
-                            compact
-                            showQr={false}
-                            hideMetadata
-                            fingerprintTitle='Colour ID: a visual fingerprint for checking this identity at a glance.'
-                          />
-                          <span>Colour ID</span>
-                        </button>
-                        <button
-                          type='button'
-                          className='simple-account-menu-button simple-account-menu-tile simple-account-menu-visual-tile'
-                          role='menuitem'
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            setAccountIdentityDialogOpen("qr");
-                          }}
-                        >
-                          {accountIdentityQrSrc ? (
-                            <img
-                              className='simple-account-menu-qr-preview'
-                              src={accountIdentityQrSrc}
-                              alt=''
-                            />
-                          ) : (
-                            <span className='simple-account-menu-qr-preview simple-account-menu-qr-preview-fallback' aria-hidden='true' />
-                          )}
-                          <span>QR code</span>
-                        </button>
-                      </>
-                    ) : null}
+                    <button
+                      type='button'
+                      className='simple-account-menu-button simple-account-menu-tile simple-account-menu-visual-tile'
+                      role='menuitem'
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        setAccountIdentityDialogOpen("qr");
+                      }}
+                    >
+                      {accountIdentityQrSrc ? (
+                        <img
+                          className='simple-account-menu-qr-preview'
+                          src={accountIdentityQrSrc}
+                          alt=''
+                        />
+                      ) : (
+                        <span className='simple-account-menu-qr-preview simple-account-menu-qr-preview-fallback' aria-hidden='true' />
+                      )}
+                      <span>QR code</span>
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-account-menu-button simple-account-menu-tile'
+                      role='menuitem'
+                      onClick={() => {
+                        void copyValueWithFeedback(accountIdentityNpub, "account-identity");
+                      }}
+                    >
+                      <MenuIcon name='copy' />
+                      <span>{isCopyLabelActive("account-identity") ? "Copied" : "Copy identity"}</span>
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-account-menu-button simple-account-menu-tile'
+                      role='menuitem'
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        setNewIdentityConfirmRole(role);
+                      }}
+                    >
+                      <MenuIcon name='new' />
+                      <span>New identity</span>
+                    </button>
                   </div>
                 ) : null}
                 {!accountIdentityNpub ? (
@@ -926,7 +933,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
             </div>
           </div>
-        </div>
+          </div>
+        </>
       ) : null}
     </div>
   );
@@ -973,16 +981,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           className='simple-identity-qr-overlay simple-account-identity-overlay'
           role='dialog'
           aria-modal='true'
-          aria-label={accountIdentityDialogOpen === "qr"
-            ? `${roleLabel(role)} npub QR code`
-            : `${roleLabel(role)} Colour ID`}
+          aria-label={`${roleLabel(role)} npub QR code`}
           onClick={() => setAccountIdentityDialogOpen(null)}
         >
           <button
             type='button'
             className='simple-identity-qr-overlay-close'
             onClick={() => setAccountIdentityDialogOpen(null)}
-            aria-label={accountIdentityDialogOpen === "qr" ? "Close npub QR preview" : "Close Colour ID preview"}
+            aria-label='Close npub QR preview'
           >
             Close
           </button>
@@ -993,21 +999,11 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             <div className='simple-account-identity-overlay-copy'>
               <p className='simple-account-menu-kicker'>{roleLabel(role)} identity</p>
               <h2 className='simple-voter-section-title'>
-                {accountIdentityDialogOpen === "qr" ? "QR code" : "Colour ID"}
+                QR code
               </h2>
               <code className='simple-account-identity-full-npub'>{accountIdentityNpub}</code>
             </div>
-            {accountIdentityDialogOpen === "colour" ? (
-              <div className='simple-account-identity-overlay-image simple-account-identity-overlay-fingerprint'>
-                <TokenFingerprint
-                  tokenId={accountIdentityNpub}
-                  xlarge
-                  showQr={false}
-                  hideMetadata
-                  fingerprintTitle='Colour ID: a visual fingerprint for checking this identity at a glance.'
-                />
-              </div>
-            ) : accountIdentityQrSrc ? (
+            {accountIdentityQrSrc ? (
               <img
                 className='simple-identity-qr-overlay-image simple-account-identity-overlay-image'
                 src={accountIdentityQrSrc}
