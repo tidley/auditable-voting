@@ -260,6 +260,15 @@ sudo WEB_BASE_PATH=/auditable-voting/ ./launch-auditable-voting-fips.sh
 - Decrypting encrypted observer details requires manually entering the matching organiser `nsec`; the key is not a public audit input.
 - The protocol and implementation need external review before strong production claims.
 
+## Licence
+
+Auditable Voting is released under the MIT Licence. Anyone may use, copy, modify,
+publish, distribute, sublicense, or sell copies of the software without asking
+for permission or paying a licence fee, provided the copyright and licence
+notice are kept with the software.
+
+See [LICENSE](LICENSE).
+
 ## Documentation
 
 - `docs/project-explainer.md`

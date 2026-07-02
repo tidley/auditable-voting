@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust/Wasm coordinator control and replay core for the auditable-voting browser client"
 repository = "https://github.com/tidley/auditable-voting"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
