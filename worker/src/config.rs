@@ -18,6 +18,11 @@ const DEFAULT_WORKER_DM_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://relay.primal.net",
 ];
+const DEFAULT_WORKER_BLOSSOM_RESULT_PACK_SERVERS: &[&str] = &[
+    "https://blossom.nostr.build",
+    "https://blossom.primal.net",
+    "https://cdn.nostrcheck.me",
+];
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -33,6 +38,7 @@ pub struct WorkerConfig {
     pub poll_seconds: u64,
     pub public_archive_interval_ms: u64,
     pub public_archive_queue_size: usize,
+    pub blossom_result_pack_servers: Vec<String>,
 }
 
 impl WorkerConfig {
@@ -50,6 +56,9 @@ impl WorkerConfig {
         };
         let raw_public_archive_relays =
             env::var("WORKER_PUBLIC_ARCHIVE_RELAYS").unwrap_or_default();
+        let raw_blossom_result_pack_servers =
+            env::var("WORKER_BLOSSOM_RESULT_PACK_SERVERS")
+                .unwrap_or_else(|_| DEFAULT_WORKER_BLOSSOM_RESULT_PACK_SERVERS.join(","));
         let worker_state_dir = env::var("WORKER_STATE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./worker-state"));
@@ -78,6 +87,10 @@ impl WorkerConfig {
         let worker_dm_relays = parse_relays("WORKER_DM_RELAYS", &raw_dm_relays)?;
         let public_archive_relays =
             parse_optional_relays("WORKER_PUBLIC_ARCHIVE_RELAYS", &raw_public_archive_relays)?;
+        let blossom_result_pack_servers = parse_optional_https_urls(
+            "WORKER_BLOSSOM_RESULT_PACK_SERVERS",
+            &raw_blossom_result_pack_servers,
+        )?;
 
         Ok(Self {
             worker_nsec,
@@ -92,6 +105,7 @@ impl WorkerConfig {
             poll_seconds,
             public_archive_interval_ms,
             public_archive_queue_size,
+            blossom_result_pack_servers,
         })
     }
 }
@@ -119,6 +133,24 @@ fn parse_optional_relays(env_name: &str, value: &str) -> Result<Vec<RelayUrl>> {
     parse_relays(env_name, value)
 }
 
+fn parse_optional_https_urls(env_name: &str, value: &str) -> Result<Vec<String>> {
+    let mut urls = Vec::new();
+    for raw in value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let trimmed = raw.trim_end_matches('/').to_string();
+        if !trimmed.starts_with("https://") {
+            return Err(anyhow!("{env_name} contains non-HTTPS URL: {raw}"));
+        }
+        if !urls.contains(&trimmed) {
+            urls.push(trimmed);
+        }
+    }
+    Ok(urls)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +170,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(relays.len(), 2);
+    }
+
+    #[test]
+    fn optional_https_urls_dedupe_and_require_https() {
+        let urls = parse_optional_https_urls(
+            "WORKER_BLOSSOM_RESULT_PACK_SERVERS",
+            "https://blossom.nostr.build/, https://blossom.nostr.build, https://blossom.primal.net",
+        )
+        .unwrap();
+        assert_eq!(
+            urls,
+            vec![
+                "https://blossom.nostr.build".to_string(),
+                "https://blossom.primal.net".to_string(),
+            ]
+        );
+        assert!(parse_optional_https_urls("WORKER_BLOSSOM_RESULT_PACK_SERVERS", "http://example.com").is_err());
     }
 }

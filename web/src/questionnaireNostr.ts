@@ -357,6 +357,7 @@ export async function publishQuestionnaireResultSummary(input: {
   resultSummary: QuestionnaireResultSummary;
   relays?: string[];
 }) {
+  const resultPack = input.resultSummary.resultPack;
   return publishEvent({
     nsec: input.coordinatorNsec,
     kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
@@ -364,6 +365,10 @@ export async function publishQuestionnaireResultSummary(input: {
       ["t", "questionnaire_result_summary"],
       ["q", input.resultSummary.questionnaireId],
       ["questionnaire-id", input.resultSummary.questionnaireId],
+      ...(resultPack ? [
+        ["result-pack", resultPack.sha256, resultPack.url],
+        ["x", resultPack.sha256],
+      ] : []),
     ],
     content: JSON.stringify(input.resultSummary),
     relays: input.relays,

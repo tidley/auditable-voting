@@ -337,6 +337,19 @@ pub struct QuestionnaireSubmissionDecisionEvent {
     pub worker_pubkey: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionnairePublishedResponseRef {
+    pub response_id: String,
+    pub author_pubkey: String,
+    pub submitted_at: i64,
+    pub accepted: bool,
+    #[serde(default)]
+    pub answers: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub rejection_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ElectionRuntimeState {
     #[serde(default)]
@@ -359,6 +372,8 @@ pub struct ElectionRuntimeState {
     pub accepted_token_commitments: HashSet<String>,
     #[serde(default)]
     pub published_decisions: HashMap<String, String>,
+    #[serde(default)]
+    pub published_response_refs: Vec<QuestionnairePublishedResponseRef>,
     #[serde(default)]
     pub seen_blind_request_ids: HashSet<String>,
     #[serde(default)]

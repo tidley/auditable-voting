@@ -220,7 +220,7 @@ The migration direction is:
 
 - **Nostr**: canonical shared state
 - **IndexedDB**: local active state and secrets
-- **Blossom**: planned encrypted backup bundles
+- **Blossom**: optional public compressed final result packs, plus planned encrypted backup bundles
 
 This matters because the system is trying to move toward a client-side model, not a traditional central server.
 
@@ -619,6 +619,8 @@ Planned backup direction:
 - export encrypted bundles
 - optional upload to Blossom
 - restore on a new device
+
+Final result summaries can also reference a public gzip-compressed Blossom result pack. The pack is mirrored to at least two Blossom servers when upload succeeds, and clients verify the compressed blob size and SHA-256 from the summary before decompressing or displaying the rows.
 
 ---
 

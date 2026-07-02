@@ -29,9 +29,12 @@ WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,
 WORKER_PUBLIC_ARCHIVE_RELAYS=wss://nos.lol,wss://relay.primal.net,wss://relay.damus.io
 WORKER_PUBLIC_ARCHIVE_INTERVAL_MS=500
 WORKER_PUBLIC_ARCHIVE_QUEUE_SIZE=10000
+WORKER_BLOSSOM_RESULT_PACK_SERVERS=https://blossom.nostr.build,https://blossom.primal.net,https://cdn.nostrcheck.me
 ```
 
 `WORKER_PUBLIC_ARCHIVE_RELAYS` is optional. When set, the worker still publishes public responses, decisions, close events, and summaries to the hot worker relays first, then copies those same signed events to the archive relays one relay/event at a time at `WORKER_PUBLIC_ARCHIVE_INTERVAL_MS`. Archive fanout is best-effort and bounded by `WORKER_PUBLIC_ARCHIVE_QUEUE_SIZE`.
+
+`WORKER_BLOSSOM_RESULT_PACK_SERVERS` is optional and defaults to the three HTTPS servers shown above. When delegated result summary publishing is enabled, the worker uploads a gzip-compressed public result pack to at least two Blossom servers, then includes the primary URL, mirror URLs, size, and SHA-256 in the result summary. If fewer than two servers accept the upload, the worker publishes the count summary without a Blossom pack.
 
 ## Run
 
@@ -68,5 +71,5 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - process public questionnaire submissions only after the public questionnaire definition and a positive expected participant count are configured, and stop scanning a round once expected accepted completion is reached
 - publish delegated public submission decisions with delegation provenance tags
 - optionally drip-feed handled public responses, submission decisions, close events, and result summaries to public archive relays without blocking the hot worker relay path
-- optionally publish a delegated close-state event and result summary when delegated capabilities are enabled, expected invitee completion is reached using accepted valid responses only, and no delegated blind request is still waiting for authorisation/configuration
+- optionally publish a delegated close-state event and result summary when delegated capabilities are enabled, expected invitee completion is reached using accepted valid responses only, and no delegated blind request is still waiting for authorisation/configuration; final summaries can reference the verified two-mirror Blossom result pack for observer readback recovery
 - keep running after currently known delegated work completes so later sessions and late general-invite ballot requests can still be handled; stop with Ctrl-C or terminate the process when you are done with the current proxy identity

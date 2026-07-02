@@ -208,6 +208,21 @@ export type QuestionnairePublishedResponseRef = {
   submittedAt: number;
   accepted: boolean;
   answers?: QuestionnaireResponseAnswer[];
+  rejectionReason?: string | null;
+};
+
+export type QuestionnaireResultPackReference = {
+  url: string;
+  sha256: string;
+  size: number;
+  type: "application/vnd.auditable-voting.result-pack+json";
+  compression: "gzip";
+  uploadedAt: number;
+  server?: string;
+  mirrors?: Array<{
+    url: string;
+    server?: string;
+  }>;
 };
 
 export type QuestionnaireResultSummary = {
@@ -221,6 +236,7 @@ export type QuestionnaireResultSummary = {
   acceptedNullifierCount?: number;
   questionSummaries: QuestionnaireResultQuestionSummary[];
   publishedResponseRefs?: QuestionnairePublishedResponseRef[];
+  resultPack?: QuestionnaireResultPackReference;
   resultHash?: string;
 };
 

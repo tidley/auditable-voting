@@ -28,6 +28,7 @@ import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardRespon
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildQuestionnaireDefinitionReference, selectNewestMatchingQuestionnaireDefinition } from "./questionnaireDefinitionReference";
 import { tryWriteClipboard } from "./clipboard";
+import { uploadQuestionnaireResultPack } from "./questionnaireResultPack";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions, verifyQuestionnaireBlindResponseProofs } from "./questionnaireTransport";
 import {
@@ -3929,6 +3930,23 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
       }
 
+      const resultPackResponses = summary.publishedResponseRefs ?? [];
+      if (resultPackResponses.length > 0) {
+        try {
+          setStatus("Uploading compressed result pack to Blossom...");
+          summary.resultPack = await uploadQuestionnaireResultPack({
+            publisherNsec: coordinatorNsec,
+            resultSummary: summary,
+            responses: resultPackResponses,
+          });
+          if (resultPackResponses.length > 200) {
+            summary.publishedResponseRefs = [];
+          }
+        } catch (error) {
+          console.warn("Blossom result-pack upload failed", error);
+        }
+      }
+
       const publishSummary = await publishQuestionnaireResultSummary({
         coordinatorNsec,
         resultSummary: summary,
@@ -3959,7 +3977,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         });
         setStatus(
           usePublicSubmissionFlow
-            ? `Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}, Public responses=${summary.publishedResponseRefs?.length ?? 0}.`
+            ? `Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}, Public responses=${resultPackResponses.length}.`
             : `Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}, Public responses=${responsePublishSuccessCount}/${responsePublishAttemptCount}.`,
         );
       } else {

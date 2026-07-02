@@ -291,7 +291,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
 5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the organiser for that delegated round). Invite payloads and cached election metadata carry the audit proxy routing hint plus a questionnaire pointer, so voters can keep targeting the audit proxy if the organiser browser goes offline; audit proxy election-config DMs carry the public definition pointer, and credential DMs carry only credentials/signatures plus a definition hash or event id.
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
-7. Close the round and publish the result summary (or delegate proxy close + auto-summary once all expected invitees have accepted valid responses).
+7. Close the round and publish the result summary (or delegate proxy close + auto-summary once all expected invitees have accepted valid responses). Final summaries may reference a two-mirror Blossom result pack for large response detail readback.
 
 If the Questionnaire tab reports that the blind-signing key is still initialising, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
 
@@ -306,7 +306,7 @@ The proxy receives two private control messages from the organiser:
 1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
 2. an election config message containing the public questionnaire definition pointer, blind-signing material needed for delegated issuance, per-questionnaire whitelisted voter npubs projected from the organiser's invited-voter roster, private invite-code hashes, and the routing hints voters should use
 
-After activation, the proxy subscribes to its own NIP-17 mailbox over outbound relay connections, with bounded polling as a recovery path. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It refuses blind-signing material that does not match the published questionnaire definition, decodes compressed request bundles before normal parsing, sends heartbeats and operation reports back to the organiser so the Questionnaire tab can show whether the proxy is active, and stays running for later delegated questionnaires until it is closed from the command line.
+After activation, the proxy subscribes to its own NIP-17 mailbox over outbound relay connections, with bounded polling as a recovery path. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. When it publishes delegated summaries, it can mirror a compressed result pack to Blossom and attach the URLs, size, and SHA-256 only after two uploads succeed. It refuses blind-signing material that does not match the published questionnaire definition, decodes compressed request bundles before normal parsing, sends heartbeats and operation reports back to the organiser so the Questionnaire tab can show whether the proxy is active, and stays running for later delegated questionnaires until it is closed from the command line.
 
 Proxy closure is guarded by the same accepted-response set used for summary publication. Rejected, duplicate, invalid, or spam submissions do not count towards automatic closure. The delegated close event is published as questionnaire state with proxy provenance, so Organiser and Observer views label it as `Closed by audit proxy`.
 
@@ -462,7 +462,7 @@ flowchart LR
 ```
 
 Observers derive results from public submissions and public organiser decisions.
-The published summary includes per-response references as a parity backfill, so the observer can still render full responder rows even when relay visibility is fragmented.
+The published summary includes per-response references as a parity backfill, or a pointer to a gzip-compressed Blossom result pack for larger runs. The Observer verifies the advertised compressed blob size and SHA-256 before decompressing or showing rows from any Blossom mirror.
 
 Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Organisers also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
 

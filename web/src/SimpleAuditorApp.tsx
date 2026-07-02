@@ -40,6 +40,7 @@ import {
   QUESTIONNAIRE_STATE_KIND,
   subscribeQuestionnaireEventKinds,
 } from "./questionnaireNostr";
+import { fetchQuestionnaireResultPack } from "./questionnaireResultPack";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { UiButton, UiSelect, UiTextField } from "./ui/DesignLayer";
@@ -480,6 +481,31 @@ export default function SimpleAuditorApp() {
           }));
         details = mergeAuditorResponseDetails(details, summaryRefDetails);
       }
+      let loadedFromResultPack = false;
+      if (
+        latestResult?.summary.resultPack
+        && (
+          (expectedResponseTotal !== null && details.length < expectedResponseTotal)
+          || ((latestResult.summary.publishedResponseRefs?.length ?? 0) > details.length)
+        )
+      ) {
+        try {
+          const pack = await fetchQuestionnaireResultPack(latestResult.summary.resultPack);
+          if (pack.questionnaireId === selectedId) {
+            const packDetails = pack.responses.map((ref) => optionASummaryRefToAuditorDetail({
+              questionnaireId: selectedId,
+              ref,
+              latestPublishAt,
+              source: "result-pack",
+            }));
+            const nextDetails = mergeAuditorResponseDetails(details, packDetails);
+            loadedFromResultPack = nextDetails.length > details.length;
+            details = nextDetails;
+          }
+        } catch (error) {
+          console.warn("Blossom result-pack fetch failed", error);
+        }
+      }
       const nextLiveState = latestState?.state.state ?? null;
       const nextLiveStateEvent = latestState?.state ?? null;
       const nextResultSummary = latestResult?.summary ?? null;
@@ -509,7 +535,9 @@ export default function SimpleAuditorApp() {
           responseSearchValues: buildAuditorResponseDetailSearchValues(details),
         };
       }));
-      const nextStatus = "Questionnaire responses refreshed from Nostr.";
+      const nextStatus = loadedFromResultPack
+        ? "Questionnaire responses refreshed from Blossom result pack."
+        : "Questionnaire responses refreshed from Nostr.";
       initialSelectedLoadDoneRef.current = true;
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } catch {
@@ -930,6 +958,9 @@ export default function SimpleAuditorApp() {
           ) : (
             <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
           )}
+          {responseRefreshStatus ? (
+            <p className='simple-voter-note'>{responseRefreshStatus}</p>
+          ) : null}
         </section>
 
         <QuestionnaireResultsDashboard
@@ -1322,8 +1353,8 @@ function mergeAuditorResponseDetails(
       continue;
     }
     // Prefer real Nostr events over synthetic fallback ids and keep the latest timestamp.
-    const existingSynthetic = existing.event.id.startsWith("optiona:");
-    const nextSynthetic = detail.event.id.startsWith("optiona:");
+    const existingSynthetic = isSyntheticAuditorEventId(existing.event.id);
+    const nextSynthetic = isSyntheticAuditorEventId(detail.event.id);
     if (existingSynthetic && !nextSynthetic) {
       byKey.set(key, detail);
       continue;
@@ -1345,6 +1376,12 @@ function mergeAuditorResponseDetails(
     }
   }
   return [...byKey.values()].sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+}
+
+function isSyntheticAuditorEventId(eventId: string) {
+  return eventId.startsWith("optiona:")
+    || eventId.startsWith("summary:")
+    || eventId.startsWith("result-pack:");
 }
 
 function mergeAcceptedAuditorResponseDetail(
@@ -1374,13 +1411,14 @@ function optionASummaryRefToAuditorDetail(input: {
   questionnaireId: string;
   ref: QuestionnairePublishedResponseRef;
   latestPublishAt: number | null;
+  source?: "summary" | "result-pack";
 }): AuditorQuestionnaireResponseDetail {
   const responseId = input.ref.responseId.trim();
   const submittedAt = Number.isFinite(input.ref.submittedAt)
     ? Number(input.ref.submittedAt)
     : Math.floor(Date.now() / 1000);
   const event = {
-    id: `summary:${input.questionnaireId}:${responseId}`,
+    id: `${input.source ?? "summary"}:${input.questionnaireId}:${responseId}`,
     created_at: submittedAt,
   } as NostrEvent;
   const normalizedAuthor = normalizeToNpub(input.ref.authorPubkey);
@@ -1402,7 +1440,7 @@ function optionASummaryRefToAuditorDetail(input: {
       answers: input.ref.answers ?? [],
     },
     accepted: input.ref.accepted,
-    rejectionReason: input.ref.accepted ? null : "duplicate_nullifier",
+    rejectionReason: input.ref.accepted ? null : input.ref.rejectionReason ?? "duplicate_nullifier",
     includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : true,
   };
 }
