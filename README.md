@@ -138,7 +138,7 @@ cd worker
 WORKER_NSEC="nsec1..." \
 COORDINATOR_NPUB="npub1..." \
 WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net" \
-WORKER_DM_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net" \
+WORKER_DM_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net" \
 WORKER_PUBLIC_ARCHIVE_RELAYS="wss://nos.lol,wss://relay.primal.net,wss://relay.damus.io" \
 WORKER_PUBLIC_ARCHIVE_INTERVAL_MS=500 \
 cargo run
@@ -150,7 +150,7 @@ Useful optional environment variables:
 - `WORKER_HEARTBEAT_SECONDS`
 - `WORKER_POLL_SECONDS` (generated launchers set this to `5`)
 - `WORKER_RELAYS` for public questionnaire and delegation relay reads
-- `WORKER_DM_RELAYS` for NIP-17/private worker DMs; keep public-only relays such as `wss://relay.nostr.info` out of this list because they reject gift-wrap events
+- `WORKER_DM_RELAYS` for NIP-17/private worker DMs; defaults to `wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net`. Keep public-only or rate-limited relays such as `wss://relay.nostr.info`, `wss://nos.lol`, `wss://relay.damus.io`, and `wss://relay.primal.net` out of this list for live sessions.
 - `WORKER_PUBLIC_ARCHIVE_RELAYS` to drip-feed handled public responses, submission decisions, close events, and result summaries to extra public relays after the hot worker relay publish succeeds
 - `WORKER_PUBLIC_ARCHIVE_INTERVAL_MS` and `WORKER_PUBLIC_ARCHIVE_QUEUE_SIZE` to tune that best-effort archive fanout
 - `WORKER_BLOSSOM_RESULT_PACK_SERVERS` for comma-separated HTTPS Blossom servers used for final result packs; defaults to `https://blossom.nostr.build,https://blossom.primal.net,https://cdn.nostrcheck.me` and requires two successful uploads before a pack reference is attached

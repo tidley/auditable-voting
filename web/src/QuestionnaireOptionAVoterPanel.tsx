@@ -32,6 +32,7 @@ import {
   type QuestionnaireDefinition,
 } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
+import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import TokenFingerprint from "./TokenFingerprint";
 import { decodeNsec } from "./nostrIdentity";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
@@ -1760,6 +1761,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           delegationId: delegation.delegationId,
           workerNpub: delegation.workerNpub,
           controlRelays: delegation.controlRelays,
+          dmRelays: SIMPLE_DM_RELAYS,
           expiresAt: delegation.expiresAt,
         })
         : null;

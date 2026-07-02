@@ -38,9 +38,6 @@ import {
 export const SIMPLE_DM_RELAYS = [
   'wss://vm-1734.lnvps.cloud/',
   'wss://relay.nostr.net',
-  'wss://nos.lol',
-  'wss://relay.damus.io',
-  'wss://relay.primal.net',
 ];
 
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;

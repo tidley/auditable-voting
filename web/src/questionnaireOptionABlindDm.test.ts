@@ -526,7 +526,6 @@ describe("questionnaireOptionABlindDm", () => {
     expect(relays).toEqual([
       "wss://vm-1734.lnvps.cloud/",
       "wss://relay.nostr.net",
-      "wss://nos.lol",
     ]);
     expect(relays).not.toContain("wss://relay.nostr.info");
     expect(relays).not.toContain("wss://relay.damus.io");

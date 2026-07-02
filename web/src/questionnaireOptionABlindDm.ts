@@ -57,7 +57,6 @@ const OPTION_A_BUNDLE_COMPRESSION_THRESHOLD_BYTES = 8 * 1024;
 const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
-  "wss://nos.lol",
 ];
 const OPTION_A_BLIND_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",

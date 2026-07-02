@@ -12,6 +12,7 @@ vi.mock("./sharedNostrPool", () => ({
 
 import { fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
 import { OPTIONA_WORKER_DELEGATION_KIND, type WorkerDelegationCertificate } from "./questionnaireWorkerDelegation";
+import { buildIssueBlindTokensWorkerRouting, mergeBlindRequestRoutingRelays } from "./questionnaireWorkerRouting";
 
 function eventForDelegation(input: {
   id: string;
@@ -81,5 +82,34 @@ describe("questionnaire worker routing", () => {
         kinds: [OPTIONA_WORKER_DELEGATION_KIND],
       }),
     );
+  });
+
+  it("uses explicit worker DM relays before public control relays for blind requests", () => {
+    const routing = buildIssueBlindTokensWorkerRouting({
+      delegationId: "delegation_dm_relays",
+      workerNpub,
+      controlRelays: ["wss://nos.lol", "wss://relay.damus.io"],
+      dmRelays: ["wss://vm-1734.lnvps.cloud/", "wss://relay.nostr.net"],
+    });
+
+    const relays = mergeBlindRequestRoutingRelays(["wss://fallback.example"], routing);
+
+    expect(relays).toEqual([
+      "wss://vm-1734.lnvps.cloud/",
+      "wss://relay.nostr.net",
+      "wss://fallback.example",
+    ]);
+  });
+
+  it("does not fall back to public control relays for blind request DMs", () => {
+    const routing = buildIssueBlindTokensWorkerRouting({
+      delegationId: "delegation_legacy_public_relays",
+      workerNpub,
+      controlRelays: ["wss://nos.lol", "wss://relay.damus.io"],
+    });
+
+    const relays = mergeBlindRequestRoutingRelays(["wss://vm-1734.lnvps.cloud/"], routing);
+
+    expect(relays).toEqual(["wss://vm-1734.lnvps.cloud/"]);
   });
 });

@@ -445,12 +445,14 @@ const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
 const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
-  "wss://nos.lol",
-  "wss://relay.damus.io",
-  "wss://relay.primal.net",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
+]);
+const WORKER_DM_DISCOURAGED_RELAYS = new Set([
+  "wss://nos.lol",
+  "wss://relay.damus.io",
+  "wss://relay.primal.net",
 ]);
 const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
@@ -528,7 +530,8 @@ function sanitizeWorkerRelays(value: string) {
 
 function deriveWorkerDmRelays(workerRelays: string) {
   const relays = sanitizeWorkerRelays(workerRelays)
-    .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay));
+    .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay))
+    .filter((relay) => !WORKER_DM_DISCOURAGED_RELAYS.has(relay));
   return relays.length > 0 ? relays : DEFAULT_WORKER_DM_RELAYS;
 }
 
@@ -832,7 +835,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.31";
+const WORKER_MINIMUM_VERSION = "0.1.33";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 
 function buildWorkerLauncherContents(input: {
@@ -4059,6 +4062,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Enter at least one audit proxy control relay.`);
       return;
     }
+    const workerDmRelays = deriveWorkerDmRelays(delegatedWorkerControlRelays);
     const delegation = createWorkerDelegationCertificate({
       electionId,
       coordinatorNpub: coordinatorNpubTrimmed,
@@ -4195,7 +4199,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         recipientNpub: workerNpub,
         delegation,
         fallbackNsec: coordinatorNsecTrimmed,
-        relays: controlRelays,
+        relays: workerDmRelays,
       });
       let configResultSummary = "";
       if (workerElectionConfigSnapshot) {
@@ -4204,7 +4208,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           recipientNpub: workerNpub,
           snapshot: workerElectionConfigSnapshot,
           fallbackNsec: coordinatorNsecTrimmed,
-          relays: controlRelays,
+          relays: workerDmRelays,
         });
         configResultSummary = `, ${configDmResult.successes} config DM relay successes`;
       }
@@ -4226,6 +4230,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               delegationId: delegation.delegationId,
               workerNpub: delegation.workerNpub,
               controlRelays: delegation.controlRelays,
+              dmRelays: workerDmRelays,
               expiresAt: delegation.expiresAt,
             })
             : null,

@@ -67,6 +67,7 @@ export interface IssueBlindTokensWorkerRouting {
   delegationId: string;
   workerNpub: Npub;
   controlRelays?: string[];
+  dmRelays?: string[];
   expiresAt?: IsoTime | null;
 }
 

@@ -208,7 +208,8 @@ describe("QuestionnaireResultsDashboard", () => {
 
     expect(screen.getByText("Published total")).toBeTruthy();
     expect(screen.getByText("1200/1200 accepted (100%)")).toBeTruthy();
-    expect(screen.getByText("Loaded responses: 400 loaded · 400 accepted")).toBeTruthy();
+    expect(document.body.textContent).toContain("Loaded: 400 (33%)");
+    expect(document.body.textContent).toContain("Accepted: 400 (100%)");
   });
 
   it("shows submitted votes 100 at a time while filtering across every loaded response", async () => {

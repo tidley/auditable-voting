@@ -203,12 +203,14 @@
       const DEFAULT_WORKER_DM_RELAYS = [
         "wss://vm-1734.lnvps.cloud/",
         "wss://relay.nostr.net",
-        "wss://nos.lol",
-        "wss://relay.damus.io",
-        "wss://relay.primal.net",
       ];
       const WORKER_DM_REJECTING_RELAYS = new Set([
         "wss://relay.nostr.info",
+      ]);
+      const WORKER_DM_DISCOURAGED_RELAYS = new Set([
+        "wss://nos.lol",
+        "wss://relay.damus.io",
+        "wss://relay.primal.net",
       ]);
 
       function sanitizeWorkerControlRelays(workerRelays) {
@@ -224,7 +226,8 @@
           .split(",")
           .map((entry) => entry.trim())
           .filter(Boolean)
-          .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay));
+          .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay))
+          .filter((relay) => !WORKER_DM_DISCOURAGED_RELAYS.has(relay));
         return relays.length > 0 ? relays : DEFAULT_WORKER_DM_RELAYS;
       }
 
@@ -233,13 +236,14 @@
           .split(",")
           .map((entry) => entry.trim())
           .filter(Boolean)
-          .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay));
+          .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay))
+          .filter((relay) => !WORKER_DM_DISCOURAGED_RELAYS.has(relay));
         return (relays.length > 0 ? relays : DEFAULT_WORKER_DM_RELAYS).join(",");
       }
 
       const DEFAULT_WORKER_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
       const DEFAULT_WORKER_POLL_SECONDS = "5";
-      const WORKER_MINIMUM_VERSION = "0.1.31";
+      const WORKER_MINIMUM_VERSION = "0.1.33";
       const WORKER_RELEASE_DOWNLOAD_URL = `${RELEASE_BASE_URL}/auditable-voting-worker-linux-x64.tar.gz`;
 
       const requiredVersionNode = document.getElementById("required-version");

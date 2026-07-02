@@ -93,10 +93,8 @@ const PRIVATE_DM_REJECTING_RELAYS: &[&str] = &[
     "wss://relay.nostr.info",
 ];
 const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &[
+    "wss://vm-1734.lnvps.cloud/",
     "wss://relay.nostr.net",
-    "wss://nos.lol",
-    "wss://relay.damus.io",
-    "wss://relay.primal.net",
 ];
 const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
 const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
@@ -2121,22 +2119,7 @@ impl WorkerRuntime {
     }
 
     async fn effective_worker_private_relays(&self) -> Vec<RelayUrl> {
-        let mut relays = self.config.worker_dm_relays.clone();
-        let state = self.state.lock().await;
-        for election in state.elections.values() {
-            if election.revoked || is_expired(&election.expires_at) {
-                continue;
-            }
-            for relay in &election.control_relays {
-                match RelayUrl::parse(relay) {
-                    Ok(parsed) => relays.push(parsed),
-                    Err(error) => {
-                        warn!("ignoring invalid delegated control relay {relay}: {error}")
-                    }
-                }
-            }
-        }
-        drop(state);
+        let relays = self.config.worker_dm_relays.clone();
 
         let filtered = filter_private_dm_relays(dedupe_relays(relays));
         let fallback_relays = if filtered.is_empty() {
@@ -5690,7 +5673,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn effective_private_relays_exclude_public_only_delegated_relays() {
+    async fn effective_private_relays_do_not_inherit_delegated_control_relays() {
         let coordinator_keys = Keys::generate();
         let mut state = WorkerPersistentState::default();
         state.elections.insert(
@@ -5716,8 +5699,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(!relays.contains(&"wss://relay.nostr.info".to_string()));
-        assert!(relays.contains(&"wss://relay.nostr.net".to_string()));
-        assert!(relays.contains(&"wss://nos.lol".to_string()));
+        assert!(relays.contains(&"wss://relay.example.com".to_string()));
+        assert!(!relays.contains(&"wss://relay.nostr.net".to_string()));
+        assert!(!relays.contains(&"wss://nos.lol".to_string()));
 
         fs::remove_dir_all(state_dir).ok();
     }

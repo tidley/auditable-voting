@@ -1722,7 +1722,7 @@ describe("Simple round flow", () => {
       expect(coordinatorUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
       expect(coordinatorUi.getAllByRole("button", { name: /^Title & Description:/i }).length).toBeGreaterThan(0);
       expect(coordinatorUi.queryByRole("tab", { name: /^Session$/i })).toBeNull();
-      expect(coordinatorUi.getByRole("tab", { name: /^Audit proxy$/i })).toBeTruthy();
+      expect(coordinatorUi.queryByRole("tab", { name: /^Audit proxy$/i })).toBeNull();
       expect(coordinatorUi.queryByText(/Live prompt: Legacy cached prompt/i)).toBeNull();
     });
   });
@@ -1969,8 +1969,8 @@ describe("Simple round flow", () => {
     expect(coordinatorTwoUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
     expect(coordinatorOneUi.getAllByRole("button", { name: /^Title & Description:/i }).length).toBeGreaterThan(0);
     expect(coordinatorTwoUi.getAllByRole("button", { name: /^Title & Description:/i }).length).toBeGreaterThan(0);
-    expect(coordinatorOneUi.getByRole("tab", { name: /^Audit proxy$/i })).toBeTruthy();
-    expect(coordinatorTwoUi.getByRole("tab", { name: /^Audit proxy$/i })).toBeTruthy();
+    expect(coordinatorOneUi.queryByRole("tab", { name: /^Audit proxy$/i })).toBeNull();
+    expect(coordinatorTwoUi.queryByRole("tab", { name: /^Audit proxy$/i })).toBeNull();
     expect(voterOneUi.getByRole("tab", { name: /^Vote$/i })).toBeTruthy();
     expect(voterTwoUi.getByRole("tab", { name: /^Vote$/i })).toBeTruthy();
     expect(coordinatorOneUi.queryByRole("button", { name: /Broadcast live vote|Vote broadcast/i })).toBeNull();

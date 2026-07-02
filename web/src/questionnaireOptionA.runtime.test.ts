@@ -777,6 +777,7 @@ describe("questionnaireOptionARuntime", () => {
         delegationId: "delegation_hint_1",
         workerNpub,
         controlRelays: ["wss://worker-relay.example"],
+        dmRelays: ["wss://worker-relay.example"],
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
       },
     };

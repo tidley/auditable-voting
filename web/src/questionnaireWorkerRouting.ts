@@ -5,12 +5,14 @@ export function buildIssueBlindTokensWorkerRouting(input: {
   delegationId: string;
   workerNpub: string;
   controlRelays?: string[];
+  dmRelays?: string[];
   expiresAt?: string | null;
 }): IssueBlindTokensWorkerRouting {
   return {
     delegationId: input.delegationId.trim(),
     workerNpub: input.workerNpub.trim(),
     controlRelays: normalizeRelaysRust(input.controlRelays ?? []),
+    dmRelays: normalizeRelaysRust(input.dmRelays ?? []),
     expiresAt: input.expiresAt?.trim() || null,
   };
 }
@@ -39,5 +41,6 @@ export function selectIssueBlindTokensWorkerRouting(input: {
 }
 
 export function mergeBlindRequestRoutingRelays(baseRelays: string[], routing: IssueBlindTokensWorkerRouting | null | undefined) {
-  return normalizeRelaysRust([...(routing?.controlRelays ?? []), ...baseRelays]);
+  const routedDmRelays = routing?.dmRelays ?? [];
+  return normalizeRelaysRust([...routedDmRelays, ...baseRelays]);
 }

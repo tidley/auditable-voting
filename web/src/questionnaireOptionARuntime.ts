@@ -154,6 +154,7 @@ import {
 } from "./questionnaireProtocol";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
+import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1, type QuestionnaireFlowMode } from "./questionnaireProtocolConstants";
 import {
   buildIssueBlindTokensWorkerRouting,
@@ -240,6 +241,13 @@ function getPreferredQuestionnaireRelays(electionId: string) {
     loadElectionSummary(electionId)?.questionnaireRelays,
     readCachedQuestionnaireDefinition(electionId)?.questionnaireRelays,
     readElectionPrivateRelayPrefs(electionId),
+  );
+}
+
+function getPreferredQuestionnaireDmRelays(electionId: string) {
+  return mergeQuestionnaireRelayHints(
+    readElectionPrivateRelayPrefs(electionId),
+    SIMPLE_DM_RELAYS,
   );
 }
 
@@ -961,7 +969,7 @@ export class QuestionnaireOptionAVoterRuntime {
   }
 
   private getPreferredDmRelays() {
-    return getPreferredQuestionnaireRelays(this.electionId);
+    return getPreferredQuestionnaireDmRelays(this.electionId);
   }
 
   private resolveVoterBlindSigningPublicKey(input: {
@@ -1173,7 +1181,7 @@ export class QuestionnaireOptionAVoterRuntime {
       const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
         questionnaireId: this.electionId,
         capability: "issue_blind_tokens",
-        relays: this.getPreferredDmRelays(),
+        relays: getPreferredQuestionnaireRelays(this.electionId),
         coordinatorNpub: this.state?.coordinatorNpub ?? loadElectionSummary(this.electionId)?.coordinatorNpub ?? null,
       });
       if (delegation?.workerNpub?.trim()) {
@@ -1181,6 +1189,7 @@ export class QuestionnaireOptionAVoterRuntime {
           delegationId: delegation.delegationId,
           workerNpub: delegation.workerNpub,
           controlRelays: delegation.controlRelays,
+          dmRelays: getPreferredQuestionnaireDmRelays(this.electionId),
           expiresAt: delegation.expiresAt,
         });
         this.rememberIssueBlindTokensWorkerRouting(resolved);
@@ -4380,7 +4389,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
         questionnaireId: this.electionId,
         capability: "issue_blind_tokens",
-        relays: this.getPreferredDmRelays(),
+        relays: getPreferredQuestionnaireRelays(this.electionId),
         coordinatorNpub: this.coordinatorNpub,
       });
       if (delegation?.workerNpub?.trim()) {
@@ -4388,6 +4397,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           delegationId: delegation.delegationId,
           workerNpub: delegation.workerNpub,
           controlRelays: delegation.controlRelays,
+          dmRelays: getPreferredQuestionnaireDmRelays(this.electionId),
           expiresAt: delegation.expiresAt,
         });
         this.state.election = withIssueBlindTokensWorkerRouting(this.state.election, issueBlindTokensWorker);
