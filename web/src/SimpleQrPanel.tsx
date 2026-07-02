@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
+import { UiButton } from "./ui/DesignLayer";
 
 export default function SimpleQrPanel({
   value,
@@ -71,9 +72,13 @@ export default function SimpleQrPanel({
         {description ? <p className="simple-voter-question">{description}</p> : null}
         <code className="simple-identity-code">{value}</code>
         <div className="simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight">
-          <button type="button" className="simple-voter-secondary" onClick={copyValue}>
+          <UiButton
+            icon={copied ? "check" : "copy"}
+            className="simple-voter-secondary"
+            onPress={copyValue}
+          >
             {copied ? "Copied" : copyLabel}
-          </button>
+          </UiButton>
           {qrSrc ? (
             <a className="simple-voter-secondary" href={qrSrc} download={downloadFilename}>
               {downloadLabel}

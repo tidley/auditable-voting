@@ -9,6 +9,7 @@ import { deriveActorDisplayId } from "./actorDisplay";
 import { resolveQuestionnaireResponderNpub } from "./questionnaireResponderIdentity";
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
 import { hasVoterInviteContextInUrl } from "./questionnaireInvite";
+import { UiButton, UiSelect, UiTextArea } from "./ui/DesignLayer";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const PARTICIPATION_HISTORY_STORAGE_KEY = "voter.questionnaire-participation-history.v1";
@@ -1585,9 +1586,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           ) : null}
         </div>
       ) : (
-        <select
+        <UiSelect
           id='questionnaire-id-voter'
-          className='simple-voter-input'
+          selectClassName='simple-voter-input'
           value={questionnaireId}
           onChange={(event) => setQuestionnaireId(event.target.value)}
         >
@@ -1596,7 +1597,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
               {(entry.title || entry.questionnaireId)} · {entry.questionnaireId} · {selectorStateBadge(entry.lifecycle)}
             </option>
           ))}
-        </select>
+        </UiSelect>
       )}
       {participationHistory.length > 0 ? (
         <>
@@ -1605,10 +1606,10 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             {participationHistory.slice(0, 6).map((entry) => (
               <li key={entry.questionnaireId}>
                 <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-                <button
-                  type='button'
+                <UiButton
+                  icon='clipboard'
                   className='simple-voter-secondary'
-                  onClick={() => {
+                  onPress={() => {
                     setQuestionnaireId(entry.questionnaireId);
                     setRestoredQuestionnaireIds((current) => (
                       current.includes(entry.questionnaireId)
@@ -1618,7 +1619,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                   }}
                 >
                   {(entry.title || entry.questionnaireId)} ({new Date(entry.lastSubmittedAt).toLocaleString()})
-                </button>
+                </UiButton>
               </li>
             ))}
           </ul>
@@ -1663,22 +1664,22 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                     ) : null}
                   </div>
                   <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
-                    <button
-                      type='button'
+                    <UiButton
+                      icon='check'
                       className={`simple-voter-choice simple-questionnaire-yes-no-choice simple-voter-choice-yes${selected === true ? " is-active" : ""}`}
-                      onClick={() => setYesNoAnswer(question.questionId, true)}
-                      disabled={responseLocked}
+                      onPress={() => setYesNoAnswer(question.questionId, true)}
+                      isDisabled={responseLocked}
                     >
                       Yes
-                    </button>
-                    <button
-                      type='button'
+                    </UiButton>
+                    <UiButton
+                      icon='cancel'
                       className={`simple-voter-choice simple-questionnaire-yes-no-choice simple-voter-choice-no${selected === false ? " is-active" : ""}`}
-                      onClick={() => setYesNoAnswer(question.questionId, false)}
-                      disabled={responseLocked}
+                      onPress={() => setYesNoAnswer(question.questionId, false)}
+                      isDisabled={responseLocked}
                     >
                       No
-                    </button>
+                    </UiButton>
                   </div>
                 </article>
               );
@@ -1776,28 +1777,28 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                                   <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
                                 </span>
                                 <div className='simple-questionnaire-rank-actions'>
-                                  <button
-                                    type='button'
+                                  <UiButton
+                                    icon='uploadLine'
+                                    iconOnly
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       moveRankedAnswer(question.questionId, option.optionId, -1);
                                     }}
-                                    disabled={responseLocked || rankedIndex === 0}
-                                  >
-                                    Up
-                                  </button>
-                                  <button
-                                    type='button'
+                                    isDisabled={responseLocked || rankedIndex === 0}
+                                    aria-label='Move up'
+                                  />
+                                  <UiButton
+                                    icon='downloadLine'
+                                    iconOnly
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       moveRankedAnswer(question.questionId, option.optionId, 1);
                                     }}
-                                    disabled={responseLocked || rankedIndex === ranked.length - 1}
-                                  >
-                                    Down
-                                  </button>
+                                    isDisabled={responseLocked || rankedIndex === ranked.length - 1}
+                                    aria-label='Move down'
+                                  />
                                 </div>
                               </div>
                             );
@@ -1806,16 +1807,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                     {unrankedOptions.length > 0 ? (
                       <div className='simple-questionnaire-choice-list'>
                         {unrankedOptions.map((option) => (
-                          <button
+                          <UiButton
                             key={option.optionId}
-                            type='button'
+                            icon='add'
                             className='simple-voter-secondary simple-questionnaire-rank-add'
-                            onClick={() => addRankedAnswer(question.questionId, option.optionId)}
-                            disabled={responseLocked}
+                            onPress={() => addRankedAnswer(question.questionId, option.optionId)}
+                            isDisabled={responseLocked}
                           >
                             <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
                             <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
-                          </button>
+                          </UiButton>
                         ))}
                       </div>
                     ) : null}
@@ -1838,26 +1839,26 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                     </p>
                   ) : null}
                 </div>
-                <label className='simple-voter-label simple-voter-label-tight' htmlFor={`questionnaire-free-text-${question.questionId}`}>
-                  Additional comments
-                </label>
-                <textarea
-                  id={`questionnaire-free-text-${question.questionId}`}
-                  className='simple-voter-input simple-questionnaire-free-text'
-                  rows={4}
-                  maxLength={question.maxLength}
-                  placeholder='Type your response here...'
-                  value={text}
-                  readOnly={responseLocked}
-                  onChange={(event) => {
-                    if (responseLocked) {
-                      return;
-                    }
-                    const nextValue = event.target.value;
-                    setAnswerState((current) => ({
-                      ...current,
-                      [question.questionId]: nextValue,
-                    }));
+                <UiTextArea
+                  label='Additional comments'
+                  textAreaClassName='simple-voter-input simple-questionnaire-free-text'
+                  isDisabled={responseLocked}
+                  textAreaProps={{
+                    id: `questionnaire-free-text-${question.questionId}`,
+                    rows: 4,
+                    maxLength: question.maxLength,
+                    placeholder: 'Type your response here...',
+                    value: text,
+                    onChange: (event) => {
+                      if (responseLocked) {
+                        return;
+                      }
+                      const nextValue = event.target.value;
+                      setAnswerState((current) => ({
+                        ...current,
+                        [question.questionId]: nextValue,
+                      }));
+                    },
                   }}
                 />
                 <p className='simple-questionnaire-voter-helper'>Max {question.maxLength} characters.</p>
@@ -1865,14 +1866,14 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             );
           })}
 
-          <button
-            type='button'
+          <UiButton
+            icon={submitInFlight ? "spinner" : "send"}
             className='simple-voter-primary simple-voter-primary-wide'
-            disabled={!canSubmit}
-            onClick={() => void submitResponse()}
+            isDisabled={!canSubmit}
+            onPress={() => void submitResponse()}
           >
             {submitInFlight ? "Submitting..." : "Submit response"}
-          </button>
+          </UiButton>
         </div>
       ) : (
         <p className='simple-voter-note'>No questionnaire definition found for this id yet.</p>

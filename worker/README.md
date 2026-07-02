@@ -15,8 +15,8 @@ Optional audit proxy runtime for election-scoped coordinator delegation.
 WORKER_NSEC=nsec1...
 COORDINATOR_NPUB=npub1...
 # Optional override:
-# WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info
-# WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol
+# WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net
+# WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net
 ```
 
 Optional:
@@ -25,7 +25,7 @@ Optional:
 WORKER_STATE_DIR=/var/lib/auditable-voting-worker
 WORKER_HEARTBEAT_SECONDS=30
 WORKER_POLL_SECONDS=5
-WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol
+WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net
 ```
 
 ## Run

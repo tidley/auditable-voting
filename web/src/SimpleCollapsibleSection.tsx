@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
+import { UiButton } from "./ui/DesignLayer";
 
 export default function SimpleCollapsibleSection({
   title,
@@ -41,15 +42,15 @@ export default function SimpleCollapsibleSection({
           <h2 id={titleId} className="simple-voter-section-title simple-collapsible-title">{title}</h2>
         ) : titleToggleLabel ? (
           <h2 id={titleId} className="simple-voter-section-title simple-collapsible-title">
-            <button
-              type="button"
+            <UiButton
+              icon={isCollapsed ? "chevronRight" : "chevronDown"}
               className="simple-collapsible-title-toggle"
               aria-expanded={!isCollapsed}
               aria-controls={bodyId}
-              onClick={() => setCollapsed((current) => !current)}
+              onPress={() => setCollapsed((current) => !current)}
             >
               {isCollapsed ? `Show ${titleToggleLabel}` : `Hide ${titleToggleLabel}`}
-            </button>
+            </UiButton>
           </h2>
         ) : (
           <h2 id={titleId} className="simple-voter-section-title simple-collapsible-title">{title}</h2>
@@ -60,15 +61,15 @@ export default function SimpleCollapsibleSection({
           </div>
         ) : null}
         {!hideToggle && !titleToggleLabel ? (
-          <button
-            type="button"
+          <UiButton
+            icon={isCollapsed ? "chevronRight" : "chevronDown"}
             className="simple-collapsible-toggle"
             aria-expanded={!isCollapsed}
             aria-controls={bodyId}
-            onClick={() => setCollapsed((current) => !current)}
+            onPress={() => setCollapsed((current) => !current)}
           >
             {isCollapsed ? "Show" : "Hide"}
-          </button>
+          </UiButton>
         ) : null}
       </div>
       <div id={bodyId} className="simple-collapsible-body">

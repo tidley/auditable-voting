@@ -99,6 +99,7 @@ import { type MailboxReadQueryDebug } from "./simpleMailbox";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { useHelplineUnreadIndicator } from "./useHelplineUnreadIndicator";
+import { UiButton, UiSelect, UiSwitch, UiTextField } from "./ui/DesignLayer";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 export type VoterTab = "configure" | "vote" | "messages" | "settings";
@@ -3164,42 +3165,42 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             role='tablist'
             aria-label='Voter sections'
           >
-            <button
-              type='button'
+            <UiButton
+              icon='search'
               role='tab'
               aria-selected={activeTab === 'configure'}
               className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
-              onClick={() => selectTab('configure')}
+              onPress={() => selectTab('configure')}
             >
               Join
-            </button>
-            <button
-              type='button'
+            </UiButton>
+            <UiButton
+              icon='clipboard'
               role='tab'
               aria-selected={activeTab === 'vote'}
               className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
-              onClick={() => selectTab('vote')}
+              onPress={() => selectTab('vote')}
             >
               Vote
-            </button>
-            <button
-              type='button'
+            </UiButton>
+            <UiButton
+              icon='message'
               role='tab'
               aria-selected={activeTab === 'messages'}
               className={`simple-voter-tab${activeTab === 'messages' ? ' is-active' : ''}`}
-              onClick={() => selectTab('messages')}
+              onPress={() => selectTab('messages')}
             >
               Messages
-            </button>
-            <button
-              type='button'
+            </UiButton>
+            <UiButton
+              icon='settings'
               role='tab'
               aria-selected={activeTab === 'settings'}
               className={`simple-voter-tab${activeTab === 'settings' ? ' is-active' : ''}`}
-              onClick={() => selectTab('settings')}
+              onPress={() => selectTab('settings')}
             >
               Settings
-            </button>
+            </UiButton>
           </div>
         ) : null}
 
@@ -3212,47 +3213,49 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
               <h4 className='simple-voter-section-title'>Request invite from organiser</h4>
               <div className='simple-voter-add-row simple-voter-add-row-with-scan'>
-                <input
-                  id='simple-coordinator-draft'
-                  className='simple-voter-input simple-voter-input-inline'
-                  value={coordinatorDraft}
-                  onChange={(event) => {
-                    setCoordinatorDraft(event.target.value);
-                    setCoordinatorScannerStatus(null);
+                <UiTextField
+                  inputClassName='simple-voter-input simple-voter-input-inline'
+                  inputProps={{
+                    id: 'simple-coordinator-draft',
+                    value: coordinatorDraft,
+                    onChange: (event) => {
+                      setCoordinatorDraft(event.target.value);
+                      setCoordinatorScannerStatus(null);
+                    },
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        addCoordinatorInput();
+                      }
+                    },
+                    placeholder: 'Organiser identity (npub1...)',
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      addCoordinatorInput();
-                    }
-                  }}
-                  placeholder='Organiser identity (npub1...)'
                 />
-                <button
-                  type='button'
+                <UiButton
+                  icon='invite'
                   className='simple-voter-primary simple-voter-request-invite-button'
-                  onClick={addCoordinatorInput}
-                  disabled={!coordinatorDraftIsValid}
+                  onPress={addCoordinatorInput}
+                  isDisabled={!coordinatorDraftIsValid}
                 >
                   Request invite
-                </button>
-                <button
-                  type='button'
+                </UiButton>
+                <UiButton
+                  icon='qr'
                   className='simple-voter-secondary simple-voter-scan-button'
-                  onClick={() => {
+                  onPress={() => {
                     setCoordinatorScannerStatus(null);
                     setCoordinatorScannerActive(true);
                   }}
                 >
                   Scan QR
-                </button>
-                <button
-                  type='button'
+                </UiButton>
+                <UiButton
+                  icon='refresh'
                   className='simple-voter-secondary simple-voter-check-invites-button'
-                  onClick={() => void checkQuestionnaireInvites()}
+                  onPress={() => void checkQuestionnaireInvites()}
                 >
                   Check invites
-                </button>
+                </UiButton>
               </div>
               <SimpleQrScanner
                 active={coordinatorScannerActive}
@@ -3279,14 +3282,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                           {value}
                         </p>
                       </div>
-                      <button
-                        type='button'
+                      <UiButton
+                        icon='delete'
+                        iconOnly
                         className='simple-coordinator-card-remove'
-                        onClick={() => removeCoordinatorInput(index)}
+                        onPress={() => removeCoordinatorInput(index)}
                         aria-label={`Remove organiser ${index + 1}`}
-                      >
-                        ×
-                      </button>
+                      />
                     </li>
                   ))}
                 </ul>
@@ -3294,45 +3296,45 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             </div>
             {questionnaireVoteReady && questionnaireModeActive ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
-                <button
-                  type='button'
+                <UiButton
+                  icon='clipboard'
                   className='simple-voter-primary simple-voter-primary-wide'
-                  onClick={() => selectTab('vote')}
-                  disabled={
+                  onPress={() => selectTab('vote')}
+                  isDisabled={
                     !voterKeypair?.npub ||
                     configuredCoordinatorTargets.length === 0
                   }
                 >
                   Vote
-                </button>
+                </UiButton>
               </div>
             ) : questionnaireVoteReady && coordinatorsHaveBeenNotified ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
-                <button
-                  type='button'
+                <UiButton
+                  icon='clipboard'
                   className='simple-voter-primary simple-voter-primary-wide'
-                  onClick={() => selectTab('vote')}
-                  disabled={
+                  onPress={() => selectTab('vote')}
+                  isDisabled={
                     !voterKeypair?.npub ||
                     configuredCoordinatorTargets.length === 0
                   }
                 >
                   Vote
-                </button>
+                </UiButton>
               </div>
             ) : showRetryUnresponsiveButton ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
-                <button
-                  type='button'
+                <UiButton
+                  icon='refresh'
                   className='simple-voter-secondary simple-voter-primary-wide'
-                  onClick={() => void retryUnresponsiveCoordinators()}
-                  disabled={
+                  onPress={() => void retryUnresponsiveCoordinators()}
+                  isDisabled={
                     !voterKeypair?.npub ||
                     configuredCoordinatorTargets.length === 0
                   }
                 >
                   Retry
-                </button>
+                </UiButton>
               </div>
             ) : null}
             {visibleRequestStatus ? (
@@ -3366,15 +3368,10 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               <>
                 {knownRounds.length > 1 ? (
                   <div className='simple-voter-round-picker'>
-                    <label
-                      className='simple-voter-label'
-                      htmlFor='simple-live-round'
-                    >
-                      Round
-                    </label>
-                    <select
+                    <UiSelect
+                      label='Round'
                       id='simple-live-round'
-                      className='simple-voter-input'
+                      selectClassName='simple-voter-input'
                       value={effectiveLiveVoteSession.votingId}
                       onChange={(event) => {
                         manualRoundSelectionRef.current = true;
@@ -3386,7 +3383,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                           {formatRoundOptionLabel(round)}
                         </option>
                       ))}
-                    </select>
+                    </UiSelect>
                   </div>
                 ) : null}
 
@@ -3401,27 +3398,27 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                 </div>
 
                 <div className='simple-vote-button-grid'>
-                  <button
-                    type='button'
+                  <UiButton
+                    icon='check'
                     className={`simple-voter-choice simple-voter-choice-yes${liveVoteChoice === 'Yes' ? ' is-active' : ''}${liveVoteChoice === 'No' ? ' is-dimmed' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
-                    onClick={() => setLiveVoteChoice('Yes')}
+                    onPress={() => setLiveVoteChoice('Yes')}
                   >
                     Yes
-                  </button>
-                  <button
-                    type='button'
+                  </UiButton>
+                  <UiButton
+                    icon='cancel'
                     className={`simple-voter-choice simple-voter-choice-no${liveVoteChoice === 'No' ? ' is-active' : ''}${liveVoteChoice === 'Yes' ? ' is-dimmed' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
-                    onClick={() => setLiveVoteChoice('No')}
+                    onPress={() => setLiveVoteChoice('No')}
                   >
                     No
-                  </button>
+                  </UiButton>
                 </div>
 
-                <button
-                  type='button'
+                <UiButton
+                  icon={voteSubmitting ? "spinner" : voteSubmittedSuccessfully ? "check" : "send"}
                   className={`simple-voter-primary simple-voter-primary-wide simple-vote-submit${voteSubmittedSuccessfully ? ' is-success' : ''}`}
-                  onClick={() => void submitVote()}
-                  disabled={
+                  onPress={() => void submitVote()}
+                  isDisabled={
                     voteSubmitting ||
                     voteSubmittedSuccessfully ||
                     !liveVoteChoice ||
@@ -3435,7 +3432,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                       : !liveVoteChoice || uniqueShardResponses.length < requiredShardCount
                         ? 'Preparing vote'
                         : 'Submit vote'}
-                </button>
+                </UiButton>
 
                 <section
                   className='simple-vote-status-card'
@@ -3496,14 +3493,14 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                   {submitStatus && !voteSubmittedSuccessfully ? (
                     <p className='simple-voter-note'>{submitStatus}</p>
                   ) : null}
-                  <button
-                    type='button'
+                  <UiButton
+                    icon={showVoteDetails ? "chevronDown" : "chevronRight"}
                     className='simple-vote-details-toggle'
-                    onClick={() => setShowVoteDetails((current) => !current)}
+                    onPress={() => setShowVoteDetails((current) => !current)}
                     aria-expanded={showVoteDetails}
                   >
                     {showVoteDetails ? 'Hide details' : 'Show details'}
-                  </button>
+                  </UiButton>
                   {showVoteDetails ? (
                     <div className='simple-vote-details'>
                       {ballotTokenId ? (
@@ -3642,14 +3639,12 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             ) : null}
             <section className='simple-settings-card' aria-label='Relay hint settings'>
               <h3 className='simple-voter-question'>Relay hints</h3>
-              <label className='simple-settings-toggle'>
-                <input
-                  type='checkbox'
-                  checked={nip65Enabled}
-                  onChange={(event) => setNip65Enabled(event.target.checked)}
-                />
-                <span>Enable NIP-65 relay hints</span>
-              </label>
+              <UiSwitch
+                className='simple-settings-toggle'
+                label='Enable NIP-65 relay hints'
+                isSelected={nip65Enabled}
+                onChange={setNip65Enabled}
+              />
               <p className='simple-voter-note'>
                 Disabled by default. Turn this on only if you want to publish and use NIP-65 inbox/outbox relay hints.
               </p>

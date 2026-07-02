@@ -84,7 +84,12 @@ const PRIVATE_DM_REJECTING_RELAYS: &[&str] = &[
     // "kind 1059 not permitted", so keep it out of worker private DM publish/read paths.
     "wss://relay.nostr.info",
 ];
-const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &["wss://relay.nostr.net", "wss://nos.lol"];
+const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &[
+    "wss://relay.nostr.net",
+    "wss://nos.lol",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net",
+];
 const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
 const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
 
@@ -225,7 +230,13 @@ fn normalise_blind_token_scope(scope: Option<&serde_json::Value>) -> Option<serd
     let slot_id = get_scope_string(scope, "slotId", "slot_id");
     let slot_index = get_scope_positive_integer(scope, "slotIndex", "slot_index");
     let version = get_scope_positive_integer(scope, "version", "version");
-    if question_id.is_none() && slot_id.is_none() && slot_index.is_none() && version.is_none() {
+    let credential_index = get_scope_positive_integer(scope, "credentialIndex", "credential_index");
+    if question_id.is_none()
+        && slot_id.is_none()
+        && slot_index.is_none()
+        && version.is_none()
+        && credential_index.is_none()
+    {
         return None;
     }
     let mut map = serde_json::Map::new();
@@ -244,6 +255,12 @@ fn normalise_blind_token_scope(scope: Option<&serde_json::Value>) -> Option<serd
     if let Some(value) = version {
         map.insert(
             "version".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(value)),
+        );
+    }
+    if let Some(value) = credential_index.filter(|value| *value > 1) {
+        map.insert(
+            "credential_index".to_string(),
             serde_json::Value::Number(serde_json::Number::from(value)),
         );
     }
@@ -476,6 +493,13 @@ fn apply_worker_election_config(
     }
     if let Some(whitelist_npubs) = &snapshot.whitelist_npubs {
         election.whitelist_npubs = whitelist_npubs
+            .iter()
+            .map(|entry| entry.trim().to_string())
+            .filter(|entry| !entry.is_empty())
+            .collect();
+    }
+    if let Some(proxy_voter_npubs) = &snapshot.proxy_voter_npubs {
+        election.proxy_voter_npubs = proxy_voter_npubs
             .iter()
             .map(|entry| entry.trim().to_string())
             .filter(|entry| !entry.is_empty())
@@ -1104,42 +1128,39 @@ fn build_blind_issuance_bundle_envelope(
     }
 }
 
-fn ballot_scope_text_field(scope: &serde_json::Value, key: &str) -> String {
-    scope
-        .get(key)
-        .and_then(|entry| entry.as_str())
-        .map(str::trim)
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn ballot_scope_positive_integer_field(scope: &serde_json::Value, key: &str) -> u64 {
-    match scope.get(key) {
-        Some(serde_json::Value::Number(number)) => number.as_u64().unwrap_or(0).max(1),
-        _ => 0,
-    }
-}
-
 fn ballot_scope_key(scope: &Option<serde_json::Value>) -> String {
     let Some(scope) = scope else {
         return "__questionnaire__".to_string();
     };
-    let question_id = ballot_scope_text_field(scope, "questionId");
-    let slot_id = ballot_scope_text_field(scope, "slotId");
-    let version = ballot_scope_positive_integer_field(scope, "version");
-    let slot_index = ballot_scope_positive_integer_field(scope, "slotIndex");
-    if question_id.is_empty() && slot_id.is_empty() && version == 0 && slot_index == 0 {
+    let question_id = get_scope_string(scope, "questionId", "question_id").unwrap_or_default();
+    let slot_id = get_scope_string(scope, "slotId", "slot_id").unwrap_or_default();
+    let version = get_scope_positive_integer(scope, "version", "version").unwrap_or(0);
+    let slot_index = get_scope_positive_integer(scope, "slotIndex", "slot_index").unwrap_or(0);
+    let credential_index =
+        get_scope_positive_integer(scope, "credentialIndex", "credential_index").unwrap_or(1);
+    let credential_suffix = if credential_index > 1 {
+        format!(":c{credential_index}")
+    } else {
+        String::new()
+    };
+    if question_id.is_empty()
+        && slot_id.is_empty()
+        && version == 0
+        && slot_index == 0
+        && credential_index <= 1
+    {
         return "__questionnaire__".to_string();
     }
     if slot_index > 0 {
         return format!(
-            "slot:{}:v{}",
+            "slot:{}:v{}{}",
             slot_index,
-            if version == 0 { 1 } else { version }
+            if version == 0 { 1 } else { version },
+            credential_suffix
         );
     }
     format!(
-        "{}:{}:{}:v{}",
+        "{}:{}:{}:v{}{}",
         if question_id.is_empty() {
             &slot_id
         } else {
@@ -1147,8 +1168,16 @@ fn ballot_scope_key(scope: &Option<serde_json::Value>) -> String {
         },
         slot_id,
         slot_index,
-        if version == 0 { 1 } else { version }
+        if version == 0 { 1 } else { version },
+        credential_suffix
     )
+}
+
+fn ballot_scope_credential_index(scope: &Option<serde_json::Value>) -> u64 {
+    scope
+        .as_ref()
+        .and_then(|entry| get_scope_positive_integer(entry, "credentialIndex", "credential_index"))
+        .unwrap_or(1)
 }
 
 fn blind_request_issuance_scope_key(request: &BlindBallotRequest) -> String {
@@ -1177,6 +1206,14 @@ fn has_existing_issuance_for_request(
         && election
             .issued_invited_npubs
             .contains(&request.invited_npub)
+}
+
+fn blind_request_proxy_authorized(
+    election: &ElectionRuntimeState,
+    request: &BlindBallotRequest,
+) -> bool {
+    ballot_scope_credential_index(&request.ballot_scope) <= 1
+        || election.proxy_voter_npubs.contains(&request.invited_npub)
 }
 
 fn record_issuance_for_request(election: &mut ElectionRuntimeState, request: &BlindBallotRequest) {
@@ -2660,6 +2697,22 @@ impl WorkerRuntime {
                 );
                 return Ok(PreparedBlindIssuance::Deferred);
             }
+            if election.whitelist_npubs.contains(&request.invited_npub)
+                && !blind_request_proxy_authorized(election, &request)
+            {
+                election
+                    .deferred_blind_request_ids
+                    .remove(&request.request_id);
+                self.store.save(&state)?;
+                warn!(
+                    "blind request rejected because proxy voting is not enabled for this voter: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
+                    request.election_id,
+                    request.request_id,
+                    request.invited_npub,
+                    ballot_scope_key(&request.ballot_scope)
+                );
+                return Ok(PreparedBlindIssuance::Handled);
+            }
             if !election
                 .seen_blind_request_ids
                 .contains(&request.request_id)
@@ -2703,6 +2756,20 @@ impl WorkerRuntime {
                     return Ok(PreparedBlindIssuance::Handled);
                 }
             };
+            if !blind_request_proxy_authorized(election, &request) {
+                election
+                    .deferred_blind_request_ids
+                    .remove(&request.request_id);
+                self.store.save(&state)?;
+                warn!(
+                    "blind request rejected because proxy voting is not enabled for this voter: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
+                    request.election_id,
+                    request.request_id,
+                    request.invited_npub,
+                    ballot_scope_key(&request.ballot_scope)
+                );
+                return Ok(PreparedBlindIssuance::Handled);
+            }
             let cloned = election.clone();
             if state_changed_by_authorization {
                 self.store.save(&state)?;
@@ -3326,6 +3393,46 @@ mod tests {
     }
 
     #[test]
+    fn proxy_credential_scope_keys_are_distinct() {
+        let first_scope = Some(json!({
+            "questionId": "q1",
+            "slotId": "director-alice",
+            "slotIndex": 1,
+            "version": 1
+        }));
+        let second_scope = Some(json!({
+            "questionId": "q1",
+            "slotId": "director-alice",
+            "slotIndex": 1,
+            "version": 1,
+            "credentialIndex": 2
+        }));
+        assert_eq!(ballot_scope_key(&first_scope), "slot:1:v1");
+        assert_eq!(ballot_scope_key(&second_scope), "slot:1:v1:c2");
+
+        let first_message =
+            build_blind_token_signed_message("q_proxy", "commitment", first_scope.as_ref());
+        let second_message =
+            build_blind_token_signed_message("q_proxy", "commitment", second_scope.as_ref());
+        assert_ne!(first_message, second_message);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&second_message)
+                .expect("valid message json")
+                .pointer("/ballot_scope/credential_index"),
+            Some(&json!(2))
+        );
+
+        let mut first_request = sample_request();
+        first_request.ballot_scope = first_scope;
+        let mut second_request = sample_request();
+        second_request.ballot_scope = second_scope;
+        assert_ne!(
+            blind_request_issuance_scope_key(&first_request),
+            blind_request_issuance_scope_key(&second_request)
+        );
+    }
+
+    #[test]
     fn apply_worker_election_config_stores_definition() {
         let definition = json!({
             "schemaVersion": 2,
@@ -3350,6 +3457,7 @@ mod tests {
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            proxy_voter_npubs: None,
             bearer_invite_codes: Some(vec![BearerInviteCodeEntry {
                 election_id: "q_worker_definition".to_string(),
                 code_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -3400,6 +3508,7 @@ mod tests {
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(1),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            proxy_voter_npubs: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
@@ -3678,6 +3787,7 @@ mod tests {
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            proxy_voter_npubs: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -3688,6 +3798,7 @@ mod tests {
         let stale_snapshot = WorkerElectionConfigSnapshot {
             expected_invitee_count: Some(0),
             whitelist_npubs: Some(vec![]),
+            proxy_voter_npubs: None,
             sent_at: "2026-06-15T12:41:48.000Z".to_string(),
             ..newer_snapshot.clone()
         };
@@ -3720,6 +3831,7 @@ mod tests {
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            proxy_voter_npubs: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -3730,6 +3842,7 @@ mod tests {
         let newer_empty_snapshot = WorkerElectionConfigSnapshot {
             expected_invitee_count: Some(0),
             whitelist_npubs: Some(vec![]),
+            proxy_voter_npubs: None,
             sent_at: "2026-06-15T20:09:03.000Z".to_string(),
             ..complete_snapshot.clone()
         };
@@ -3774,6 +3887,7 @@ mod tests {
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            proxy_voter_npubs: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -3804,6 +3918,7 @@ mod tests {
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            proxy_voter_npubs: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -3814,6 +3929,7 @@ mod tests {
         let newer_empty_snapshot = WorkerElectionConfigSnapshot {
             expected_invitee_count: Some(0),
             whitelist_npubs: Some(vec![]),
+            proxy_voter_npubs: None,
             sent_at: "2026-06-15T20:09:03.000Z".to_string(),
             ..complete_snapshot.clone()
         };
@@ -3851,6 +3967,7 @@ mod tests {
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(0),
             whitelist_npubs: Some(vec![]),
+            proxy_voter_npubs: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(false),
             blind_signing_private_key: None,
@@ -4506,6 +4623,28 @@ mod tests {
             &election,
             &grouped_request
         ));
+    }
+
+    #[test]
+    fn proxy_second_credential_requires_per_voter_allowance() {
+        let mut election = ElectionRuntimeState::default();
+        let first_request = sample_request();
+        let mut second_request = sample_request();
+        second_request.request_id = "request_worker_definition_proxy".to_string();
+        second_request.ballot_scope = Some(json!({
+            "slotIndex": 1,
+            "version": 1,
+            "credentialIndex": 2
+        }));
+
+        assert!(blind_request_proxy_authorized(&election, &first_request));
+        assert!(!blind_request_proxy_authorized(&election, &second_request));
+
+        election
+            .proxy_voter_npubs
+            .insert(second_request.invited_npub.clone());
+
+        assert!(blind_request_proxy_authorized(&election, &second_request));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, nip44 } from "nostr-tools";
 import QRCode from "qrcode";
 import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
@@ -58,11 +59,13 @@ import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
+import { UiButton, UiDataTable, UiIcon, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import QuestionnaireCoordinatorPanel, {
   QUESTIONNAIRE_ID_RESET_EVENT,
   readStoredQuestionnaireRelayInput,
   resetStoredQuestionnaireDraftId,
   type QuestionnaireReadinessItem,
+  type QuestionnaireSetupFocusTarget,
   writeStoredQuestionnaireRelayInput,
 } from "./QuestionnaireCoordinatorPanel";
 import {
@@ -162,7 +165,7 @@ import {
 import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 
-type CoordinatorTab = "configure" | "participants" | "messages" | "settings";
+type CoordinatorTab = "configure" | "proxy" | "participants" | "messages" | "settings";
 
 export const SIMPLE_COORDINATOR_MENU_NAV_EVENT = "auditable-voting:coordinator-menu-nav";
 
@@ -177,14 +180,17 @@ type SimpleCoordinatorKeypair = {
 
 const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
 const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
-  { id: "title", label: "Title", shortLabel: "Title", complete: false },
-  { id: "description", label: "Description", shortLabel: "Desc", complete: false },
-  { id: "question", label: "1+ questions", shortLabel: "Q", complete: false },
-  { id: "answers", label: "Questions complete", shortLabel: "Done", complete: false },
-  { id: "publish", label: "Published", shortLabel: "Pub", complete: false },
+  { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
+  { id: "answers", label: "Questions complete", shortLabel: "Done", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
+  { id: "publish", label: "Published", shortLabel: "Pub", complete: false, stageLabel: "3", group: "session" },
+  { id: "proxy", label: "Set up proxy", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session" },
+  { id: "invite", label: "Invite voters", shortLabel: "Invite", complete: false, stageLabel: "4", group: "session", action: "invite_voters" },
 ];
 
 function questionnaireReadinessStatusLabel(item: QuestionnaireReadinessItem) {
+  if (item.optional && !item.complete) {
+    return "Optional";
+  }
   return item.complete ? "Complete" : "Pending";
 }
 
@@ -201,23 +207,28 @@ function QuestionnaireReadinessIcon({
       data-stage={item.id}
       aria-hidden='true'
     >
-      {item.complete ? "✓" : index + 1}
+      {item.complete ? "✓" : item.stageLabel ?? index + 1}
     </span>
   );
 }
 
-function SettingsCogIcon() {
-  return (
-    <svg
-      className='simple-coordinator-nav-svg-icon'
-      viewBox='0 0 24 24'
-      aria-hidden='true'
-      focusable='false'
-    >
-      <path d='M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.52a2 2 0 0 1-1 1.73l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.73v-.52a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z' />
-      <circle cx='12' cy='12' r='3' />
-    </svg>
-  );
+function questionnaireReadinessEntryIcon(item: QuestionnaireReadinessItem): UiIconName {
+  if (item.id === "basics") {
+    return "clipboard";
+  }
+  if (item.id === "answers") {
+    return "listAdd";
+  }
+  if (item.id === "publish") {
+    return "uploadLine";
+  }
+  if (item.id === "proxy") {
+    return "key";
+  }
+  if (item.id === "invite") {
+    return "invite";
+  }
+  return "check";
 }
 
 function decryptOptionATextAnswerForCoordinator(input: {
@@ -946,15 +957,15 @@ function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
 
   return (
     <>
-      <button
-        type='button'
+      <UiButton
+        icon={false}
         className='simple-invite-qr-trigger'
-        onClick={() => {
+        onPress={() => {
           if (qrSrc) {
             setExpanded(true);
           }
         }}
-        disabled={!qrSrc}
+        isDisabled={!qrSrc}
         aria-label={`Show large QR for ${label}`}
       >
         {qrSrc ? (
@@ -962,7 +973,7 @@ function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
         ) : (
           <span className='simple-invite-qr-fallback' aria-hidden='true' />
         )}
-      </button>
+      </UiButton>
       {expanded && qrSrc ? (
         <div
           className='simple-invite-qr-overlay'
@@ -971,14 +982,14 @@ function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
           aria-label={`${title} QR`}
           onClick={() => setExpanded(false)}
         >
-          <button
-            type='button'
+          <UiButton
+            icon='cancel'
             className='simple-invite-qr-overlay-close'
-            onClick={() => setExpanded(false)}
+            onPress={() => setExpanded(false)}
             aria-label='Close QR preview'
           >
             Close
-          </button>
+          </UiButton>
           <div className='simple-invite-qr-overlay-card' onClick={(event) => event.stopPropagation()}>
             <h3 className='simple-voter-question'>{title}</h3>
             <img className='simple-invite-qr-overlay-image' src={qrSrc} alt={`Large QR code for ${label}`} />
@@ -1256,6 +1267,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [newRoundMode, setNewRoundMode] = useState(false);
   const [draftQuestionnaireId, setDraftQuestionnaireId] = useState("");
   const [questionnaireReadinessItems, setQuestionnaireReadinessItems] = useState<QuestionnaireReadinessItem[]>(DEFAULT_QUESTIONNAIRE_READINESS_ITEMS);
+  const [proxySetupSignal, setProxySetupSignal] = useState(0);
+  const [setupFocusRequest, setSetupFocusRequest] = useState<{ target: QuestionnaireSetupFocusTarget; signal: number }>({
+    target: "basics",
+    signal: 0,
+  });
   const [relaySettingsExpandSignal, setRelaySettingsExpandSignal] = useState(0);
   const [questionnaireRelaysInput, setQuestionnaireRelaysInputState] = useState(() => readStoredQuestionnaireRelayInput());
   const [questionnaireRosterAnnouncement, setQuestionnaireRosterAnnouncement] = useState<{
@@ -1861,6 +1877,356 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   }, [admittedVoterDisplayRows, participantSearchQuery]);
   const participantRosterTotalCount = admittedVoterDisplayRows.length;
   const participantRosterVisibleCount = filteredAdmittedVoterDisplayRows.length;
+  type ParticipantDisplayRow = (typeof filteredAdmittedVoterDisplayRows)[number];
+  const participantTableColumns = useMemo<ColumnDef<ParticipantDisplayRow>[]>(() => {
+    const rowState = (participant: ParticipantDisplayRow) => {
+      const currentQuestionnaireEntry = participant.currentQuestionnaireEntry;
+      const pendingAuthorization = participant.pendingAuthorization;
+      const privateInviteEntry = participant.privateInviteEntry;
+      const submissionEntry = participant.submissionEntry;
+      const responseDetail = submissionEntry?.responseDetail ?? participant.responseDetail;
+      const responseIdentityNpub = submissionEntry?.submission.responseNpub?.trim()
+        || responseDetail?.response.authorPubkey?.trim()
+        || "";
+      const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
+      const isUnclaimedPrivateInvite = Boolean(privateInviteEntry && !privateInviteRedeemedNpub);
+      const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
+      const privateInviteActive = privateInviteEntry?.state === "available";
+      const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
+      const privateInviteStatusIndicator = privateInviteEntry
+        ? privateInviteVoterStatusIndicator({
+          state: privateInviteEntry.state,
+          redeemedNpub: privateInviteRedeemedNpub,
+          claimState: currentQuestionnaireEntry?.claimState ?? null,
+          markedUsedAt: privateInviteEntry.markedUsedAt ?? null,
+        })
+        : null;
+      const statusIndicator = pendingAuthorization
+        ? pendingAuthorisationStatusIndicator()
+        : currentQuestionnaireEntry
+          ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
+          : privateInviteStatusIndicator
+            ? privateInviteStatusIndicator
+            : null;
+      const statusLabel = pendingAuthorization
+        ? `Wants access (${pendingAuthorization.requestCount})`
+        : statusIndicator?.label ?? null;
+      const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim() || privateInviteEntry);
+      const isResultOnlyParticipant = Boolean(
+        (submissionEntry || participant.responseDetail)
+        && !participant.admittedEntry
+        && !currentQuestionnaireEntry
+        && !pendingAuthorization
+        && !privateInviteEntry,
+      );
+      const canUseCurrentInviteActions = Boolean(
+        optionAElectionId.trim()
+        && activeCoordinatorNpub.trim()
+        && !isPrivateInviteClaimant
+        && !isResultOnlyParticipant,
+      );
+      const canToggleProxyVoter = Boolean(
+        !isPrivateInviteClaimant
+        && !isResultOnlyParticipant
+        && (participant.admittedEntry || currentQuestionnaireEntry || pendingAuthorization),
+      );
+      return {
+        currentQuestionnaireEntry,
+        pendingAuthorization,
+        privateInviteEntry,
+        responseIdentityWords: responseIdentityNpub ? deriveIdentityWords(responseIdentityNpub) : "",
+        isUnclaimedPrivateInvite,
+        privateInviteUrl,
+        privateInviteActive,
+        canSharePrivateInvite,
+        statusIndicator,
+        statusLabel,
+        isResultOnlyParticipant,
+        canUseCurrentInviteActions,
+        canToggleProxyVoter,
+        proxyVoterEnabled: participant.admittedEntry?.proxyVoter === true || currentQuestionnaireEntry?.credentialsPerVoter === 2,
+        inviteButtonLabel: currentQuestionnaireEntry ? "Resend invite" : "Send invite",
+        inviteInputId: privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "",
+        noteInputId: privateInviteEntry
+          ? `admitted-voter-note-private-${privateInviteEntry.codeHash}`
+          : `admitted-voter-note-${participant.npub}`,
+        noteValue: participant.admittedEntry?.note ?? privateInviteEntry?.note ?? "",
+      };
+    };
+
+    return [
+      {
+        id: "number",
+        header: "#",
+        meta: { className: "is-number", label: "#" },
+        cell: ({ row }) => row.index + 1,
+      },
+      {
+        id: "voterId",
+        header: "Voter ID",
+        meta: { className: "is-voter-id", label: "Voter ID" },
+        cell: ({ row }) => {
+          const participant = row.original;
+          const state = rowState(participant);
+          return (
+            <div className='simple-admitted-voter-id-cell'>
+              <span className='simple-admitted-voter-id'>
+                {state.isUnclaimedPrivateInvite
+                  ? "Private invite"
+                  : state.isResultOnlyParticipant
+                    ? "Result only"
+                    : deriveActorDisplayId(participant.npub)}
+              </span>
+              {state.responseIdentityWords ? (
+                <span className='simple-identity-words-badge simple-admitted-voter-response-words'>
+                  {state.responseIdentityWords}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
+        id: "npub",
+        header: "Voter npub",
+        meta: { className: "is-npub", label: "Voter npub" },
+        cell: ({ row }) => {
+          const participant = row.original;
+          const state = rowState(participant);
+          return (
+            <div className='simple-admitted-voter-npub-cell'>
+              <div className='simple-admitted-voter-npub-line'>
+                <span className='simple-admitted-voter-npub' title={state.isUnclaimedPrivateInvite ? "Unclaimed private link" : participant.npub}>
+                  {state.isUnclaimedPrivateInvite ? "Unclaimed private link" : participant.npub}
+                </span>
+                {!state.isUnclaimedPrivateInvite ? (
+                  <UiButton
+                    variant='ghost'
+                    icon='copy'
+                    iconOnly
+                    className='simple-admitted-voter-copy-npub'
+                    onPress={() => void tryWriteClipboard(participant.npub)}
+                    aria-label='Copy voter npub'
+                    title='Copy voter npub'
+                  />
+                ) : null}
+              </div>
+              {state.privateInviteEntry && state.privateInviteUrl ? (
+                <div className='simple-admitted-private-link-details'>
+                  <div className='simple-private-invite-link-field'>
+                    <label className='simple-private-invite-field-label' htmlFor={state.inviteInputId}>Invite link</label>
+                    <div className={`simple-private-invite-url-control${state.canSharePrivateInvite ? "" : " is-readonly"}`}>
+                      <input
+                        id={state.inviteInputId}
+                        className='simple-private-invite-url-input'
+                        value={state.privateInviteUrl}
+                        readOnly
+                        aria-label='Invite link'
+                      />
+                      {state.canSharePrivateInvite ? (
+                        <UiButton
+                          variant='ghost'
+                          icon='copy'
+                          iconOnly
+                          className='simple-private-invite-copy-icon-button'
+                          onPress={() => void copyPrivateInviteCodeLink(state.privateInviteEntry!.codeHash)}
+                          aria-label='Copy private link'
+                          title='Copy private link'
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
+        id: "note",
+        header: "Internal note",
+        meta: { className: "is-note", label: "Internal note" },
+        cell: ({ row }) => {
+          const participant = row.original;
+          const state = rowState(participant);
+          return participant.admittedEntry || state.privateInviteEntry ? (
+              <UiTextField
+                fieldClassName='simple-admitted-voter-note-field'
+                inputClassName='simple-voter-input simple-voter-input-inline'
+                inputProps={{
+                  id: state.noteInputId,
+                  value: state.noteValue,
+                  placeholder: "Internal note",
+                  "aria-label": "Internal note",
+                  title: "Internal note",
+                  onChange: (event) => {
+                    const note = event.target.value;
+                    if (participant.admittedEntry) {
+                      updateAdmittedVoterDetails(participant.npub, { note });
+                    }
+                    if (state.privateInviteEntry) {
+                      updatePrivateInviteCodeNote(state.privateInviteEntry.codeHash, note);
+                    }
+                  },
+                }}
+              />
+          ) : (
+            <span className='simple-admitted-voter-empty-cell'>-</span>
+          );
+        },
+      },
+      {
+        id: "state",
+        header: "State",
+        meta: { className: "is-state", label: "State" },
+        cell: ({ row }) => {
+          const state = rowState(row.original);
+          return state.statusIndicator ? (
+            <span className={`simple-admitted-voter-status ${state.statusIndicator.className}`} aria-label={state.statusLabel ?? state.statusIndicator.label} title={state.statusLabel ?? state.statusIndicator.label}>
+              <span className='simple-admitted-voter-status-symbol' aria-hidden='true'>{state.statusIndicator.icon}</span>
+              <span>{state.statusLabel ?? state.statusIndicator.label}</span>
+            </span>
+          ) : (
+            <span className='simple-admitted-voter-pending'>Future questionnaires</span>
+          );
+        },
+      },
+      {
+        id: "autoBallot",
+        header: "Auto-ballot",
+        meta: { className: "is-toggle", label: "Auto-ballot" },
+        cell: ({ row }) => {
+          const participant = row.original;
+          const state = rowState(participant);
+          if (participant.admittedEntry) {
+            return (
+              <UiSwitch
+                aria-label='Auto-ballot'
+                isSelected={participant.admittedEntry.autoApply !== false}
+                onChange={(selected) => updateAdmittedVoterDetails(participant.npub, { autoApply: selected })}
+              />
+            );
+          }
+          if (state.privateInviteEntry) {
+            return (
+              <UiSwitch
+                aria-label='Auto-ballot'
+                isSelected={state.privateInviteEntry.autoRequestBallot !== false}
+                onChange={(selected) => setPrivateInviteCodeAutoRequestBallot(state.privateInviteEntry!.codeHash, selected)}
+              />
+            );
+          }
+          return <span className='simple-admitted-voter-empty-cell'>-</span>;
+        },
+      },
+      {
+        id: "proxyVoter",
+        header: "Proxy voter",
+        meta: { className: "is-toggle", label: "Proxy voter" },
+        cell: ({ row }) => {
+          const participant = row.original;
+          const state = rowState(participant);
+          return state.canToggleProxyVoter ? (
+            <UiSwitch
+              aria-label='Proxy voter'
+              isSelected={state.proxyVoterEnabled}
+              onChange={(selected) => updateParticipantProxyVoter(participant.npub, selected)}
+            />
+          ) : (
+            <span className='simple-admitted-voter-empty-cell'>-</span>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        meta: { className: "is-actions", label: "Actions" },
+        cell: ({ row }) => {
+          const participant = row.original;
+          const state = rowState(participant);
+          return (
+            <div className='simple-admitted-voter-actions'>
+              {state.pendingAuthorization ? (
+                <UiButton icon='check' onPress={() => authorizePendingRequester(participant.npub, { statusTarget: "admitted" })}>
+                  Approve
+                </UiButton>
+              ) : state.canUseCurrentInviteActions ? (
+                <UiButton
+                  icon='send'
+                  onPress={() => void sendInviteToKnownVoter(participant.npub, { statusTarget: "admitted" })}
+                  isDisabled={!optionACoordinatorRuntime}
+                >
+                  {state.inviteButtonLabel}
+                </UiButton>
+              ) : null}
+              {state.privateInviteEntry && state.canSharePrivateInvite ? (
+                <>
+                  <InviteQrButton
+                    value={state.privateInviteUrl}
+                    label='private invite link'
+                    title='Private invite link'
+                  />
+                  <UiButton
+                    icon={isCopyLabelActive(`private-invite-${state.privateInviteEntry.codeHash}`) ? "check" : "copy"}
+                    onPress={() => void copyPrivateInviteCodeLink(
+                      state.privateInviteEntry!.codeHash,
+                      `private-invite-${state.privateInviteEntry!.codeHash}`,
+                    )}
+                  >
+                    {isCopyLabelActive(`private-invite-${state.privateInviteEntry.codeHash}`) ? "Copied" : "Copy link"}
+                  </UiButton>
+                  <UiButton icon='share' onPress={() => void sharePrivateInviteCodeLink(state.privateInviteEntry!.codeHash)}>
+                    Share
+                  </UiButton>
+                </>
+              ) : null}
+              {state.privateInviteEntry && state.privateInviteActive ? (
+                <UiButton
+                  variant='danger'
+                  icon='shield'
+                  className='simple-private-invite-revoke-button'
+                  onPress={() => revokePrivateInviteCode(state.privateInviteEntry!.codeHash)}
+                >
+                  Revoke
+                </UiButton>
+              ) : null}
+              {participant.admittedEntry ? (
+                <UiButton
+                  icon='delete'
+                  className='simple-admitted-voter-remove'
+                  onPress={() => removeVoterAdmission(participant.npub)}
+                >
+                  Remove
+                </UiButton>
+              ) : null}
+            </div>
+          );
+        },
+      },
+    ];
+  }, [
+    activeCoordinatorNpub,
+    optionACoordinatorRuntime,
+    optionAElectionId,
+    authorizePendingRequester,
+    copyPrivateInviteCodeLink,
+    getPrivateInviteCodeLink,
+    isCopyLabelActive,
+    removeVoterAdmission,
+    revokePrivateInviteCode,
+    sendInviteToKnownVoter,
+    setPrivateInviteCodeAutoRequestBallot,
+    sharePrivateInviteCodeLink,
+    tryWriteClipboard,
+    updateAdmittedVoterDetails,
+    updateParticipantProxyVoter,
+    updatePrivateInviteCodeNote,
+  ]);
+  const participantTable = useReactTable({
+    data: filteredAdmittedVoterDisplayRows,
+    columns: participantTableColumns,
+    getCoreRowModel: getCoreRowModel(),
+  });
   const filteredImportedKnownVoterContacts = useMemo(() => {
     const query = knownVoterContactSearch.trim().toLowerCase();
     if (!query) {
@@ -4372,15 +4738,23 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     };
   }
 
-  function projectNpubsToQuestionnaire(npubs: string[], questionnaireId = optionAElectionId.trim()) {
+  function credentialsByAdmittedNpub(npubs: string[], voters = admittedVoters) {
+    return Object.fromEntries(
+      npubs.map((npub) => [npub, voters[npub]?.proxyVoter === true ? 2 : 1] as const),
+    ) as Record<string, 1 | 2>;
+  }
+
+  function projectNpubsToQuestionnaire(npubs: string[], questionnaireId = optionAElectionId.trim(), voters = admittedVoters) {
     const electionId = questionnaireId.trim();
     const runtimeHandle = buildQuestionnaireRuntimeForProjection(electionId);
     if (!runtimeHandle || npubs.length === 0) {
       return 0;
     }
     try {
-      const result = runtimeHandle.runtime.addWhitelistNpubs(npubs);
-      if (result.addedCount > 0) {
+      const result = runtimeHandle.runtime.addWhitelistNpubs(npubs, {
+        credentialsByNpub: credentialsByAdmittedNpub(npubs, voters),
+      });
+      if (result.addedCount > 0 || result.changed) {
         setKnownVoterInviteRefreshNonce((value) => value + 1);
         if (electionId === optionAElectionId.trim()) {
           void syncActiveWorkerElectionConfig().catch(() => false);
@@ -4392,11 +4766,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
   }
 
-  function projectNpubsToActiveQuestionnaire(npubs: string[]) {
-    return projectNpubsToQuestionnaire(npubs, optionAElectionId.trim());
+  function projectNpubsToActiveQuestionnaire(npubs: string[], voters = admittedVoters) {
+    return projectNpubsToQuestionnaire(npubs, optionAElectionId.trim(), voters);
   }
 
-  function updateAdmittedVoterDetails(npub: string, patch: { note?: string; autoApply?: boolean }) {
+  function updateAdmittedVoterDetails(npub: string, patch: { note?: string; autoApply?: boolean; proxyVoter?: boolean }) {
     if (!activeCoordinatorNpub.trim()) {
       return;
     }
@@ -4406,6 +4780,32 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       patch,
     });
     refreshAdmittedVoterRoster(next);
+  }
+
+  function updateParticipantProxyVoter(npub: string, proxyVoter: boolean) {
+    const coordinatorNpub = activeCoordinatorNpub.trim();
+    if (!coordinatorNpub) {
+      return;
+    }
+    let next = admittedVoters;
+    if (!next[npub]) {
+      next = upsertAdmittedVoters({
+        coordinatorNpub,
+        npubs: [npub],
+        source: "manual",
+      }).voters;
+    }
+    next = updateAdmittedVoter({
+      coordinatorNpub,
+      npub,
+      patch: { proxyVoter },
+    });
+    refreshAdmittedVoterRoster(next);
+    if (optionACoordinatorRuntime && optionAElectionId.trim()) {
+      optionACoordinatorRuntime.setWhitelistCredentialsPerVoter(npub, proxyVoter ? 2 : 1);
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      void syncActiveWorkerElectionConfig().catch(() => false);
+    }
   }
 
   function admitVotersToRoster(values: string[], source: AdmittedVoterRecord["source"], options?: { silent?: boolean }) {
@@ -4440,7 +4840,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const projectionNpubs = npubs.filter((npub) => result.voters[npub]?.autoApply !== false);
     let projectedCount = 0;
     try {
-      projectedCount = projectNpubsToActiveQuestionnaire(projectionNpubs);
+      projectedCount = projectNpubsToActiveQuestionnaire(projectionNpubs, result.voters);
     } catch {
       projectedCount = 0;
     }
@@ -4526,7 +4926,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           state: current.questionnaireId === questionnaireId && current.state !== "draft" ? current.state : "open",
         }));
       }
-      const addedCount = projectNpubsToQuestionnaire(admittedVoterAutoApplyNpubs, questionnaireId);
+      const addedCount = projectNpubsToQuestionnaire(admittedVoterAutoApplyNpubs, questionnaireId, admittedVoters);
       const cachedDefinition = readCachedQuestionnaireDefinition(questionnaireId);
       const summary = loadElectionSummary(questionnaireId);
       const coordinatorNsec = keypair?.nsec?.trim() ?? "";
@@ -4659,6 +5059,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const whitelistNpubs = Object.keys(coordinatorState.whitelist ?? {})
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0);
+    const proxyVoterNpubs = Object.values(coordinatorState.whitelist ?? {})
+      .filter((entry) => entry.credentialsPerVoter === 2)
+      .map((entry) => entry.invitedNpub.trim())
+      .filter((entry) => entry.length > 0);
     const bearerInviteCodes = Object.values(coordinatorState.bearerInviteCodes ?? {});
     const workerBearerInviteCodes = bearerInviteCodes.map(({
       note: _note,
@@ -4694,6 +5098,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         workerNpub: delegation.workerNpub,
         expectedInviteeCount,
         whitelistNpubs,
+        proxyVoterNpubs,
         bearerInviteCodes: workerBearerInviteCodes,
         eligibilityRequired: delegation.capabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegation.capabilities.includes("issue_blind_tokens")
@@ -5036,7 +5441,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     try {
       admitVotersToRoster([invitedNpub], "manual", { silent: true });
-      optionACoordinatorRuntime.addWhitelistNpub(invitedNpub);
+      const roster = loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub });
+      const credentialsPerVoter = roster[invitedNpub]?.proxyVoter === true ? 2 : 1;
+      optionACoordinatorRuntime.addWhitelistNpub(invitedNpub, { credentialsPerVoter });
       const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Vote",
         description: "",
@@ -5293,7 +5700,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     try {
       admitVotersToRoster([invitedNpub], "manual", { silent: true });
-      await optionACoordinatorRuntime.authorizeRequester(invitedNpub);
+      const roster = loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub });
+      const credentialsPerVoter = roster[invitedNpub]?.proxyVoter === true ? 2 : 1;
+      await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter });
       await syncActiveWorkerElectionConfig().catch(() => false);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       setInviteFeedbackStatus(`Authorised and invited ${deriveActorDisplayId(invitedNpub)}. Sending invite...`, options?.statusTarget);
@@ -6081,11 +6490,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     setActiveTab(nextTab);
   }
 
-  function openNewQuestionnaireSetup() {
-    setNewRoundMode(false);
-    selectTab("configure");
-  }
-
   const handleQuestionnaireReadinessChange = useCallback((items: QuestionnaireReadinessItem[]) => {
     setQuestionnaireReadinessItems(items);
   }, []);
@@ -6131,12 +6535,44 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        document.getElementById("coordinator-invite-voters-section")?.scrollIntoView({
+        const inviteSection = document.getElementById("coordinator-invite-voters-section");
+        if (typeof inviteSection?.scrollIntoView !== "function") {
+          return;
+        }
+        inviteSection.scrollIntoView({
           behavior: "smooth",
           block: "start",
         });
       });
     });
+  }
+
+  function handleReadinessAction(item: QuestionnaireReadinessItem) {
+    const setupTargets: Partial<Record<NonNullable<QuestionnaireReadinessItem["action"]>, QuestionnaireSetupFocusTarget>> = {
+      setup_basics: "basics",
+      setup_questions: "questions",
+    };
+    const setupTarget = item.action ? setupTargets[item.action] : undefined;
+    if (setupTarget) {
+      selectTab("configure");
+      setSetupFocusRequest((current) => ({
+        target: setupTarget,
+        signal: current.signal + 1,
+      }));
+      return;
+    }
+    if (item.action === "open_session") {
+      selectTab("participants");
+      return;
+    }
+    if (item.action === "setup_proxy") {
+      selectTab("proxy");
+      setProxySetupSignal((current) => current + 1);
+      return;
+    }
+    if (item.action === "invite_voters") {
+      openInviteVotersSection();
+    }
   }
 
   const setQuestionnaireRelaysInput = useCallback((value: string) => {
@@ -6171,7 +6607,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         setActiveTab("configure");
         return;
       }
-      if (nextTab === "participants" || nextTab === "messages" || nextTab === "settings") {
+      if (nextTab === "proxy" || nextTab === "participants" || nextTab === "messages" || nextTab === "settings") {
         setActiveTab(nextTab);
       }
     };
@@ -7265,7 +7701,80 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     visibleFollowers,
   ]);
 
-  const questionnaireReadinessCompleteCount = questionnaireReadinessItems.filter((item) => item.complete).length;
+  const questionnaireReadinessRequiredItems = questionnaireReadinessItems.filter((item) => !item.optional);
+  const questionnaireReadinessCompleteCount = questionnaireReadinessRequiredItems.filter((item) => item.complete).length;
+  const questionnaireSetupReadinessItems = questionnaireReadinessItems.filter((item) => item.group === "questionnaire");
+  const sessionReadinessItems = questionnaireReadinessItems.filter((item) => item.group !== "questionnaire");
+
+  function renderReadinessRow(item: QuestionnaireReadinessItem, index: number) {
+    const isActive = item.id === "proxy" && activeTab === "proxy";
+    const className = `simple-sidebar-readiness-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${item.action ? " is-action" : ""}${isActive ? " is-active" : ""}`;
+    const label = `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
+    const content = (
+      <>
+        <span className='simple-sidebar-readiness-entry-main'>
+          <span className='simple-sidebar-readiness-entry-icon' aria-hidden='true'>
+            <UiIcon name={questionnaireReadinessEntryIcon(item)} />
+          </span>
+          <span className='simple-sidebar-readiness-label'>{item.label}</span>
+        </span>
+        <span className='simple-sidebar-readiness-status'>
+          <QuestionnaireReadinessIcon item={item} index={index} />
+        </span>
+      </>
+    );
+    return item.action ? (
+      <UiButton
+        key={item.id}
+        icon={false}
+        className={className}
+        aria-current={isActive ? "page" : undefined}
+        aria-label={label}
+        onPress={() => handleReadinessAction(item)}
+      >
+        {content}
+      </UiButton>
+    ) : (
+      <div
+        key={item.id}
+        className={className}
+        aria-current={isActive ? "page" : undefined}
+        aria-label={label}
+      >
+        {content}
+      </div>
+    );
+  }
+
+  function renderCompactReadinessItem(item: QuestionnaireReadinessItem, index: number) {
+    const isActive = item.id === "proxy" && activeTab === "proxy";
+    const className = `simple-sidebar-readiness-compact-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${item.action ? " is-action" : ""}${item.group === "questionnaire" ? " is-questionnaire" : ""}${isActive ? " is-active" : ""}`;
+    const label = `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
+    const content = <QuestionnaireReadinessIcon item={item} index={index} />;
+    return item.action ? (
+      <UiButton
+        key={item.id}
+        icon={false}
+        className={className}
+        aria-current={isActive ? "page" : undefined}
+        title={`${item.shortLabel}: ${questionnaireReadinessStatusLabel(item)}`}
+        aria-label={label}
+        onPress={() => handleReadinessAction(item)}
+      >
+        {content}
+      </UiButton>
+    ) : (
+      <span
+        key={item.id}
+        className={className}
+        aria-current={isActive ? "page" : undefined}
+        title={`${item.shortLabel}: ${questionnaireReadinessStatusLabel(item)}`}
+        aria-label={label}
+      >
+        {content}
+      </span>
+    );
+  }
 
   if (storageLocked && !identityReady) {
     return (
@@ -7295,130 +7804,80 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     <main className={`simple-voter-shell simple-coordinator-shell${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}>
       <aside className='simple-coordinator-sidebar' aria-label='Organiser navigation'>
         <div className='simple-coordinator-sidebar-top'>
-          <button
-            type='button'
+          <div className='simple-coordinator-sidebar-menu-slot'>
+            {accountMenu ?? (
+              <UiButton
+                icon='add'
+                className='simple-role-switch-toggle'
+                onPress={() => {
+                  if (typeof window !== "undefined") {
+                    window.dispatchEvent(new Event("auditable-voting:coordinator-new"));
+                  }
+                }}
+              >
+                New identity
+              </UiButton>
+            )}
+          </div>
+          <UiButton
+            icon={sidebarCollapsed ? "chevronRight" : "chevronLeft"}
+            iconOnly
             className='simple-coordinator-sidebar-collapse'
             aria-label={sidebarCollapsed ? "Expand organiser menu" : "Collapse organiser menu"}
             aria-pressed={sidebarCollapsed}
-            onClick={() => setSidebarCollapsed((current) => !current)}
-          >
-            <span
-              className={`simple-coordinator-sidebar-arrow${sidebarCollapsed ? ' is-collapsed' : ''}`}
-              aria-hidden='true'
-            />
-          </button>
-        </div>
-        <div className='simple-coordinator-sidebar-menu-slot'>
-          {accountMenu ?? (
-            <button
-              type='button'
-              className='simple-role-switch-toggle'
-              onClick={() => {
-                if (typeof window !== "undefined") {
-                  window.dispatchEvent(new Event("auditable-voting:coordinator-new"));
-                }
-              }}
-            >
-              New identity
-            </button>
-          )}
+            onPress={() => setSidebarCollapsed((current) => !current)}
+          />
         </div>
         <section className='simple-coordinator-sidebar-readiness' aria-label='Readiness checklist'>
           <div className='simple-sidebar-readiness-expanded'>
             <div className='simple-sidebar-readiness-head'>
-              <span>{questionnaireReadinessCompleteCount}/{questionnaireReadinessItems.length}</span>
+              <span>{questionnaireReadinessCompleteCount}/{questionnaireReadinessRequiredItems.length}</span>
             </div>
             <div className='simple-sidebar-readiness-list'>
-              {questionnaireReadinessItems.map((item, index) => (
-                <div
-                  key={item.id}
-                  className={`simple-sidebar-readiness-button${item.complete ? " is-complete" : " is-pending"}`}
-                  aria-label={`${item.label}: ${questionnaireReadinessStatusLabel(item)}`}
-                >
-                  <QuestionnaireReadinessIcon item={item} index={index} />
-                  <span className='simple-sidebar-readiness-label'>{item.label}</span>
-                </div>
-              ))}
+              <div className='simple-sidebar-readiness-group'>
+                <span className='simple-sidebar-readiness-group-label'>Edit Questionnaire</span>
+                {questionnaireSetupReadinessItems.map((item) => renderReadinessRow(item, questionnaireReadinessItems.indexOf(item)))}
+              </div>
+              <div className='simple-sidebar-readiness-divider' aria-hidden='true' />
+              <div className='simple-sidebar-readiness-group'>
+                <span className='simple-sidebar-readiness-group-label'>Manage Questionnaire</span>
+                {sessionReadinessItems.map((item) => renderReadinessRow(item, questionnaireReadinessItems.indexOf(item)))}
+              </div>
             </div>
           </div>
           <div className='simple-sidebar-readiness-compact' aria-label='Readiness stages'>
-            {questionnaireReadinessItems.map((item, index) => (
-              <span
-                key={item.id}
-                className={`simple-sidebar-readiness-compact-button${item.complete ? " is-complete" : " is-pending"}`}
-                title={`${item.shortLabel}: ${questionnaireReadinessStatusLabel(item)}`}
-                aria-label={`${item.label}: ${questionnaireReadinessStatusLabel(item)}`}
-              >
-                <QuestionnaireReadinessIcon item={item} index={index} />
-              </span>
-            ))}
+            {questionnaireReadinessItems.map((item, index) => renderCompactReadinessItem(item, index))}
           </div>
         </section>
         <div className='simple-coordinator-sidebar-nav'>
-          <div
-            className='simple-coordinator-sidebar-tabs'
-            role='tablist'
-            aria-label='Organiser sections'
-          >
-            <button
-              type='button'
-              role='tab'
-              aria-selected={activeTab === 'configure'}
-              className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`}
-              onClick={openNewQuestionnaireSetup}
+          <div className='simple-sidebar-readiness-group simple-sidebar-profile-group'>
+            <span className='simple-sidebar-readiness-group-label'>Profile</span>
+            <div
+              className='simple-coordinator-sidebar-tabs'
+              role='tablist'
+              aria-label='Profile sections'
             >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-questionnaire' aria-hidden='true' />
-              <span className='simple-coordinator-nav-label'>Questionnaire</span>
-            </button>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={activeTab === 'participants'}
-              className={`simple-coordinator-nav-button${activeTab === 'participants' ? ' is-active' : ''}`}
-              onClick={() => selectTab('participants')}
-            >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-session' aria-hidden='true'>
-                <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-short' />
-                <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-mid' />
-                <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-tall' />
-              </span>
-              <span className='simple-coordinator-nav-label'>Session</span>
-            </button>
-            {canStartNewRound ? (
-              <button
-                type='button'
-                className='simple-coordinator-nav-button simple-coordinator-new-round-button'
-                onClick={startNewRound}
+              <UiButton
+                icon='message'
+                role='tab'
+                aria-selected={activeTab === 'messages'}
+                aria-label={hasUnreadMessages ? "Messages, new message" : "Messages"}
+                className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}${hasUnreadMessages ? ' has-unread-message' : ''}`}
+                onPress={() => selectTab('messages')}
               >
-                <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-new-round' aria-hidden='true' />
-                <span className='simple-coordinator-nav-label'>Add session</span>
-              </button>
-            ) : null}
-            <button
-              type='button'
-              role='tab'
-              aria-selected={activeTab === 'messages'}
-              aria-label={hasUnreadMessages ? "Messages, new message" : "Messages"}
-              className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}${hasUnreadMessages ? ' has-unread-message' : ''}`}
-              onClick={() => selectTab('messages')}
-            >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-messages' aria-hidden='true'>
-                {hasUnreadMessages ? <span className='simple-message-unread-dot' /> : null}
-              </span>
-              <span className='simple-coordinator-nav-label'>Messages</span>
-            </button>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={activeTab === 'settings'}
-              className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
-              onClick={() => selectTab('settings')}
-            >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-settings' aria-hidden='true'>
-                <SettingsCogIcon />
-              </span>
-              <span className='simple-coordinator-nav-label'>Settings</span>
-            </button>
+                {hasUnreadMessages ? <span className='simple-message-unread-dot' aria-hidden='true' /> : null}
+                <span className='simple-coordinator-nav-label'>Messages</span>
+              </UiButton>
+              <UiButton
+                icon='settings'
+                role='tab'
+                aria-selected={activeTab === 'settings'}
+                className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
+                onPress={() => selectTab('settings')}
+              >
+                <span className='simple-coordinator-nav-label'>Settings</span>
+              </UiButton>
+            </div>
           </div>
         </div>
       </aside>
@@ -7443,21 +7902,49 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 ? () => optionACoordinatorRuntime.ensureBlindSigningPublicKey()
                 : undefined}
               view='build'
-              onInviteParticipants={openInviteVotersSection}
+              onAddSession={startNewRound}
+              canAddSession={canStartNewRound}
               questionnaireRelaysInput={questionnaireRelaysInput}
               onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
-              onConfigureWorker={() => {
-                selectTab('configure');
-                if (typeof window !== "undefined") {
-                  window.requestAnimationFrame(() => {
-                    document.getElementById("delegated-worker-section")?.scrollIntoView({
-                      behavior: "smooth",
-                      block: "start",
-                    });
-                  });
-                }
-              }}
+              onConfigureWorker={() => selectTab('proxy')}
+              setupFocusTarget={setupFocusRequest.target}
+              setupFocusSignal={setupFocusRequest.signal}
+              newRoundMode={newRoundMode}
+              draftQuestionnaireId={draftQuestionnaireId}
+              canApplyAdmissionsOnPublish={canApplyAdmissionsOnPublish}
+              onAfterPublishQuestionnaire={handlePublishedQuestionnaire}
+              onReadinessChange={handleQuestionnaireReadinessChange}
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
+            />
+          </section>
+        ) : null}
+
+        {activeTab === 'proxy' ? (
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Audit proxy'
+          >
+            <QuestionnaireCoordinatorPanel
+              coordinatorNsec={keypair?.nsec ?? null}
+              coordinatorNpub={keypair?.npub ?? null}
+              knownVoterCount={optionAKnownVoterCount}
+              optionAAcceptedCount={optionAAcceptedCount}
+              optionAAcceptedResponses={optionAAcceptedResponses}
+              blindSigningPublicKey={optionABlindSigningPublicKey}
+              onEnsureBlindSigningPublicKey={optionACoordinatorRuntime
+                ? () => optionACoordinatorRuntime.ensureBlindSigningPublicKey()
+                : undefined}
+              view='build'
+              buildPage='proxy'
+              onAddSession={startNewRound}
+              canAddSession={canStartNewRound}
+              questionnaireRelaysInput={questionnaireRelaysInput}
+              onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
+              onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
+              onConfigureWorker={() => selectTab('proxy')}
+              proxySetupSignal={proxySetupSignal}
               newRoundMode={newRoundMode}
               draftQuestionnaireId={draftQuestionnaireId}
               canApplyAdmissionsOnPublish={canApplyAdmissionsOnPublish}
@@ -7485,11 +7972,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onEnsureBlindSigningPublicKey={optionACoordinatorRuntime
                 ? () => optionACoordinatorRuntime.ensureBlindSigningPublicKey()
                 : undefined}
-	              view='responses'
-	              onInviteParticipants={openInviteVotersSection}
-	              questionnaireRelaysInput={questionnaireRelaysInput}
-	              onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
-	              onStatusChange={updateQuestionnaireRosterAnnouncement}
+              view='responses'
+              onAddSession={startNewRound}
+              canAddSession={canStartNewRound}
+              questionnaireRelaysInput={questionnaireRelaysInput}
+              onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
               <SimpleCollapsibleSection
@@ -7512,13 +8000,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         <span>{participantRosterVisibleCount}/{participantRosterTotalCount} shown</span>
                       </p>
                   </div>
-                  <input
-                    id='coordinator-participant-search'
-                    className='simple-voter-input'
-                    value={participantSearchQuery}
-                    onChange={(event) => setParticipantSearchQuery(event.target.value)}
-                    aria-label='Search participants'
-                    placeholder='Search by voter, private invite, request, response ID, or token...'
+                  <UiTextField
+                    inputClassName='simple-voter-input'
+                    inputProps={{
+                      id: 'coordinator-participant-search',
+                      value: participantSearchQuery,
+                      onChange: (event) => setParticipantSearchQuery(event.target.value),
+                      'aria-label': 'Search participants',
+                      placeholder: 'Search by voter, private invite, request, response ID, or token...',
+                    }}
                   />
                   {participantRosterTotalCount === 0 ? (
                     <p className='simple-voter-empty'>
@@ -7529,265 +8019,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                       No participants match the current filter.
                     </p>
                   ) : (
-                  <div className='simple-admitted-voter-table' role='table' aria-label='Participants'>
-                    <div className='simple-admitted-voter-table-head' role='row'>
-                      <span role='columnheader'>#</span>
-                      <span role='columnheader'>Voter ID</span>
-                      <span role='columnheader'>Voter npub</span>
-                      <span role='columnheader'>Internal note</span>
-                      <span role='columnheader'>State</span>
-                      <span role='columnheader'>Auto-ballot</span>
-                      <span role='columnheader'>Actions</span>
-                    </div>
-                    <ul className='simple-admitted-voter-list simple-admitted-voter-table-body' role='rowgroup'>
-                      {filteredAdmittedVoterDisplayRows.map((row, rowIndex) => {
-                        const currentQuestionnaireEntry = row.currentQuestionnaireEntry;
-                        const pendingAuthorization = row.pendingAuthorization;
-                        const privateInviteEntry = row.privateInviteEntry;
-                        const submissionEntry = row.submissionEntry;
-                        const responseDetail = submissionEntry?.responseDetail ?? row.responseDetail;
-                        const responseIdentityNpub = submissionEntry?.submission.responseNpub?.trim()
-                          || responseDetail?.response.authorPubkey?.trim()
-                          || "";
-                        const responseIdentityWords = responseIdentityNpub ? deriveIdentityWords(responseIdentityNpub) : "";
-                        const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
-                        const isUnclaimedPrivateInvite = Boolean(privateInviteEntry && !privateInviteRedeemedNpub);
-                        const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
-                        const privateInviteActive = privateInviteEntry?.state === "available";
-                        const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
-                        const privateInviteStatusIndicator = privateInviteEntry
-                          ? privateInviteVoterStatusIndicator({
-                            state: privateInviteEntry.state,
-                            redeemedNpub: privateInviteRedeemedNpub,
-                            claimState: currentQuestionnaireEntry?.claimState ?? null,
-                            markedUsedAt: privateInviteEntry.markedUsedAt ?? null,
-                          })
-                          : null;
-                        const statusIndicator = pendingAuthorization
-                          ? pendingAuthorisationStatusIndicator()
-                          : currentQuestionnaireEntry
-                            ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
-                            : privateInviteStatusIndicator
-                              ? privateInviteStatusIndicator
-                              : null;
-                        const statusLabel = pendingAuthorization
-                          ? `Wants access (${pendingAuthorization.requestCount})`
-                          : statusIndicator?.label ?? null;
-                        const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim() || privateInviteEntry);
-                        const isResultOnlyParticipant = Boolean(
-                          (submissionEntry || row.responseDetail)
-                          && !row.admittedEntry
-                          && !currentQuestionnaireEntry
-                          && !pendingAuthorization
-                          && !privateInviteEntry,
-                        );
-                        const canUseCurrentInviteActions = Boolean(
-                          optionAElectionId.trim() &&
-                          activeCoordinatorNpub.trim() &&
-                          !isPrivateInviteClaimant &&
-                          !isResultOnlyParticipant,
-                        );
-                        const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
-                        const inviteInputId = privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "";
-                        const noteInputId = privateInviteEntry
-                          ? `admitted-voter-note-private-${privateInviteEntry.codeHash}`
-                          : `admitted-voter-note-${row.npub}`;
-                        const noteValue = row.admittedEntry?.note ?? privateInviteEntry?.note ?? "";
-                        return (
-                          <li key={row.npub} className='simple-admitted-voter-row' role='row'>
-                            <span className='simple-admitted-voter-cell simple-admitted-voter-number' data-label='#' role='cell'>{rowIndex + 1}</span>
-                            <div className='simple-admitted-voter-cell simple-admitted-voter-id-cell' data-label='Voter ID' role='cell'>
-                              <span className='simple-admitted-voter-id'>
-                                {isUnclaimedPrivateInvite
-                                  ? "Private invite"
-                                  : isResultOnlyParticipant
-                                    ? "Result only"
-                                    : deriveActorDisplayId(row.npub)}
-                              </span>
-                              {responseIdentityWords ? (
-                                <span className='simple-identity-words-badge simple-admitted-voter-response-words'>
-                                  {responseIdentityWords}
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className='simple-admitted-voter-cell simple-admitted-voter-npub-cell' data-label='Voter npub' role='cell'>
-                              <div className='simple-admitted-voter-npub-line'>
-                                <span className='simple-admitted-voter-npub' title={isUnclaimedPrivateInvite ? "Unclaimed private link" : row.npub}>
-                                  {isUnclaimedPrivateInvite ? "Unclaimed private link" : row.npub}
-                                </span>
-                                {!isUnclaimedPrivateInvite ? (
-                                  <button
-                                    type='button'
-                                    className='simple-admitted-voter-copy-npub'
-                                    onClick={() => void tryWriteClipboard(row.npub)}
-                                    aria-label='Copy voter npub'
-                                    title='Copy voter npub'
-                                  >
-                                    <span className='simple-copy-icon' aria-hidden='true' />
-                                  </button>
-                                ) : null}
-                              </div>
-                              {privateInviteEntry && privateInviteUrl ? (
-                                <div className='simple-admitted-private-link-details'>
-                                  <div className='simple-private-invite-link-field'>
-                                    <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
-                                    <div className={`simple-private-invite-url-control${canSharePrivateInvite ? "" : " is-readonly"}`}>
-                                      <input
-                                        id={inviteInputId}
-                                        className='simple-private-invite-url-input'
-                                        value={privateInviteUrl}
-                                        readOnly
-                                        aria-label='Invite link'
-                                      />
-                                      {canSharePrivateInvite ? (
-                                        <button
-                                          type='button'
-                                          className='simple-private-invite-copy-icon-button'
-                                          onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
-                                          aria-label='Copy private link'
-                                          title='Copy private link'
-                                        >
-                                          <span className='simple-copy-icon' aria-hidden='true' />
-                                        </button>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className='simple-admitted-voter-cell simple-admitted-voter-note-cell' data-label='Internal note' role='cell'>
-                              {row.admittedEntry || privateInviteEntry ? (
-                                <label className='simple-admitted-voter-note-field' htmlFor={noteInputId}>
-                                  <input
-                                    id={noteInputId}
-                                    className='simple-voter-input simple-voter-input-inline'
-                                    value={noteValue}
-                                    placeholder='Internal note'
-                                    aria-label='Internal note'
-                                    title='Internal note'
-                                    onChange={(event) => {
-                                      const note = event.target.value;
-                                      if (row.admittedEntry) {
-                                        updateAdmittedVoterDetails(row.npub, { note });
-                                      }
-                                      if (privateInviteEntry) {
-                                        updatePrivateInviteCodeNote(privateInviteEntry.codeHash, note);
-                                      }
-                                    }}
-                                  />
-                                </label>
-                              ) : (
-                                <span className='simple-admitted-voter-empty-cell'>-</span>
-                              )}
-                            </div>
-                            <div className='simple-admitted-voter-cell simple-admitted-voter-state-cell' data-label='State' role='cell'>
-                              {statusIndicator ? (
-                                <span className={`simple-admitted-voter-status ${statusIndicator.className}`} aria-label={statusLabel ?? statusIndicator.label} title={statusLabel ?? statusIndicator.label}>
-                                  <span className='simple-admitted-voter-status-symbol' aria-hidden='true'>{statusIndicator.icon}</span>
-                                  <span>{statusLabel ?? statusIndicator.label}</span>
-                                </span>
-                              ) : (
-                                <span className='simple-admitted-voter-pending'>Future questionnaires</span>
-                              )}
-                            </div>
-                            <div className='simple-admitted-voter-cell simple-admitted-voter-auto-cell' data-label='Auto-ballot' role='cell'>
-                              {row.admittedEntry ? (
-                                <label className='simple-admitted-voter-auto-toggle'>
-                                  <input
-                                    type='checkbox'
-                                    checked={row.admittedEntry.autoApply !== false}
-                                    aria-label='Auto-ballot'
-                                    title='Auto-ballot'
-                                    onChange={(event) => updateAdmittedVoterDetails(row.npub, { autoApply: event.target.checked })}
-                                  />
-                                </label>
-                              ) : privateInviteEntry ? (
-                                <label className='simple-admitted-voter-auto-toggle'>
-                                  <input
-                                    type='checkbox'
-                                    checked={privateInviteEntry.autoRequestBallot !== false}
-                                    aria-label='Auto-ballot'
-                                    title='Auto-ballot'
-                                    onChange={(event) => setPrivateInviteCodeAutoRequestBallot(privateInviteEntry.codeHash, event.target.checked)}
-                                  />
-                                </label>
-                              ) : (
-                                <span className='simple-admitted-voter-empty-cell'>-</span>
-                              )}
-                            </div>
-                            <div className='simple-admitted-voter-cell simple-admitted-voter-actions-cell' data-label='Actions' role='cell'>
-                              <div className='simple-admitted-voter-actions'>
-                                {pendingAuthorization ? (
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => authorizePendingRequester(row.npub, { statusTarget: "admitted" })}
-                                  >
-                                    Approve
-                                  </button>
-                                ) : canUseCurrentInviteActions ? (
-                                  <>
-                                    <button
-                                      type='button'
-                                      className='simple-voter-secondary'
-                                      onClick={() => void sendInviteToKnownVoter(row.npub, { statusTarget: "admitted" })}
-                                      disabled={!optionACoordinatorRuntime}
-                                    >
-                                      {inviteButtonLabel}
-                                    </button>
-                                  </>
-                                ) : null}
-                                {privateInviteEntry && canSharePrivateInvite ? (
-                                  <>
-                                    <InviteQrButton
-                                      value={privateInviteUrl}
-                                      label='private invite link'
-                                      title='Private invite link'
-                                    />
-                                    <button
-                                      type='button'
-                                      className='simple-voter-secondary'
-                                      onClick={() => void copyPrivateInviteCodeLink(
-                                        privateInviteEntry.codeHash,
-                                        `private-invite-${privateInviteEntry.codeHash}`,
-                                      )}
-                                    >
-                                      {isCopyLabelActive(`private-invite-${privateInviteEntry.codeHash}`) ? "Copied" : "Copy link"}
-                                    </button>
-                                    <button
-                                      type='button'
-                                      className='simple-voter-secondary'
-                                      onClick={() => void sharePrivateInviteCodeLink(privateInviteEntry.codeHash)}
-                                    >
-                                      Share
-                                    </button>
-                                  </>
-                                ) : null}
-                                {privateInviteEntry && privateInviteActive ? (
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary simple-private-invite-revoke-button'
-                                    onClick={() => revokePrivateInviteCode(privateInviteEntry.codeHash)}
-                                  >
-                                    Revoke
-                                  </button>
-                                ) : null}
-                                {row.admittedEntry ? (
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary simple-admitted-voter-remove'
-                                    onClick={() => removeVoterAdmission(row.npub)}
-                                  >
-                                    Remove
-                                  </button>
-                                ) : null}
-                              </div>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-	                  </div>
+                    <UiDataTable
+                      table={participantTable}
+                      ariaLabel='Participants'
+                      getRowClassName={(row) => row.privateInviteEntry ? "simple-admitted-private-invite-row" : undefined}
+                    />
 	                  )}
 	                </div>
 	                  <div className='simple-invite-share-panel simple-invite-share-panel-combined' aria-label='Invite voters'>
@@ -7795,62 +8031,64 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                      <div className='simple-invite-share-copy'>
 	                        <h3 className='simple-voter-question'>Invite voters</h3>
 	                      </div>
-	                      <button
-	                        type='button'
+	                      <UiButton
+	                        icon={knownVoterContactsLoading ? "spinner" : "users"}
 	                        className='simple-voter-secondary'
-	                        onClick={() => void importKnownVotersFromContacts()}
-	                        disabled={knownVoterContactsLoading || !activeCoordinatorNpub}
+	                        onPress={() => void importKnownVotersFromContacts()}
+	                        isDisabled={knownVoterContactsLoading || !activeCoordinatorNpub}
 	                      >
-	                        <InviteActionIcon name='contacts' />
 	                        <span>{knownVoterContactsLoading ? 'Importing...' : 'Import contacts'}</span>
-	                      </button>
+	                      </UiButton>
 	                    </div>
 	                    <div className='simple-voter-add-row simple-voter-add-row-with-scan simple-admitted-voters-add-row'>
-	                      <input
-	                        className='simple-voter-input simple-voter-input-inline'
-	                        value={admittedVoterDraftNpub}
-	                        placeholder='npub1... or nostr:nprofile1...'
-	                        onChange={(event) => setAdmittedVoterDraftNpub(event.target.value)}
-	                        onKeyDown={(event) => {
-	                          if (event.key === "Enter") {
-	                            event.preventDefault();
-	                            void inviteDraftVoter();
-	                          }
+	                      <UiTextField
+	                        inputClassName='simple-voter-input simple-voter-input-inline'
+	                        inputProps={{
+	                          value: admittedVoterDraftNpub,
+	                          placeholder: 'npub1... or nostr:nprofile1...',
+	                          onChange: (event) => setAdmittedVoterDraftNpub(event.target.value),
+	                          onKeyDown: (event) => {
+	                            if (event.key === "Enter") {
+	                              event.preventDefault();
+	                              void inviteDraftVoter();
+	                            }
+	                          },
 	                        }}
 	                      />
-	                      <button
-	                        type='button'
+	                      <UiButton
+	                        icon='invite'
 	                        className='simple-voter-secondary'
-	                        disabled={!admittedVoterDraftNpub.trim() || !activeCoordinatorNpub.trim()}
-	                        onClick={() => void inviteDraftVoter()}
+	                        isDisabled={!admittedVoterDraftNpub.trim() || !activeCoordinatorNpub.trim()}
+	                        onPress={() => void inviteDraftVoter()}
 	                      >
-	                        <InviteActionIcon name='invite' />
 	                        <span>Invite</span>
-	                      </button>
+	                      </UiButton>
 	                    </div>
 	                    {importedKnownVoterContacts.length > 0 ? (
 	                      <div className='simple-voter-field-stack simple-imported-contact-panel'>
 	                        <label className='simple-voter-label' htmlFor='known-voter-contact-search'>
 	                          Imported contacts
 	                        </label>
-	                        <input
-	                          id='known-voter-contact-search'
-	                          className='simple-voter-input'
-	                          value={knownVoterContactSearch}
-	                          onChange={(event) => setKnownVoterContactSearch(event.target.value)}
-	                          placeholder='Search by name, NIP-05, or npub'
+	                        <UiTextField
+	                          inputClassName='simple-voter-input'
+	                          inputProps={{
+	                            id: 'known-voter-contact-search',
+	                            value: knownVoterContactSearch,
+	                            onChange: (event) => setKnownVoterContactSearch(event.target.value),
+	                            placeholder: 'Search by name, NIP-05, or npub',
+	                          }}
 	                        />
 	                        <div className='simple-voter-action-row simple-voter-action-row-inline'>
-	                          <button
-	                            type='button'
+	                          <UiButton
+	                            icon={filteredImportedKnownVoterContacts.length > 0 && filteredImportedKnownVoterContacts.every((entry) => selectedImportedKnownVoterSet.has(entry.npub)) ? "cancel" : "check"}
 	                            className='simple-voter-secondary'
-	                            onClick={toggleSelectAllVisibleImportedKnownVoters}
-	                            disabled={filteredImportedKnownVoterContacts.length === 0}
+	                            onPress={toggleSelectAllVisibleImportedKnownVoters}
+	                            isDisabled={filteredImportedKnownVoterContacts.length === 0}
 	                          >
 	                            {filteredImportedKnownVoterContacts.length > 0 && filteredImportedKnownVoterContacts.every((entry) => selectedImportedKnownVoterSet.has(entry.npub))
 	                              ? 'Clear visible'
 	                              : 'Select all visible'}
-	                          </button>
+	                          </UiButton>
 	                          <p className='simple-voter-note'>
 	                            {selectedImportedKnownVoterNpubs.length} selected
 	                          </p>
@@ -7878,15 +8116,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                          )}
 	                        </div>
 	                        <div className='simple-voter-action-row simple-voter-action-row-inline'>
-	                          <button
-	                            type='button'
+	                          <UiButton
+	                            icon='invite'
 	                            className='simple-voter-secondary'
-	                            onClick={() => void addSelectedImportedContactsToWhitelist()}
-	                            disabled={selectedImportedKnownVoterNpubs.length === 0}
+	                            onPress={() => void addSelectedImportedContactsToWhitelist()}
+	                            isDisabled={selectedImportedKnownVoterNpubs.length === 0}
 	                          >
-	                            <InviteActionIcon name='invite' />
 	                            <span>Invite selected voters</span>
-	                          </button>
+	                          </UiButton>
 	                        </div>
 	                      </div>
 	                    ) : null}
@@ -7906,24 +8143,22 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                        </div>
 	                        <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
 	                        <div className='simple-invite-share-actions'>
-	                          <button
-	                            type='button'
+	                          <UiButton
+	                            icon={isCopyLabelActive("public-questionnaire-invite") ? "check" : "copy"}
 	                            className='simple-voter-secondary'
-	                            onClick={() => void copyPublicQuestionnaireInviteLink()}
-	                            disabled={!publicQuestionnaireInviteUrl}
+	                            onPress={() => void copyPublicQuestionnaireInviteLink()}
+	                            isDisabled={!publicQuestionnaireInviteUrl}
 	                          >
-	                            <InviteActionIcon name='copy' />
 	                            <span>{isCopyLabelActive("public-questionnaire-invite") ? "Copied" : "Copy link"}</span>
-	                          </button>
-	                          <button
-	                            type='button'
+	                          </UiButton>
+	                          <UiButton
+	                            icon={privateInviteCreateCopied ? "check" : "key"}
 	                            className='simple-voter-secondary'
-	                            onClick={() => void createPrivateInviteCodeLink()}
-	                            disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
+	                            onPress={() => void createPrivateInviteCodeLink()}
+	                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
 	                          >
-	                            <InviteActionIcon name='single-use' />
 	                            <span>{privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}</span>
-	                          </button>
+	                          </UiButton>
 	                        </div>
 	                      </div>
 	                    ) : null}

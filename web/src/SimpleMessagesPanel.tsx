@@ -7,6 +7,7 @@ import {
   subscribeHelplineDmMessages,
   type HelplineDmMessage,
 } from "./simpleHelplineDm";
+import { UiButton, UiTextArea } from "./ui/DesignLayer";
 
 type SimpleMessagesPanelProps = {
   actorNpub: string;
@@ -216,11 +217,11 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
                 const latest = latestByPeer.get(peerNpub);
                 const selected = selectedPeerNpub === peerNpub;
                 return (
-                  <button
+                  <UiButton
                     key={peerNpub}
-                    type='button'
+                    icon='message'
                     className={`simple-messages-thread-button${selected ? " is-active" : ""}`}
-                    onClick={() => setSelectedPeerNpub(peerNpub)}
+                    onPress={() => setSelectedPeerNpub(peerNpub)}
                   >
                     <span className='simple-messages-thread-id'>{deriveActorDisplayId(peerNpub)}</span>
                     <span className='simple-messages-thread-preview'>
@@ -229,7 +230,7 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
                     {latest ? (
                       <span className='simple-messages-thread-time'>{formatMessageTime(latest.createdAt)}</span>
                     ) : null}
-                  </button>
+                  </UiButton>
                 );
               })}
             </aside>
@@ -265,29 +266,31 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
               <div ref={threadEndRef} />
             </div>
             <div className='simple-messages-composer'>
-              <textarea
-                className='simple-voter-textarea simple-messages-textarea'
-                value={draft}
-                rows={4}
-                placeholder={props.role === "voter" ? "Type a message to the organiser..." : "Type a reply..."}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void sendMessage();
-                  }
+              <UiTextArea
+                textAreaClassName='simple-voter-textarea simple-messages-textarea'
+                textAreaProps={{
+                  value: draft,
+                  rows: 4,
+                  placeholder: props.role === "voter" ? "Type a message to the organiser..." : "Type a reply...",
+                  onChange: (event) => setDraft(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void sendMessage();
+                    }
+                  },
                 }}
               />
               <div className='simple-messages-composer-actions'>
                 {status ? <p className='simple-voter-note'>{status}</p> : <span />}
-                <button
-                  type='button'
+                <UiButton
+                  icon={sending ? "spinner" : "send"}
                   className='simple-voter-primary'
-                  disabled={!canSend}
-                  onClick={() => void sendMessage()}
+                  isDisabled={!canSend}
+                  onPress={() => void sendMessage()}
                 >
                   {sending ? "Sending..." : "Send"}
-                </button>
+                </UiButton>
               </div>
             </div>
           </section>

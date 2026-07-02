@@ -7,6 +7,7 @@ import {
   calculateRankQuestionScores,
   normaliseRankedOptionIds,
   validateQuestionnaireDefinition,
+  questionnaireCredentialsPerVoter,
   type QuestionnaireDefinition,
   type QuestionnairePublishedResponseRef,
   type QuestionnaireQuestion,
@@ -47,6 +48,7 @@ import {
 } from "./questionnaireRelays";
 import { createSignerService } from "./services/signerService";
 import { findCoordinatorBlindSigningPrivateKey, listElectionSummaries, loadCoordinatorState, loadElectionSummary, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
+import { UiButton, UiSelect, UiSwitch, UiTextArea, UiTextField } from "./ui/DesignLayer";
 import {
   type WorkerElectionConfigSnapshot,
   fetchOptionAWorkerStatusDmsWithNsec,
@@ -127,11 +129,16 @@ type QuestionnaireCoordinatorPanelProps = {
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   onEnsureBlindSigningPublicKey?: () => Promise<QuestionnaireBlindPublicKey | null>;
   view?: "build" | "responses" | "participants";
-  onInviteParticipants?: () => void;
+  buildPage?: "questionnaire" | "proxy";
+  onAddSession?: () => void;
+  canAddSession?: boolean;
   questionnaireRelaysInput?: string;
   onQuestionnaireRelaysInputChange?: (value: string) => void;
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: () => void;
+  proxySetupSignal?: number;
+  setupFocusTarget?: QuestionnaireSetupFocusTarget;
+  setupFocusSignal?: number;
   newRoundMode?: boolean;
   draftQuestionnaireId?: string;
   canApplyAdmissionsOnPublish?: boolean;
@@ -148,11 +155,17 @@ type QuestionnaireCoordinatorPanelProps = {
 };
 
 export type QuestionnaireReadinessItem = {
-  id: "title" | "description" | "question" | "answers" | "publish";
+  id: "basics" | "answers" | "publish" | "proxy" | "invite";
   label: string;
   shortLabel: string;
   complete: boolean;
+  optional?: boolean;
+  stageLabel?: string;
+  group?: "questionnaire" | "session";
+  action?: "setup_basics" | "setup_questions" | "open_session" | "setup_proxy" | "invite_voters";
 };
+
+export type QuestionnaireSetupFocusTarget = "basics" | "questions";
 
 type QuestionnaireBlindResponseEntry = {
   event: NostrEvent;
@@ -424,10 +437,14 @@ const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",
+  "wss://relay.damus.io",
+  "wss://relay.primal.net",
 ]);
 const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://relay.nostr.net",
   "wss://nos.lol",
+  "wss://relay.damus.io",
+  "wss://relay.primal.net",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
@@ -437,8 +454,6 @@ const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   [`wss://nip17.${"tomdwyer.uk"}`, "wss://nos.lol"],
   [`wss://offchain.${"pub"}`, "wss://relay.nostr.net"],
   ["wss://relay.nostr.band", "wss://relay.nostr.info"],
-  ["wss://relay.damus.io", "wss://relay.nostr.net"],
-  ["wss://relay.primal.net", "wss://nos.lol"],
   ["wss://nostr.mom", "wss://relay.nostr.net"],
   ["wss://nostr.wine", "wss://nos.lol"],
   ["wss://eden.nostr.land", "wss://relay.nostr.net"],
@@ -1430,6 +1445,7 @@ function comparableDefinitionDraftShape(definition: QuestionnaireDefinition) {
     eligibilityMode: definition.eligibilityMode,
     allowMultipleResponsesPerPubkey: definition.allowMultipleResponsesPerPubkey,
     ballotCredentialMode: definition.ballotCredentialMode ?? "questionnaire",
+    credentialsPerVoter: questionnaireCredentialsPerVoter(definition),
     blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
     closeDurationSeconds: definitionCloseDurationSeconds(definition),
     questionnaireRelays: comparableDefinitionRelaySet(definition),
@@ -1442,6 +1458,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const isNewRoundMode = props.newRoundMode === true;
   const view = props.view ?? "build";
+  const buildPage = props.buildPage ?? "questionnaire";
+  const isProxyBuildPage = view === "build" && buildPage === "proxy";
   const storedDraft = useMemo(() => readStoredQuestionnaireDraft(), []);
   const [questionnaireId, setQuestionnaireId] = useState(storedDraft.questionnaireId);
   const [title, setTitle] = useState(storedDraft.title);
@@ -1477,6 +1495,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [isCloseAndPublishInFlight, setIsCloseAndPublishInFlight] = useState(false);
+  const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
   const [recoveredBlindSigningPublicKey, setRecoveredBlindSigningPublicKey] = useState<QuestionnaireBlindPublicKey | null>(null);
   const regenerateQuestionnaireId = useCallback(() => {
     setQuestionnaireId(generateQuestionnaireId());
@@ -3154,23 +3173,65 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     : buildStateLabel === "Open" ? "Active" : buildStateLabel;
   const checklistDescriptionAdded = description.trim().length > 0;
   const readinessItems = useMemo<QuestionnaireReadinessItem[]>(() => ([
-    { id: "title", label: "Title", shortLabel: "Title", complete: titleReady },
-    { id: "description", label: "Description", shortLabel: "Desc", complete: checklistDescriptionAdded },
-    { id: "question", label: "1+ questions", shortLabel: "Q", complete: hasQuestion },
-    { id: "answers", label: "Questions complete", shortLabel: "Done", complete: questionsValid },
+    {
+      id: "basics",
+      label: "Title & Description",
+      shortLabel: "Info",
+      complete: titleReady && checklistDescriptionAdded,
+      stageLabel: "1",
+      group: "questionnaire",
+      action: "setup_basics",
+    },
+    {
+      id: "answers",
+      label: "Questions complete",
+      shortLabel: "Done",
+      complete: questionsValid,
+      stageLabel: "2",
+      group: "questionnaire",
+      action: "setup_questions",
+    },
     {
       id: "publish",
       label: "Published",
       shortLabel: "Pub",
       complete: Boolean(publishedDefinition),
+      stageLabel: "3",
+      group: "session",
+      action: publishedDefinition ? "open_session" : undefined,
     },
-  ]), [checklistDescriptionAdded, hasQuestion, publishedDefinition, questionsValid, titleReady]);
+    {
+      id: "proxy",
+      label: "Set up proxy",
+      shortLabel: "Proxy",
+      complete: Boolean(activeWorkerDelegation),
+      optional: true,
+      stageLabel: "3a",
+      group: "session",
+      action: publishedDefinition ? "setup_proxy" : undefined,
+    },
+    {
+      id: "invite",
+      label: "Invite voters",
+      shortLabel: "Invite",
+      complete: knownVoterCount > 0,
+      stageLabel: "4",
+      group: "session",
+      action: "invite_voters",
+    },
+  ]), [activeWorkerDelegation, checklistDescriptionAdded, knownVoterCount, publishedDefinition, questionsValid, titleReady]);
   useEffect(() => {
     props.onReadinessChange?.(readinessItems);
   }, [props.onReadinessChange, readinessItems]);
   const currentQuestionnaireId = questionnaireId.trim();
   const selectedQuestionnaireOptions = view === "build"
-    ? (currentQuestionnaireId ? [currentQuestionnaireId] : [])
+    ? sortQuestionnaireIdsBySessionOrder(new Set([
+      ...availableQuestionnaireIds.filter((id) => (
+        id === currentQuestionnaireId
+        || loadElectionSummary(id)?.state !== "draft"
+      )),
+      ...(currentQuestionnaireId ? [currentQuestionnaireId] : []),
+    ]))
     : availableQuestionnaireIds.length > 0
       ? availableQuestionnaireIds
       : (currentQuestionnaireId ? [currentQuestionnaireId] : []);
@@ -3910,6 +3971,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }
 
+  function requestCloseAndPublishResults() {
+    if (isCloseAndPublishInFlight) {
+      return;
+    }
+    if (!activePublishedDefinition) {
+      setStatus("Load the vote before publishing results.");
+      return;
+    }
+    setPublishConfirmOpen(true);
+  }
+
   async function closeAndPublishResults() {
     if (isCloseAndPublishInFlight) {
       return;
@@ -3918,16 +3990,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setStatus("Load the vote before publishing results.");
       return;
     }
+    setPublishConfirmOpen(false);
     setIsCloseAndPublishInFlight(true);
     try {
-      if (hasIncompleteResponses && typeof window !== "undefined") {
-        const confirmed = window.confirm(
-          `Only ${displayAcceptedCount} of ${knownVoterCount} responses have been received. Close and publish results anyway?`,
-        );
-        if (!confirmed) {
-          return;
-        }
-      }
       if (currentState === "open") {
         const closed = await publishState("closed", { refreshAfter: false });
         if (!closed) {
@@ -4064,6 +4129,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const whitelistNpubs = Object.keys(coordinatorState?.whitelist ?? {})
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0);
+    const proxyVoterNpubs = Object.values(coordinatorState?.whitelist ?? {})
+      .filter((entry) => entry.credentialsPerVoter === 2)
+      .map((entry) => entry.invitedNpub.trim())
+      .filter((entry) => entry.length > 0);
     const bearerInviteCodes = Object.values(coordinatorState?.bearerInviteCodes ?? {});
     const unclaimedPrivateInviteCount = bearerInviteCodes
       .filter((entry) => entry.state !== "revoked")
@@ -4084,6 +4153,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         workerNpub,
         expectedInviteeCount,
         whitelistNpubs,
+        proxyVoterNpubs,
         bearerInviteCodes,
         eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
@@ -4218,9 +4288,47 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   function setupAuditProxyFromChecklist() {
     setDelegationMode("delegated_worker");
     setAuditProxyExpandSignal((current) => current + 1);
-    generateWorkerCredentials();
+    if (!activeWorkerDelegation && !generatedWorkerNpub.trim() && !generatedWorkerNsec.trim() && !delegatedWorkerNpub.trim()) {
+      generateWorkerCredentials();
+    }
     props.onConfigureWorker?.();
   }
+
+  const lastProxySetupSignalRef = useRef(0);
+  useEffect(() => {
+    const signal = props.proxySetupSignal ?? 0;
+    if (signal <= 0 || signal === lastProxySetupSignalRef.current) {
+      return;
+    }
+    lastProxySetupSignalRef.current = signal;
+    setupAuditProxyFromChecklist();
+  }, [props.proxySetupSignal]);
+
+  const lastSetupFocusSignalRef = useRef(0);
+  useEffect(() => {
+    const signal = props.setupFocusSignal ?? 0;
+    const target = props.setupFocusTarget;
+    if (!target || signal <= 0 || signal === lastSetupFocusSignalRef.current || typeof window === "undefined") {
+      return;
+    }
+    lastSetupFocusSignalRef.current = signal;
+    window.requestAnimationFrame(() => {
+      const targetId = target === "basics" ? "questionnaire-basic-section" : "questionnaire-questions-section";
+      const targetElement = document.getElementById(targetId);
+      if (typeof targetElement?.scrollIntoView === "function") {
+        targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      if (target === "questions") {
+        const firstQuestionControl = document.querySelector<HTMLElement>(
+          ".simple-questionnaire-question-card textarea, .simple-questionnaire-question-card input, .simple-questionnaire-question-card select",
+        );
+        firstQuestionControl?.focus({ preventScroll: true });
+        return;
+      }
+      const fieldToFocus = titleReady ? "questionnaire-description" : "questionnaire-title";
+      document.getElementById(fieldToFocus)?.focus({ preventScroll: true });
+    });
+  }, [props.setupFocusSignal, props.setupFocusTarget, titleReady]);
 
   const hasAutoGeneratedWorkerCredentials = useRef(false);
 
@@ -4239,17 +4347,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
   const hasBuildSideActions = Boolean(
     (showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish)
-      || (!showNewRoundPublishOnly && publishedDefinition)
       || !coordinatorNsec.trim()
       || (publishValidation && !publishValidation.valid)
       || statusNotice,
   );
+  const showDelegatedWorkerControls = isProxyBuildPage || delegationMode === "delegated_worker";
   const questionnaireToolbarClassName = "simple-session-page-toolbar simple-questionnaire-sticky-toolbar";
   const questionnaireTopControls = (
     <div className='simple-session-controlbar simple-questionnaire-top-controlbar'>
-      <select
+      <UiSelect
         id='questionnaire-select'
-        className='simple-voter-input simple-session-questionnaire-select'
+        selectClassName='simple-voter-input simple-session-questionnaire-select'
         value={questionnaireId}
         aria-label='Questionnaire'
         onChange={(event) => {
@@ -4260,51 +4368,51 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         {selectedQuestionnaireOptions.map((id, index) => (
           <option key={id} value={id}>{`${index + 1}. ${questionnaireOptionLabel(id)}`}</option>
         ))}
-      </select>
+      </UiSelect>
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight simple-session-control-actions'>
         {view === "build" ? (
           showNewRoundPublishOnly ? (
-            <button
-              type='button'
+            <UiButton
+              icon='uploadLine'
               className='simple-voter-primary'
-              disabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
-              onClick={() => void publishDefinition({ applyAdmissions: true })}
+              isDisabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
+              onPress={() => void publishDefinition({ applyAdmissions: true })}
             >
               Publish to invited voters
-            </button>
+            </UiButton>
           ) : !publishedDefinition ? (
             <>
-              <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
+              <UiButton icon='uploadLine' className='simple-voter-primary' isDisabled={!canPublishDraft} onPress={() => void publishDefinition()}>
                 Publish questionnaire
-              </button>
+              </UiButton>
               {props.onAfterPublishQuestionnaire && canPublishDraft && props.canApplyAdmissionsOnPublish ? (
-                <button
-                  type='button'
+                <UiButton
+                  icon='users'
                   className='simple-voter-secondary'
-                  onClick={() => void publishDefinition({ applyAdmissions: true })}
+                  onPress={() => void publishDefinition({ applyAdmissions: true })}
                 >
                   Publish + apply invited voters
-                </button>
+                </UiButton>
               ) : null}
             </>
           ) : (
             <>
-              <button
-                type='button'
+              <UiButton
+                icon='uploadLine'
                 className='simple-voter-primary'
-                disabled={closeAndPublishButtonDisabled}
-                onClick={() => void closeAndPublishResults()}
+                isDisabled={closeAndPublishButtonDisabled}
+                onPress={requestCloseAndPublishResults}
               >
                 {currentState === "open" ? "Close + publish results" : "Publish results"}
-              </button>
+              </UiButton>
               {canExportResults ? (
-                <button
-                  type='button'
+                <UiButton
+                  icon='export'
                   className='simple-voter-secondary'
-                  onClick={exportResults}
+                  onPress={exportResults}
                 >
                   Export results
-                </button>
+                </UiButton>
               ) : null}
             </>
           )
@@ -4312,42 +4420,108 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           <>
             {publishedDefinition ? (
               <>
-                <button
-                  type='button'
+                <UiButton
+                  icon='uploadLine'
                   className='simple-voter-primary'
-                  disabled={closeAndPublishButtonDisabled}
-                  onClick={() => void closeAndPublishResults()}
+                  isDisabled={closeAndPublishButtonDisabled}
+                  onPress={requestCloseAndPublishResults}
                 >
                   {currentState === "open" ? "Close + publish results" : "Publish results"}
-                </button>
+                </UiButton>
                 {canExportResults ? (
-                  <button
-                    type='button'
+                  <UiButton
+                    icon='export'
                     className='simple-voter-secondary'
-                    onClick={exportResults}
+                    onPress={exportResults}
                   >
                     Export results
-                  </button>
+                  </UiButton>
                 ) : null}
               </>
             ) : null}
           </>
         )}
-        {!showNewRoundPublishOnly && props.onInviteParticipants ? (
-          <button
-            type='button'
-            className='simple-voter-secondary simple-questionnaire-toolbar-invite-button'
-            onClick={props.onInviteParticipants}
+        {!showNewRoundPublishOnly && props.onAddSession ? (
+          <UiButton
+            icon='add'
+            className='simple-voter-secondary simple-questionnaire-toolbar-add-session-button'
+            isDisabled={props.canAddSession === false}
+            onPress={props.onAddSession}
           >
-            Invite voters
-          </button>
+            Add session
+          </UiButton>
         ) : null}
-        <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
+        <UiButton icon='refresh' className='simple-voter-secondary' onPress={() => void refresh()}>
           Refresh
-        </button>
+        </UiButton>
       </div>
     </div>
   );
+  const publishConfirmDialog = publishConfirmOpen ? (
+    <div
+      className='simple-identity-qr-overlay simple-new-identity-confirm-overlay simple-publish-confirm-overlay'
+      role='dialog'
+      aria-modal='true'
+      aria-labelledby='publish-confirm-title'
+      aria-describedby='publish-confirm-description'
+      onClick={() => setPublishConfirmOpen(false)}
+    >
+      <UiButton
+        icon='cancel'
+        iconOnly
+        className='simple-identity-qr-overlay-close simple-new-identity-confirm-close'
+        onPress={() => setPublishConfirmOpen(false)}
+        aria-label='Cancel publish'
+      />
+      <div
+        className='simple-identity-qr-overlay-card simple-new-identity-confirm-card simple-publish-confirm-card'
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className='simple-new-identity-confirm-mark simple-publish-confirm-mark' aria-hidden='true'>
+          <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-publish' />
+        </div>
+        <div className='simple-new-identity-confirm-copy'>
+          <p className='simple-account-menu-kicker'>Publish results</p>
+          <h2 id='publish-confirm-title' className='simple-voter-section-title'>
+            {currentState === "open" ? "Close and publish?" : "Publish results?"}
+          </h2>
+          <p id='publish-confirm-description' className='simple-voter-note'>
+            This will publish the current result summary for {activePublishedDefinition?.title?.trim() || "this questionnaire"}.
+          </p>
+          <div className='simple-new-identity-confirm-warning simple-publish-confirm-summary'>
+            <span className='simple-new-identity-confirm-warning-icon' aria-hidden='true'>i</span>
+            <div>
+              <p>{displayAcceptedCount} accepted response{displayAcceptedCount === 1 ? "" : "s"} will be published.</p>
+              <span>
+                {hasIncompleteResponses
+                  ? `Only ${displayAcceptedCount} of ${knownVoterCount} expected responses have been received.`
+                  : currentState === "open"
+                    ? "The questionnaire will be closed before the summary is published."
+                    : "Observers will see this as the current public result."}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className='simple-new-identity-confirm-actions'>
+          <UiButton
+            icon='cancel'
+            className='simple-voter-secondary'
+            onPress={() => setPublishConfirmOpen(false)}
+          >
+            Cancel
+          </UiButton>
+          <UiButton
+            icon='check'
+            className='simple-voter-primary simple-new-identity-confirm-primary'
+            onPress={() => void closeAndPublishResults()}
+            isDisabled={isCloseAndPublishInFlight}
+          >
+            Confirm and publish
+          </UiButton>
+        </div>
+      </div>
+    </div>
+  ) : null;
   if (view === "participants") {
     if (!hasParticipantsNotice) {
       return null;
@@ -4398,36 +4572,37 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
         {publishStatusText ? <p className='simple-voter-note'>{publishStatusText}</p> : null}
         {status ? <p className='simple-voter-note'>{status}</p> : null}
+        {publishConfirmDialog}
       </>
     );
   }
 
 	  return (
 	    <>
-	      <section className='simple-voter-section simple-questionnaire-build-section'>
+	      <section className={`simple-voter-section simple-questionnaire-build-section${isProxyBuildPage ? " is-proxy-page" : ""}`}>
 	        <div className={`simple-questionnaire-build-toolbar ${questionnaireToolbarClassName}`}>
 	          {questionnaireTopControls}
 	        </div>
         <h2 className='simple-voter-section-title'>
-          {setupHeadingStateLabel}{title.trim() ? `: ${title.trim()}` : ""}
+          {isProxyBuildPage ? "Audit proxy" : `${setupHeadingStateLabel}${title.trim() ? `: ${title.trim()}` : ""}`}
         </h2>
         <div className='simple-questionnaire-build-grid'>
           <div className='simple-questionnaire-build-main'>
             <div className='simple-voter-card simple-questionnaire-panel simple-questionnaire-build-card'>
               <fieldset className='simple-questionnaire-editor-fieldset' disabled={questionnaireEditorLocked}>
-      <section className='simple-questionnaire-build-cardlet'>
+      <section id='questionnaire-basic-section' className='simple-questionnaire-build-cardlet'>
         <h3 className='simple-questionnaire-cardlet-title'>Basic information</h3>
       <div className='simple-questionnaire-identity-grid'>
         <div className='simple-questionnaire-form-field'>
-          <div className='simple-questionnaire-field-heading'>
-            <label className='simple-voter-label' htmlFor='questionnaire-title'>Name</label>
-          </div>
-          <input
-            id='questionnaire-title'
-            className='simple-voter-input'
-            value={title}
-            placeholder='Vote name'
-            onChange={(event) => setTitle(event.target.value)}
+          <UiTextField
+            label='Name'
+            inputClassName='simple-voter-input'
+            inputProps={{
+              id: 'questionnaire-title',
+              value: title,
+              placeholder: 'Vote name',
+              onChange: (event) => setTitle(event.target.value),
+            }}
           />
         </div>
         <div className='simple-questionnaire-id-panel'>
@@ -4435,18 +4610,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
           </div>
           <div className='simple-questionnaire-id-row'>
-            <input
-              id='questionnaire-id'
-              className='simple-voter-input simple-voter-input-inline'
-              value={questionnaireId}
-              readOnly={isNewRoundMode}
-              onChange={(event) => setQuestionnaireId(event.target.value)}
+            <UiTextField
+              inputClassName='simple-voter-input simple-voter-input-inline'
+              inputProps={{
+                id: 'questionnaire-id',
+                value: questionnaireId,
+                readOnly: isNewRoundMode,
+                onChange: (event) => setQuestionnaireId(event.target.value),
+              }}
             />
             {!isNewRoundMode ? (
               <div className='simple-questionnaire-id-actions'>
-                <button type='button' className='simple-voter-secondary simple-questionnaire-generate-id-button' onClick={regenerateQuestionnaireId}>
+                <UiButton icon='key' className='simple-voter-secondary simple-questionnaire-generate-id-button' onPress={regenerateQuestionnaireId}>
                   Generate ID
-                </button>
+                </UiButton>
               </div>
             ) : null}
           </div>
@@ -4454,14 +4631,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       </div>
 
       <div className='simple-questionnaire-form-field'>
-        <label className='simple-voter-label' htmlFor='questionnaire-description'>Description</label>
-        <textarea
-          id='questionnaire-description'
-          className='simple-voter-input'
-          rows={3}
-          value={description}
-          placeholder='Short description'
-          onChange={(event) => setDescription(event.target.value)}
+        <UiTextArea
+          label='Description'
+          textAreaClassName='simple-voter-input'
+          textAreaProps={{
+            id: 'questionnaire-description',
+            rows: 3,
+            value: description,
+            placeholder: 'Short description',
+            onChange: (event) => setDescription(event.target.value),
+          }}
         />
       </div>
       </section>
@@ -4470,31 +4649,23 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         <h3 className='simple-questionnaire-cardlet-title'>Configuration</h3>
       <section className='simple-questionnaire-setup-subsection'>
         <div className='simple-questionnaire-close-timer-row'>
-          <label className={`simple-questionnaire-close-timer-toggle${closeTimerEnabled ? " is-on" : ""}`} htmlFor='questionnaire-close-timer-enabled'>
-            <span>Enable close timer</span>
-            <input
-              id='questionnaire-close-timer-enabled'
-              type='checkbox'
-              role='switch'
-              aria-checked={closeTimerEnabled}
-              checked={closeTimerEnabled}
-              onChange={(event) => setCloseTimerEnabled(event.target.checked)}
-            />
-            <span className='simple-questionnaire-switch' aria-hidden='true'>
-              <span className='simple-questionnaire-switch-knob' />
-            </span>
-          </label>
+          <UiSwitch
+            className={`simple-questionnaire-close-timer-toggle${closeTimerEnabled ? " is-on" : ""}`}
+            label='Enable close timer'
+            isSelected={closeTimerEnabled}
+            onChange={setCloseTimerEnabled}
+          />
           <div className={`simple-questionnaire-close-timer-minutes${closeTimerEnabled ? "" : " is-disabled"}`}>
-            <label className='simple-voter-label simple-voter-label-tight' htmlFor='questionnaire-close-minutes'>
-              Close after
-            </label>
-            <input
-              id='questionnaire-close-minutes'
-              className='simple-voter-input simple-voter-input-inline simple-questionnaire-close-timer-input'
-              value={closeAfterMinutes}
-              disabled={!closeTimerEnabled}
-              inputMode='numeric'
-              onChange={(event) => setCloseAfterMinutes(event.target.value)}
+            <UiTextField
+              inputClassName='simple-voter-input simple-voter-input-inline simple-questionnaire-close-timer-input'
+              isDisabled={!closeTimerEnabled}
+              aria-label='Close after'
+              inputProps={{
+                id: 'questionnaire-close-minutes',
+                value: closeAfterMinutes,
+                inputMode: 'numeric',
+                onChange: (event) => setCloseAfterMinutes(event.target.value),
+              }}
             />
             <fieldset className='simple-questionnaire-close-timer-units' disabled={!closeTimerEnabled}>
               <legend>Close timer unit</legend>
@@ -4520,34 +4691,26 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
       <section className='simple-questionnaire-setup-subsection'>
         <div className='simple-questionnaire-relay-row'>
-          <label className={`simple-relay-default-toggle${setupRelaySettingsEnabled ? " is-on" : ""}`}>
-            <span>Use custom relays</span>
-            <input
-              type='checkbox'
-              role='switch'
-              aria-checked={setupRelaySettingsEnabled}
-              checked={setupRelaySettingsEnabled}
-              onChange={(event) => {
-                const useCustomRelays = event.target.checked;
+          <UiSwitch
+            className={`simple-relay-default-toggle${setupRelaySettingsEnabled ? " is-on" : ""}`}
+            label='Use custom relays'
+            isSelected={setupRelaySettingsEnabled}
+            onChange={(useCustomRelays) => {
                 setUseDefaultSetupRelays(!useCustomRelays);
                 if (!useCustomRelays) {
                   props.onQuestionnaireRelaysInputChange?.("");
                 }
-              }}
-            />
-            <span className='simple-questionnaire-switch' aria-hidden='true'>
-              <span className='simple-questionnaire-switch-knob' />
-            </span>
-          </label>
+            }}
+          />
           {props.onConfigureQuestionnaireRelays ? (
-            <button
-              type='button'
+            <UiButton
+              icon='settings'
               className='simple-voter-secondary simple-questionnaire-relay-settings-button'
-              onClick={props.onConfigureQuestionnaireRelays}
-              disabled={!setupRelaySettingsEnabled}
+              onPress={props.onConfigureQuestionnaireRelays}
+              isDisabled={!setupRelaySettingsEnabled}
             >
               Open relay settings
-            </button>
+            </UiButton>
           ) : null}
         </div>
         {questionnaireRelayStatus ? (
@@ -4558,7 +4721,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       </section>
       </section>
 
-      <div className='simple-questionnaire-questions-head'>
+      <div id='questionnaire-questions-section' className='simple-questionnaire-questions-head' tabIndex={-1}>
         <h4 className='simple-voter-section-title simple-questionnaire-questions-title'>Questions</h4>
         <span>{questions.length} {questions.length === 1 ? "question" : "questions"} defined</span>
       </div>
@@ -4575,8 +4738,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               <div className='simple-questionnaire-question-head'>
                 <div className='simple-questionnaire-question-title-row'>
                   <p className='simple-voter-question simple-questionnaire-question-title'>Question {index + 1}</p>
-                  <select
-                    className='simple-voter-input simple-questionnaire-type-dropdown'
+                  <UiSelect
+                    selectClassName='simple-voter-input simple-questionnaire-type-dropdown'
                     aria-label={`Question ${index + 1} type`}
                     value={question.type}
                     onChange={(event) => setQuestionType(index, event.target.value as QuestionnaireQuestionDraft["type"])}
@@ -4584,129 +4747,113 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     {QUESTION_TYPE_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
-                  </select>
+                  </UiSelect>
                 </div>
-                <label className={`simple-questionnaire-required-toggle${question.required ? " is-on" : ""}`}>
-                  <span>Required</span>
-                  <input
-                    type='checkbox'
-                    role='switch'
-                    aria-checked={question.required}
-                    checked={question.required}
-                    onChange={(event) => {
-                      const checked = event.target.checked;
-                      updateQuestion(index, (entry) => {
-                        if (entry.type === "rank") {
-                          const minimumRanked = checked
-                            ? Math.max(1, Math.min(entry.options.length, entry.minimumRanked || 1))
-                            : 0;
-                          return bumpQuestionBallotSlotVersion({ ...entry, minimumRanked, required: minimumRanked > 0 });
-                        }
-                        return bumpQuestionBallotSlotVersion({ ...entry, required: checked });
-                      });
+                <div className='simple-questionnaire-question-controls'>
+                  <UiSwitch
+                    className={`simple-questionnaire-required-toggle${question.required ? " is-on" : ""}`}
+                    label='Required'
+                    isSelected={question.required}
+                    onChange={(checked) => {
+                        updateQuestion(index, (entry) => {
+                          if (entry.type === "rank") {
+                            const minimumRanked = checked
+                              ? Math.max(1, Math.min(entry.options.length, entry.minimumRanked || 1))
+                              : 0;
+                            return bumpQuestionBallotSlotVersion({ ...entry, minimumRanked, required: minimumRanked > 0 });
+                          }
+                          return bumpQuestionBallotSlotVersion({ ...entry, required: checked });
+                        });
                     }}
                   />
-                  <span className='simple-questionnaire-switch' aria-hidden='true'>
-                    <span className='simple-questionnaire-switch-knob' />
-                  </span>
-                </label>
-                <div className='simple-questionnaire-ballot-index-control'>
-                  <label htmlFor={ballotInputId}>Ballot</label>
-                  <div className='simple-questionnaire-ballot-stepper'>
-                    <input
-                      id={ballotInputId}
-                      className='simple-questionnaire-ballot-index-input'
-                      type='number'
-                      inputMode='numeric'
-                      min={1}
-                      max={maxBallotIndex}
-                      value={ballotIndex}
-                      aria-label={`Question ${index + 1} ballot index`}
-                      onChange={(event) => {
-                        const parsed = Number.parseInt(event.target.value, 10);
-                        if (!Number.isFinite(parsed)) {
-                          return;
-                        }
-                        setQuestionBallotIndex(index, Math.min(Math.max(1, parsed), maxBallotIndex));
-                      }}
-                    />
-                    <div className='simple-questionnaire-ballot-stepper-buttons'>
-                      <button
-                        className='simple-questionnaire-ballot-stepper-button'
-                        type='button'
-                        aria-label={`Increase question ${index + 1} ballot index`}
-                        disabled={ballotIndex >= maxBallotIndex}
-                        onClick={() => setQuestionBallotIndex(index, Math.min(maxBallotIndex, ballotIndex + 1))}
-                      >
-                        <span className='simple-questionnaire-ballot-stepper-arrow is-up' aria-hidden='true' />
-                      </button>
-                      <button
-                        className='simple-questionnaire-ballot-stepper-button'
-                        type='button'
-                        aria-label={`Decrease question ${index + 1} ballot index`}
-                        disabled={ballotIndex <= 1}
-                        onClick={() => setQuestionBallotIndex(index, Math.max(1, ballotIndex - 1))}
-                      >
-                        <span className='simple-questionnaire-ballot-stepper-arrow is-down' aria-hidden='true' />
-                      </button>
+                  <div className='simple-questionnaire-ballot-index-control'>
+                    <label htmlFor={ballotInputId}>Ballot</label>
+                    <div className='simple-questionnaire-ballot-stepper'>
+                      <input
+                        id={ballotInputId}
+                        className='simple-questionnaire-ballot-index-input'
+                        type='number'
+                        inputMode='numeric'
+                        min={1}
+                        max={maxBallotIndex}
+                        value={ballotIndex}
+                        aria-label={`Question ${index + 1} ballot index`}
+                        onChange={(event) => {
+                          const parsed = Number.parseInt(event.target.value, 10);
+                          if (!Number.isFinite(parsed)) {
+                            return;
+                          }
+                          setQuestionBallotIndex(index, Math.min(Math.max(1, parsed), maxBallotIndex));
+                        }}
+                      />
+                      <div className='simple-questionnaire-ballot-stepper-buttons'>
+                        <UiButton
+                          className='simple-questionnaire-ballot-stepper-button'
+                          icon='uploadLine'
+                          iconOnly
+                          aria-label={`Increase question ${index + 1} ballot index`}
+                          isDisabled={ballotIndex >= maxBallotIndex}
+                          onPress={() => setQuestionBallotIndex(index, Math.min(maxBallotIndex, ballotIndex + 1))}
+                        />
+                        <UiButton
+                          className='simple-questionnaire-ballot-stepper-button'
+                          icon='downloadLine'
+                          iconOnly
+                          aria-label={`Decrease question ${index + 1} ballot index`}
+                          isDisabled={ballotIndex <= 1}
+                          onPress={() => setQuestionBallotIndex(index, Math.max(1, ballotIndex - 1))}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${index + 1} actions`}>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-icon-button'
-                    aria-label={`Duplicate question ${index + 1}`}
-                    title={`Duplicate question ${index + 1}`}
-                    onClick={() => duplicateQuestion(index)}
-                  >
-                    <span className='simple-copy-icon simple-questionnaire-button-copy-icon' aria-hidden='true' />
-                  </button>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-icon-button'
-                    aria-label={`Move question ${index + 1} up`}
-                    title={`Move question ${index + 1} up`}
-                    disabled={!canMoveUp}
-                    onClick={() => moveQuestion(index, -1)}
-                  >
-                    <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
-                      <path d='M12 19V5' />
-                      <path d='M5 12l7-7 7 7' />
-                    </svg>
-                  </button>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-icon-button'
-                    aria-label={`Move question ${index + 1} down`}
-                    title={`Move question ${index + 1} down`}
-                    disabled={!canMoveDown}
-                    onClick={() => moveQuestion(index, 1)}
-                  >
-                    <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
-                      <path d='M12 5v14' />
-                      <path d='M19 12l-7 7-7-7' />
-                    </svg>
-                  </button>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-icon-button simple-questionnaire-remove-button'
-                    aria-label={`Remove question ${index + 1}`}
-                    title={`Remove question ${index + 1}`}
-                    onClick={() => deleteQuestion(index)}
-                  >
-                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
-                  </button>
+                  <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${index + 1} actions`}>
+                    <UiButton
+                      icon='copy'
+                      iconOnly
+                      className='simple-voter-secondary simple-questionnaire-icon-button'
+                      aria-label={`Duplicate question ${index + 1}`}
+                      title={`Duplicate question ${index + 1}`}
+                      onPress={() => duplicateQuestion(index)}
+                    />
+                    <UiButton
+                      icon='uploadLine'
+                      iconOnly
+                      className='simple-voter-secondary simple-questionnaire-icon-button'
+                      aria-label={`Move question ${index + 1} up`}
+                      title={`Move question ${index + 1} up`}
+                      isDisabled={!canMoveUp}
+                      onPress={() => moveQuestion(index, -1)}
+                    />
+                    <UiButton
+                      icon='downloadLine'
+                      iconOnly
+                      className='simple-voter-secondary simple-questionnaire-icon-button'
+                      aria-label={`Move question ${index + 1} down`}
+                      title={`Move question ${index + 1} down`}
+                      isDisabled={!canMoveDown}
+                      onPress={() => moveQuestion(index, 1)}
+                    />
+                    <UiButton
+                      icon='delete'
+                      iconOnly
+                      className='simple-voter-secondary simple-questionnaire-icon-button simple-questionnaire-remove-button'
+                      aria-label={`Remove question ${index + 1}`}
+                      title={`Remove question ${index + 1}`}
+                      onPress={() => deleteQuestion(index)}
+                    />
+                  </div>
                 </div>
               </div>
-              <input
-                id={`question-prompt-${index}`}
-                className='simple-voter-input'
-                value={question.prompt}
-                placeholder='Question prompt'
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  updateQuestion(index, (entry) => ({ ...entry, prompt: nextValue }));
+              <UiTextField
+                inputClassName='simple-voter-input'
+                inputProps={{
+                  id: `question-prompt-${index}`,
+                  value: question.prompt,
+                  placeholder: 'Question prompt',
+                  onChange: (event) => {
+                    const nextValue = event.target.value;
+                    updateQuestion(index, (entry) => ({ ...entry, prompt: nextValue }));
+                  },
                 }}
               />
               {question.type === "multiple_choice" ? (
@@ -4715,47 +4862,48 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <div className='simple-questionnaire-options-list'>
                       {question.options.map((option, optionIndex) => (
                         <div key={option.optionId} className='simple-questionnaire-option-row'>
-                          <input
-                            className='simple-voter-input'
-                            value={option.label}
-                            aria-label={`Option ${optionIndex + 1}`}
-                            onChange={(event) => {
-                              const nextLabel = event.target.value;
-                              updateQuestion(index, (entry) => {
-                                if (entry.type !== "multiple_choice") {
-                                  return entry;
-                                }
-                                return bumpQuestionBallotSlotVersion({
-                                  ...entry,
-                                  options: entry.options.map((entryOption, entryOptionIndex) => (
-                                    entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                                  )),
+                          <UiTextField
+                            inputClassName='simple-voter-input'
+                            inputProps={{
+                              value: option.label,
+                              "aria-label": `Option ${optionIndex + 1}`,
+                              onChange: (event) => {
+                                const nextLabel = event.target.value;
+                                updateQuestion(index, (entry) => {
+                                  if (entry.type !== "multiple_choice") {
+                                    return entry;
+                                  }
+                                  return bumpQuestionBallotSlotVersion({
+                                    ...entry,
+                                    options: entry.options.map((entryOption, entryOptionIndex) => (
+                                      entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                                    )),
+                                  });
                                 });
-                              });
+                              },
                             }}
                           />
-                          <button
-                            type='button'
+                          <UiButton
+                            icon='delete'
+                            iconOnly
                             className='simple-voter-secondary simple-questionnaire-option-delete-button'
                             aria-label={`Delete option ${optionIndex + 1}`}
                             title={`Delete option ${optionIndex + 1}`}
-                            onClick={() => {
+                            onPress={() => {
                               updateQuestion(index, (entry) => (
                                 entry.type === "multiple_choice"
                                   ? bumpQuestionBallotSlotVersion({ ...entry, options: entry.options.filter((_, entryOptionIndex) => entryOptionIndex !== optionIndex) })
                                   : entry
                               ));
                             }}
-                          >
-                            <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
-                          </button>
+                          />
                         </div>
                       ))}
                     </div>
-                    <button
-                      type='button'
+                    <UiButton
+                      icon='add'
                       className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-add-option-button'
-                      onClick={() => {
+                      onPress={() => {
                         updateQuestion(index, (entry) => {
                           if (entry.type !== "multiple_choice") {
                             return entry;
@@ -4767,30 +4915,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         });
                       }}
                     >
-                      <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
-                      <span>Add option</span>
-                    </button>
+                      Add option
+                    </UiButton>
                   </div>
-                  <label className={`simple-questionnaire-required-toggle${question.multiSelect ? " is-on" : ""}`}>
-                    <span>Allow multiple selections</span>
-                    <input
-                      type='checkbox'
-                      role='switch'
-                      aria-checked={question.multiSelect}
-                      checked={question.multiSelect}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
+                  <UiSwitch
+                    className={`simple-questionnaire-required-toggle${question.multiSelect ? " is-on" : ""}`}
+                    label='Allow multiple selections'
+                    isSelected={question.multiSelect}
+                    onChange={(checked) => {
                         updateQuestion(index, (entry) => (
                           entry.type === "multiple_choice"
                             ? bumpQuestionBallotSlotVersion({ ...entry, multiSelect: checked })
                             : entry
                         ));
-                      }}
-                    />
-                    <span className='simple-questionnaire-switch' aria-hidden='true'>
-                      <span className='simple-questionnaire-switch-knob' />
-                    </span>
-                  </label>
+                    }}
+                  />
                 </div>
               ) : null}
               {question.type === "rank" ? (
@@ -4799,31 +4938,34 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <div className='simple-questionnaire-options-list'>
                       {question.options.map((option, optionIndex) => (
                         <div key={option.optionId} className='simple-questionnaire-option-row'>
-                          <input
-                            className='simple-voter-input'
-                            value={option.label}
-                            aria-label={`Rank option ${optionIndex + 1}`}
-                            onChange={(event) => {
-                              const nextLabel = event.target.value;
-                              updateQuestion(index, (entry) => {
-                                if (entry.type !== "rank") {
-                                  return entry;
-                                }
-                                return bumpQuestionBallotSlotVersion({
-                                  ...entry,
-                                  options: entry.options.map((entryOption, entryOptionIndex) => (
-                                    entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                                  )),
+                          <UiTextField
+                            inputClassName='simple-voter-input'
+                            inputProps={{
+                              value: option.label,
+                              "aria-label": `Rank option ${optionIndex + 1}`,
+                              onChange: (event) => {
+                                const nextLabel = event.target.value;
+                                updateQuestion(index, (entry) => {
+                                  if (entry.type !== "rank") {
+                                    return entry;
+                                  }
+                                  return bumpQuestionBallotSlotVersion({
+                                    ...entry,
+                                    options: entry.options.map((entryOption, entryOptionIndex) => (
+                                      entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                                    )),
+                                  });
                                 });
-                              });
+                              },
                             }}
                           />
-                          <button
-                            type='button'
+                          <UiButton
+                            icon='delete'
+                            iconOnly
                             className='simple-voter-secondary simple-questionnaire-option-delete-button'
                             aria-label={`Delete rank option ${optionIndex + 1}`}
                             title={`Delete rank option ${optionIndex + 1}`}
-                            onClick={() => {
+                            onPress={() => {
                               updateQuestion(index, (entry) => {
                                 if (entry.type !== "rank") {
                                   return entry;
@@ -4841,16 +4983,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                                 });
                               });
                             }}
-                          >
-                            <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
-                          </button>
+                          />
                         </div>
                       ))}
                     </div>
-                    <button
-                      type='button'
+                    <UiButton
+                      icon='add'
                       className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-add-option-button'
-                      onClick={() => {
+                      onPress={() => {
                         updateQuestion(index, (entry) => {
                           if (entry.type !== "rank") {
                             return entry;
@@ -4862,17 +5002,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         });
                       }}
                     >
-                      <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
-                      <span>Add option</span>
-                    </button>
+                      Add option
+                    </UiButton>
                   </div>
                   <div className='simple-questionnaire-rank-settings'>
-                    <label className='simple-voter-label simple-voter-label-tight' htmlFor={`question-rank-minimum-${index}`}>
-                      Minimum ranked choices
-                    </label>
-                    <select
+                    <UiSelect
+                      label='Minimum ranked choices'
                       id={`question-rank-minimum-${index}`}
-                      className='simple-voter-input simple-questionnaire-rank-minimum'
+                      selectClassName='simple-voter-input simple-questionnaire-rank-minimum'
                       value={String(question.minimumRanked)}
                       onChange={(event) => {
                         const parsed = Number.parseInt(event.target.value, 10);
@@ -4893,81 +5030,65 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                           {optionIndex + 1}
                         </option>
                       ))}
-                    </select>
+                    </UiSelect>
                   </div>
                 </div>
               ) : null}
               {question.type === "free_text" ? (
                 <div className='simple-voter-field-stack simple-voter-field-stack-tight simple-questionnaire-free-text-stack'>
                   <div className='simple-questionnaire-max-length-row'>
-                    <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
-                    <input
-                      id={`question-max-${index}`}
-                      className='simple-voter-input simple-questionnaire-max-length-input'
-                      inputMode='numeric'
-                      value={String(question.maxLength)}
-                      onChange={(event) => {
-                        const parsed = Number.parseInt(event.target.value, 10);
-                        updateQuestion(index, (entry) => (
-                          entry.type === "free_text"
-                            ? bumpQuestionBallotSlotVersion({ ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength })
-                            : entry
-                        ));
+                    <UiTextField
+                      label='Maximum length'
+                      inputClassName='simple-voter-input simple-questionnaire-max-length-input'
+                      inputProps={{
+                        id: `question-max-${index}`,
+                        inputMode: 'numeric',
+                        value: String(question.maxLength),
+                        onChange: (event) => {
+                          const parsed = Number.parseInt(event.target.value, 10);
+                          updateQuestion(index, (entry) => (
+                            entry.type === "free_text"
+                              ? bumpQuestionBallotSlotVersion({ ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength })
+                              : entry
+                          ));
+                        },
                       }}
                     />
                   </div>
-                  <label className={`simple-questionnaire-required-toggle${question.encryptResponses ? " is-on" : ""}`}>
-                    <span>Require encrypted responses</span>
-                    <input
-                      type='checkbox'
-                      role='switch'
-                      aria-checked={Boolean(question.encryptResponses)}
-                      checked={Boolean(question.encryptResponses)}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
+                  <UiSwitch
+                    className={`simple-questionnaire-required-toggle${question.encryptResponses ? " is-on" : ""}`}
+                    label='Require encrypted responses'
+                    isSelected={Boolean(question.encryptResponses)}
+                    onChange={(checked) => {
                         updateQuestion(index, (entry) => (
                           entry.type === "free_text"
                             ? bumpQuestionBallotSlotVersion({ ...entry, encryptResponses: checked })
                             : entry
                         ));
-                      }}
-                    />
-                    <span className='simple-questionnaire-switch' aria-hidden='true'>
-                      <span className='simple-questionnaire-switch-knob' />
-                    </span>
-                  </label>
+                    }}
+                  />
                 </div>
               ) : null}
             </div>
           );
         })}
       </div>
-      <button
-        type='button'
+      <UiButton
+        icon='add'
         className='simple-questionnaire-add-question-button'
-        onClick={addQuestion}
+        onPress={addQuestion}
       >
-        <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
-        <span>Add Question</span>
-      </button>
+        Add Question
+      </UiButton>
               </fieldset>
 
             </div>
 	          </div>
-	          <aside className='simple-questionnaire-build-aside'>
-	            {hasBuildSideActions ? (
+	          {hasBuildSideActions ? (
+	            <aside className='simple-questionnaire-build-aside'>
 	              <section className='simple-questionnaire-build-side-card simple-questionnaire-build-actions'>
 	                {showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish ? (
 	                  <p className='simple-voter-note'>Enable Auto-ballot for at least one voter before publishing this round.</p>
-	                ) : null}
-	                {!showNewRoundPublishOnly && publishedDefinition ? (
-	                  <button
-	                    type='button'
-	                    className='simple-voter-primary'
-	                    onClick={setupAuditProxyFromChecklist}
-	                  >
-	                    Set up proxy
-	                  </button>
 	                ) : null}
 	                {!coordinatorNsec.trim() ? (
 	                  <p className='simple-voter-note'>Organiser key is not loaded yet.</p>
@@ -4977,27 +5098,89 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 	                ) : null}
 	                {statusNotice}
 	              </section>
-	            ) : null}
-	          </aside>
+	            </aside>
+          ) : null}
           <div id='delegated-worker-section' className='simple-questionnaire-build-proxy'>
-            <SimpleCollapsibleSection title='Audit proxy' titleToggleLabel='Audit proxy' defaultCollapsed expandSignal={auditProxyExpandSignal}>
-              <div className='simple-questionnaire-worker-section'>
-                <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
-                <select
-                  id='delegation-mode'
-                  className='simple-voter-input'
-                  value={delegationMode}
-                  onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
-                >
-                  <option value='browser_only'>Browser only</option>
-                  <option value='delegated_worker'>Audit proxy</option>
-                </select>
-                <p className='simple-voter-note'>
-                  Use Audit proxy for larger live sessions or repeated rounds. When selected, publishing with a valid audit proxy npub configures delegation for that questionnaire.
-                </p>
-
-                {delegationMode === "delegated_worker" ? (
+            <SimpleCollapsibleSection
+              title='Audit proxy'
+              titleToggleLabel='Audit proxy'
+              defaultCollapsed={!isProxyBuildPage}
+              expandSignal={auditProxyExpandSignal}
+              hideToggle={isProxyBuildPage}
+            >
+              <div className={`simple-questionnaire-worker-section${isProxyBuildPage ? " is-proxy-page" : ""}`}>
+                {!isProxyBuildPage ? (
                   <>
+                    <UiSelect
+                      label='Mode'
+                      id='delegation-mode'
+                      selectClassName='simple-voter-input'
+                      value={delegationMode}
+                      onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
+                    >
+                      <option value='browser_only'>Browser only</option>
+                      <option value='delegated_worker'>Audit proxy</option>
+                    </UiSelect>
+                    <p className='simple-voter-note'>
+                      Use Audit proxy for larger live sessions or repeated rounds. When selected, publishing with a valid audit proxy npub configures delegation for that questionnaire.
+                    </p>
+                  </>
+                ) : null}
+
+                {showDelegatedWorkerControls ? (
+                  <>
+                <section className='simple-delegate-section simple-delegate-direct-launch-section'>
+                  <div className='simple-delegate-section-head'>
+                    <div>
+                      <h4 className='simple-delegate-title'>Helper download and launch command</h4>
+                      <p className='simple-voter-note'>
+                        Copy this command to download the current audit proxy release, check it is at least <code>{WORKER_MINIMUM_VERSION}</code>, and start it with this organiser and relay set.
+                      </p>
+                    </div>
+                    <UiButton
+                      icon={isCopyLabelActive("worker-direct-command") ? "check" : "copy"}
+                      className='simple-voter-primary'
+                      onPress={() => void copyWorkerCommand(workerDirectCommand, "worker-direct-command")}
+                    >
+                      {isCopyLabelActive("worker-direct-command") ? "Copied" : "Copy command"}
+                    </UiButton>
+                  </div>
+                  <div className='simple-delegate-launch-controls'>
+                    <UiSelect
+                      label='Platform'
+                      id='worker-download-target'
+                      selectClassName='simple-voter-input'
+                      value={selectedWorkerDownloadTarget}
+                      onChange={(event) => setSelectedWorkerDownloadTarget(event.target.value as WorkerLauncherTargetKey)}
+                    >
+                      {WORKER_LAUNCHER_TARGET_OPTIONS.map((option) => (
+                        <option key={option.key} value={option.key}>{option.label}</option>
+                      ))}
+                    </UiSelect>
+                  </div>
+                  <UiTextArea
+                    label='Direct command-line launch'
+                    textAreaClassName='simple-voter-input simple-delegate-command'
+                    textAreaProps={{
+                      id: 'worker-direct-command',
+                      rows: selectedWorkerLauncherTarget.shell === "powershell" ? 9 : 8,
+                      readOnly: true,
+                      value: workerDirectCommand,
+                    }}
+                  />
+                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                    <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.assetUrl} target='_blank' rel='noreferrer'>
+                      Download binary
+                    </a>
+                    <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.checksumUrl} target='_blank' rel='noreferrer'>
+                      Download checksum
+                    </a>
+                  </div>
+                  <p className='simple-voter-note'>
+                    State is kept in <code>.worker-state</code> beside the binary by default. Delete that folder to reset local proxy state, or override <code>WORKER_STATE_DIR</code>.
+                  </p>
+                </section>
+
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Available audit proxies</h4>
                   {availableWorkerStatuses.length === 0 ? (
@@ -5009,13 +5192,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <ul className='simple-voter-list simple-delegate-agent-list'>
                       {availableWorkerStatuses.map((snapshot) => (
                         <li key={`${snapshot.workerNpub}:${snapshot.heartbeatAt}`} className='simple-voter-list-item'>
-                          <button
-                            type='button'
+                          <UiButton
+                            icon='key'
                             className='simple-voter-secondary'
-                            onClick={() => selectAvailableWorkerStatus(snapshot)}
+                            onPress={() => selectAvailableWorkerStatus(snapshot)}
                           >
                             {deriveActorDisplayId(snapshot.workerNpub)} · {snapshot.state} · {new Date(snapshot.heartbeatAt).toLocaleTimeString()}
-                          </button>
+                          </UiButton>
                         </li>
                       ))}
                     </ul>
@@ -5024,54 +5207,60 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Setup</h4>
-                  <label className='simple-voter-label' htmlFor='delegated-worker-npub'>Audit proxy npub</label>
-                  <input
-                    id='delegated-worker-npub'
-                    className='simple-voter-input'
-                    placeholder='npub1...'
-                    value={delegatedWorkerNpub}
-                    onChange={(event) => {
-                      const nextWorkerNpub = event.target.value;
-                      setDelegatedWorkerNpub(nextWorkerNpub);
-                      if (normaliseWorkerNpub(nextWorkerNpub) !== normaliseWorkerNpub(generatedWorkerNpub)) {
-                        setGeneratedWorkerNsec("");
-                        setGeneratedWorkerNpub("");
-                      }
+                  <UiTextField
+                    label='Audit proxy npub'
+                    inputClassName='simple-voter-input'
+                    inputProps={{
+                      id: 'delegated-worker-npub',
+                      placeholder: 'npub1...',
+                      value: delegatedWorkerNpub,
+                      onChange: (event) => {
+                        const nextWorkerNpub = event.target.value;
+                        setDelegatedWorkerNpub(nextWorkerNpub);
+                        if (normaliseWorkerNpub(nextWorkerNpub) !== normaliseWorkerNpub(generatedWorkerNpub)) {
+                          setGeneratedWorkerNsec("");
+                          setGeneratedWorkerNpub("");
+                        }
+                      },
                     }}
                   />
                   <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                    <button type='button' className='simple-voter-secondary' onClick={generateWorkerCredentials}>
+                    <UiButton icon='key' className='simple-voter-secondary' onPress={generateWorkerCredentials}>
                       Generate new account
-                    </button>
+                    </UiButton>
                   </div>
                   {generatedWorkerNsec ? (
                     <div className='simple-voter-field-stack'>
-                      <label className='simple-voter-label' htmlFor='generated-worker-nsec'>Generated audit proxy nsec (store securely)</label>
-                      <textarea
-                        id='generated-worker-nsec'
-                        className='simple-voter-input'
-                        rows={2}
-                        readOnly
-                        value={generatedWorkerNsec}
+                      <UiTextArea
+                        label='Generated audit proxy nsec (store securely)'
+                        textAreaClassName='simple-voter-input'
+                        textAreaProps={{
+                          id: 'generated-worker-nsec',
+                          rows: 2,
+                          readOnly: true,
+                          value: generatedWorkerNsec,
+                        }}
                       />
                     </div>
                   ) : null}
-                  <label className='simple-voter-label' htmlFor='worker-startup-command'>Quick start command</label>
-                  <textarea
-                    id='worker-startup-command'
-                    className='simple-voter-input simple-delegate-command'
-                    rows={4}
-                    readOnly
-                    value={workerStartupCommand}
+                  <UiTextArea
+                    label='Quick start command'
+                    textAreaClassName='simple-voter-input simple-delegate-command'
+                    textAreaProps={{
+                      id: 'worker-startup-command',
+                      rows: 4,
+                      readOnly: true,
+                      value: workerStartupCommand,
+                    }}
                   />
-                  <button
-                    type='button'
+                  <UiButton
+                    icon={isCopyLabelActive("worker-quick-start") ? "check" : "copy"}
                     className='simple-voter-secondary'
-                    onClick={() => void copyWorkerCommand(workerStartupCommand, "worker-quick-start")}
-                    disabled={!coordinatorNpub.trim()}
+                    onPress={() => void copyWorkerCommand(workerStartupCommand, "worker-quick-start")}
+                    isDisabled={!coordinatorNpub.trim()}
                   >
                     {isCopyLabelActive("worker-quick-start") ? "Copied" : "Copy quick start command"}
-                  </button>
+                  </UiButton>
                   <a className='simple-voter-secondary simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
                     Audit proxy details
                   </a>
@@ -5155,55 +5344,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 </section>
 
                 <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Helper download and launch command</h4>
-                  <p className='simple-voter-note'>
-                    The generated helper scripts now abort if the downloaded audit proxy binary reports a version lower than <code>{WORKER_MINIMUM_VERSION}</code>.
-                    If you see this, download a fresh release from{" "}
-                    <a
-                      href={WORKER_RELEASE_DOWNLOAD_URL}
-                      target='_blank'
-                      rel='noreferrer'
-                    >
-                      {WORKER_RELEASE_DOWNLOAD_URL}
-                    </a>{" "}
-                    and rerun. The pasted direct command returns to your shell on setup or version errors instead of closing the terminal session.
-                  </p>
-                  <label className='simple-voter-label' htmlFor='worker-download-target'>Platform</label>
-                      <select
-                        id='worker-download-target'
-                        className='simple-voter-input'
-                        value={selectedWorkerDownloadTarget}
-                        onChange={(event) => setSelectedWorkerDownloadTarget(event.target.value as WorkerLauncherTargetKey)}
-                      >
-                        {WORKER_LAUNCHER_TARGET_OPTIONS.map((option) => (
-                          <option key={option.key} value={option.key}>{option.label}</option>
-                        ))}
-                      </select>
-                      <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                        <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.assetUrl} target='_blank' rel='noreferrer'>
-                          Download binary
-                        </a>
-                        <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.checksumUrl} target='_blank' rel='noreferrer'>
-                          Download checksum
-                        </a>
-                        <button type='button' className='simple-voter-secondary' onClick={() => void copyWorkerCommand(workerDirectCommand, "worker-direct-command")}>
-                          {isCopyLabelActive("worker-direct-command") ? "Copied" : "Copy command"}
-                        </button>
-                      </div>
-                      <label className='simple-voter-label' htmlFor='worker-direct-command'>Direct command-line launch</label>
-                      <textarea
-                        id='worker-direct-command'
-                        className='simple-voter-input simple-delegate-command'
-                        rows={selectedWorkerLauncherTarget.shell === "powershell" ? 9 : 8}
-                        readOnly
-                        value={workerDirectCommand}
-                      />
-                      <p className='simple-voter-note'>
-                        Direct launch defaults proxy state to <code>.worker-state</code> beside the binary and keeps the proxy running for later sessions. Delete that folder to reset local proxy state, or override <code>WORKER_STATE_DIR</code>.
-                      </p>
-                </section>
-
-                <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Audit proxy status</h4>
                   <div className='simple-delegate-status-overview'>
                     <span>Status overview</span>
@@ -5224,15 +5364,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 <section className={`simple-delegate-section simple-collapsible-section${workerMoreOptionsCollapsed ? " is-collapsed" : ""}`}>
                   <div className='simple-collapsible-header'>
                     <h4 className='simple-delegate-title simple-collapsible-title'>More options</h4>
-                    <button
-                      type='button'
+                    <UiButton
+                      icon={workerMoreOptionsCollapsed ? "chevronRight" : "chevronDown"}
                       className='simple-collapsible-toggle'
                       aria-expanded={!workerMoreOptionsCollapsed}
                       aria-controls='worker-more-options'
-                      onClick={() => setWorkerMoreOptionsCollapsed((current) => !current)}
+                      onPress={() => setWorkerMoreOptionsCollapsed((current) => !current)}
                     >
                       {workerMoreOptionsCollapsed ? "Show" : "Hide"}
-                    </button>
+                    </UiButton>
                   </div>
                   <p className='simple-voter-note'>
                     Delegation defaults to all supported audit proxy responsibilities. Open this section only if you need to narrow capabilities, override relays, or set an expiry.
@@ -5241,89 +5381,79 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <div className='simple-collapsible-body-inner'>
                       <section className='simple-delegate-section'>
                         <h4 className='simple-delegate-title'>Control relays</h4>
-                        <textarea
-                          id='delegated-worker-relays'
-                          className='simple-voter-input'
-                          rows={2}
-                          placeholder={DEFAULT_WORKER_CONTROL_RELAYS.join(", ")}
-                          value={delegatedWorkerControlRelays}
-                          onChange={(event) => setDelegatedWorkerControlRelays(event.target.value)}
+                        <UiTextArea
+                          textAreaClassName='simple-voter-input'
+                          textAreaProps={{
+                            id: 'delegated-worker-relays',
+                            rows: 2,
+                            placeholder: DEFAULT_WORKER_CONTROL_RELAYS.join(", "),
+                            value: delegatedWorkerControlRelays,
+                            onChange: (event) => setDelegatedWorkerControlRelays(event.target.value),
+                          }}
                         />
                         <p className='simple-voter-note'>Leave blank to use the default client relay set.</p>
                       </section>
 
                       <section className='simple-delegate-section'>
                         <h4 className='simple-delegate-title'>Set delegation expiry</h4>
-                        <label className='simple-voter-note' htmlFor='delegated-worker-expiry-enabled'>
-                          <input
-                            id='delegated-worker-expiry-enabled'
-                            type='checkbox'
-                            checked={delegatedWorkerExpiryEnabled}
-                            onChange={(event) => {
-                              const enabled = event.target.checked;
+                        <UiSwitch
+                          className={`simple-questionnaire-required-toggle${delegatedWorkerExpiryEnabled ? " is-on" : ""}`}
+                          label='Enable expiry'
+                          isSelected={delegatedWorkerExpiryEnabled}
+                          onChange={(enabled) => {
                               setDelegatedWorkerExpiryEnabled(enabled);
                               if (!enabled) {
                                 setDelegatedWorkerExpiryMinutes("");
                               } else if (!delegatedWorkerExpiryMinutes.trim()) {
                                 setDelegatedWorkerExpiryMinutes("120");
                               }
-                            }}
-                          />
-                          Enable expiry
-                        </label>
-                        <label className='simple-voter-label' htmlFor='delegated-worker-expiry'>Expiry (minutes, optional)</label>
-                        <input
-                          id='delegated-worker-expiry'
-                          className='simple-voter-input'
-                          disabled={!delegatedWorkerExpiryEnabled}
-                          value={delegatedWorkerExpiryMinutes}
-                          onChange={(event) => setDelegatedWorkerExpiryMinutes(event.target.value)}
+                          }}
+                        />
+                        <UiTextField
+                          label='Expiry (minutes, optional)'
+                          inputClassName='simple-voter-input'
+                          isDisabled={!delegatedWorkerExpiryEnabled}
+                          inputProps={{
+                            id: 'delegated-worker-expiry',
+                            value: delegatedWorkerExpiryMinutes,
+                            onChange: (event) => setDelegatedWorkerExpiryMinutes(event.target.value),
+                          }}
                         />
                       </section>
 
                       <section className='simple-delegate-section'>
                         <h4 className='simple-delegate-title'>Capabilities</h4>
                         <div className='simple-delegate-capability-list'>
-                          <label className='simple-delegate-capability-row'>
-                            <span>Issue blind tokens</span>
-                            <input
-                              type='checkbox'
-                              checked={delegatedWorkerCapabilities.includes("issue_blind_tokens")}
-                              onChange={() => toggleWorkerCapability("issue_blind_tokens")}
-                            />
-                          </label>
-                          <label className='simple-delegate-capability-row'>
-                            <span>Verify public submissions</span>
-                            <input
-                              type='checkbox'
-                              checked={delegatedWorkerCapabilities.includes("verify_public_submissions")}
-                              onChange={() => toggleWorkerCapability("verify_public_submissions")}
-                            />
-                          </label>
-                          <label className='simple-delegate-capability-row'>
-                            <span>Publish submission decisions</span>
-                            <input
-                              type='checkbox'
-                              checked={delegatedWorkerCapabilities.includes("publish_submission_decisions")}
-                              onChange={() => toggleWorkerCapability("publish_submission_decisions")}
-                            />
-                          </label>
-                          <label className='simple-delegate-capability-row'>
-                            <span>Close questionnaire after all valid responses</span>
-                            <input
-                              type='checkbox'
-                              checked={delegatedWorkerCapabilities.includes("close_questionnaire")}
-                              onChange={() => toggleWorkerCapability("close_questionnaire")}
-                            />
-                          </label>
-                          <label className='simple-delegate-capability-row'>
-                            <span>Publish result summary</span>
-                            <input
-                              type='checkbox'
-                              checked={delegatedWorkerCapabilities.includes("publish_result_summary")}
-                              onChange={() => toggleWorkerCapability("publish_result_summary")}
-                            />
-                          </label>
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Issue blind tokens'
+                            isSelected={delegatedWorkerCapabilities.includes("issue_blind_tokens")}
+                            onChange={() => toggleWorkerCapability("issue_blind_tokens")}
+                          />
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Verify public submissions'
+                            isSelected={delegatedWorkerCapabilities.includes("verify_public_submissions")}
+                            onChange={() => toggleWorkerCapability("verify_public_submissions")}
+                          />
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Publish submission decisions'
+                            isSelected={delegatedWorkerCapabilities.includes("publish_submission_decisions")}
+                            onChange={() => toggleWorkerCapability("publish_submission_decisions")}
+                          />
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Close questionnaire after all valid responses'
+                            isSelected={delegatedWorkerCapabilities.includes("close_questionnaire")}
+                            onChange={() => toggleWorkerCapability("close_questionnaire")}
+                          />
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Publish result summary'
+                            isSelected={delegatedWorkerCapabilities.includes("publish_result_summary")}
+                            onChange={() => toggleWorkerCapability("publish_result_summary")}
+                          />
                         </div>
                       </section>
                     </div>
@@ -5331,17 +5461,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 </section>
 
                 <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                  <button type='button' className='simple-voter-primary simple-voter-primary-wide' onClick={() => void delegateToWorker()}>
+                  <UiButton icon='check' className='simple-voter-primary simple-voter-primary-wide' onPress={() => void delegateToWorker()}>
                     Confirm configuration
-                  </button>
-                  <button
-                    type='button'
+                  </UiButton>
+                  <UiButton
+                    icon='delete'
                     className='simple-voter-secondary'
-                    onClick={() => void revokeWorkerDelegation()}
-                    disabled={!activeWorkerDelegation}
+                    onPress={() => void revokeWorkerDelegation()}
+                    isDisabled={!activeWorkerDelegation}
                   >
                     Revoke delegation
-                  </button>
+                  </UiButton>
                 </div>
                   </>
                 ) : null}
@@ -5350,6 +5480,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           </div>
         </div>
       </section>
+      {publishConfirmDialog}
     </>
   );
 }

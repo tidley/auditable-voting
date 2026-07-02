@@ -19,13 +19,15 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://nos.lol",
   "wss://relay.nostr.info",
   "wss://relay.nos.social",
+  "wss://relay.damus.io",
+  "wss://relay.primal.net",
 ];
 
 export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
 export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
-const SIMPLE_PUBLIC_READ_RELAYS_MAX = 5;
+const SIMPLE_PUBLIC_READ_RELAYS_MAX = 6;
 
 // Use regular custom event kinds so relays preserve the full transcript instead of replacing by author/kind.
 export const SIMPLE_LIVE_VOTE_KIND = 6430;

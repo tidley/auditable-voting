@@ -1,5 +1,6 @@
 import {
   questionBallotScopeKey,
+  type QuestionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
   type QuestionnaireDefinitionReference,
@@ -22,6 +23,7 @@ export interface BallotScope {
   slotId?: string | null;
   slotIndex?: number | null;
   version?: number | null;
+  credentialIndex?: number | null;
 }
 
 export type ElectionState = "draft" | "published" | "open" | "closed" | "counted";
@@ -72,6 +74,7 @@ export interface WhitelistEntry {
   electionId: ElectionId;
   invitedNpub: Npub;
   addedAt: IsoTime;
+  credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
   inviteSentAt?: IsoTime | null;
   inviteEventId?: EventId | null;
   inviteCodeHash?: Hex | null;
@@ -105,6 +108,7 @@ export interface ElectionInviteMessage {
   voteUrl: string;
   invitedNpub: Npub;
   coordinatorNpub: Npub;
+  credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
   definitionReference?: QuestionnaireDefinitionReference | null;
   /**
    * Legacy invites embedded enough round data for offline bootstrap. New invites carry
@@ -393,6 +397,14 @@ function sanitiseBallotScope(scope: BallotScope | null | undefined): BallotScope
   } else if (scope.version === null) {
     next.version = null;
   }
+  if (typeof scope.credentialIndex === "number" && Number.isFinite(scope.credentialIndex)) {
+    const credentialIndex = Math.max(1, Math.floor(scope.credentialIndex));
+    if (credentialIndex > 1) {
+      next.credentialIndex = credentialIndex;
+    }
+  } else if (scope.credentialIndex === null) {
+    next.credentialIndex = null;
+  }
   return Object.keys(next).length > 0 ? next : null;
 }
 
@@ -506,17 +518,23 @@ function ballotScopeKey(scope: BallotScope | null | undefined) {
   const slotId = scope?.slotId?.trim() ?? "";
   const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 0;
   const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
-  if (!questionId && !slotId && !version && !slotIndex) {
+  const credentialIndex = Number.isFinite(scope?.credentialIndex) ? Math.max(1, Math.floor(scope?.credentialIndex as number)) : 1;
+  const credentialSuffix = credentialIndex > 1 ? `:c${credentialIndex}` : "";
+  if (!questionId && !slotId && !version && !slotIndex && credentialIndex <= 1) {
     return "__questionnaire__";
   }
   if (slotIndex > 0) {
-    return `slot:${slotIndex}:v${version || 1}`;
+    return `slot:${slotIndex}:v${version || 1}${credentialSuffix}`;
   }
-  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version || 1}`;
+  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version || 1}${credentialSuffix}`;
 }
 
 function sameBallotScope(left: BallotScope | null | undefined, right: BallotScope | null | undefined) {
   return ballotScopeKey(left) === ballotScopeKey(right);
+}
+
+function ballotScopeBaseKey(scope: BallotScope | null | undefined) {
+  return ballotScopeKey(scope ? { ...scope, credentialIndex: null } : scope);
 }
 
 function findIssuanceByNpubAndScope(
@@ -573,6 +591,15 @@ function submissionCredentialBundle(submission: BallotSubmission): BallotCredent
 }
 
 function ballotSubmissionQuestionKeys(submission: BallotSubmission): string[] {
+  const scopedProofs = submissionCredentialBundle(submission).filter((proof) => proof.ballotScope);
+  if (scopedProofs.length > 0) {
+    return [...new Set([
+      ...submission.payload.responses
+        .map((entry) => entry.questionId.trim())
+        .filter(Boolean),
+      ...scopedProofs.map((proof) => ballotScopeKey(proof.ballotScope)),
+    ])];
+  }
   if (!Array.isArray(submission.credentialBundle) || submission.credentialBundle.length === 0) {
     return [];
   }
@@ -583,6 +610,14 @@ function ballotSubmissionQuestionKeys(submission: BallotSubmission): string[] {
   )];
 }
 
+function ballotSubmissionDuplicateKeys(submission: BallotSubmission): string[] {
+  const scopedProofs = submissionCredentialBundle(submission).filter((proof) => proof.ballotScope);
+  if (scopedProofs.length > 0) {
+    return [...new Set(scopedProofs.map((proof) => ballotScopeKey(proof.ballotScope)))];
+  }
+  return ballotSubmissionQuestionKeys(submission);
+}
+
 function answeredQuestionsMatchCredentialScopes(
   definition: QuestionnaireDefinition | null | undefined,
   submission: BallotSubmission,
@@ -591,7 +626,7 @@ function answeredQuestionsMatchCredentialScopes(
     return true;
   }
   const proofScopeKeys = new Set(
-    submissionCredentialBundle(submission).map((proof) => ballotScopeKey(proof.ballotScope)),
+    submissionCredentialBundle(submission).map((proof) => ballotScopeBaseKey(proof.ballotScope)),
   );
   for (const answer of submission.payload.responses) {
     const questionIndex = definition.questions.findIndex((question) => question.questionId === answer.questionId);
@@ -844,10 +879,11 @@ export function reduceVoterEvent(
       return reduceVoterError(state, "credential_not_ready");
     }
     const questionKeys = ballotSubmissionQuestionKeys(event.submission);
-    const existingAcceptedQuestionDecision = questionKeys.some((questionKey) => (
+    const duplicateKeys = ballotSubmissionDuplicateKeys(event.submission);
+    const existingAcceptedQuestionDecision = duplicateKeys.some((questionKey) => (
       next.submissionDecisions?.[questionKey]?.accepted === true
     ));
-    if ((questionKeys.length === 0 && next.submissionAccepted === true) || existingAcceptedQuestionDecision) {
+    if ((duplicateKeys.length === 0 && next.submissionAccepted === true) || existingAcceptedQuestionDecision) {
       return reduceVoterError(state, "already_submitted");
     }
     if (!validateResponsesSchema(event.submission.payload.responses)) {

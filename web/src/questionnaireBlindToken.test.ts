@@ -87,4 +87,43 @@ describe("questionnaireBlindToken", () => {
     expect(changedVersion).not.toBe(first);
     expect(unscoped).not.toBe(first);
   });
+
+  it("separates proxy credential indexes in signed messages and nullifiers", () => {
+    const firstScope = {
+      questionId: "q1",
+      slotId: "director_1",
+      slotIndex: 1,
+      version: 1,
+    };
+    const secondScope = {
+      ...firstScope,
+      credentialIndex: 2,
+    };
+    const firstMessage = buildQuestionnaireBlindTokenSignedMessage({
+      questionnaireId: "agm-1",
+      tokenSecretCommitment: "commitment-a",
+      ballotScope: firstScope,
+    });
+    const secondMessage = buildQuestionnaireBlindTokenSignedMessage({
+      questionnaireId: "agm-1",
+      tokenSecretCommitment: "commitment-a",
+      ballotScope: secondScope,
+    });
+
+    expect(firstMessage).not.toBe(secondMessage);
+    expect(JSON.parse(secondMessage).ballot_scope).toMatchObject({
+      credential_index: 2,
+      question_id: "q1",
+      slot_id: "director_1",
+    });
+    expect(deriveQuestionnaireTokenNullifier({
+      questionnaireId: "agm-1",
+      tokenSecret: "secret-a",
+      ballotScope: firstScope,
+    })).not.toBe(deriveQuestionnaireTokenNullifier({
+      questionnaireId: "agm-1",
+      tokenSecret: "secret-a",
+      ballotScope: secondScope,
+    }));
+  });
 });

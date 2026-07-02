@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import SimpleCollapsibleSection from './SimpleCollapsibleSection';
+import { UiButton, UiTextField } from './ui/DesignLayer';
 
 export default function SimpleIdentityPanel({
   npub,
@@ -114,10 +115,11 @@ export default function SimpleIdentityPanel({
       <div className='simple-identity-grid'>
         <div className='simple-identity-qr-wrap'>
           {qrSrc ? (
-            <button
-              type='button'
+            <UiButton
+              icon='qr'
+              iconOnly
               className='simple-identity-qr-button'
-              onClick={() => setQrExpanded(true)}
+              onPress={() => setQrExpanded(true)}
               aria-label='Expand npub QR code'
             >
               <img
@@ -125,7 +127,7 @@ export default function SimpleIdentityPanel({
                 src={qrSrc}
                 alt='QR code for npub'
               />
-            </button>
+            </UiButton>
           ) : (
             <div
               className='simple-identity-qr simple-identity-qr-fallback'
@@ -137,13 +139,13 @@ export default function SimpleIdentityPanel({
           <div className='simple-identity-field'>
             <div className='simple-identity-label'>Public key</div>
             <code className='simple-identity-code'>{npub}</code>
-            <button
-              type='button'
+            <UiButton
+              icon={copied ? 'check' : 'copy'}
               className='simple-voter-secondary'
-              onClick={copyNpub}
+              onPress={copyNpub}
             >
               {copied ? 'Copied' : 'Copy identity'}
-            </button>
+            </UiButton>
           </div>
           <div className='simple-identity-field'>
             <div className='simple-identity-label'>Private key</div>
@@ -152,13 +154,13 @@ export default function SimpleIdentityPanel({
                 <code className='simple-identity-code'>
                   {showPrivateKey ? nsec : 'Hidden'}
                 </code>
-                <button
-                  type='button'
+                <UiButton
+                  icon={showPrivateKey ? 'view' : 'key'}
                   className='simple-voter-secondary'
-                  onClick={() => setShowPrivateKey((value) => !value)}
+                  onPress={() => setShowPrivateKey((value) => !value)}
                 >
                   {showPrivateKey ? 'Conceal' : 'Click to reveal'}
-                </button>
+                </UiButton>
               </div>
             ) : (
               <p className='simple-voter-note'>Managed by external signer.</p>
@@ -168,29 +170,31 @@ export default function SimpleIdentityPanel({
             <div className='simple-identity-restore'>
               <div className='simple-identity-label'>Restore from nsec</div>
               <div className='simple-voter-inline-field'>
-                <input
-                  className='simple-voter-input simple-voter-input-inline'
-                  value={restoreNsec}
-                  onChange={(event) => setRestoreNsec(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      onRestoreNsec(restoreNsec);
-                    }
+                <UiTextField
+                  inputClassName='simple-voter-input simple-voter-input-inline'
+                  inputProps={{
+                    value: restoreNsec,
+                    onChange: (event) => setRestoreNsec(event.target.value),
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        onRestoreNsec(restoreNsec);
+                      }
+                    },
+                    placeholder: 'nsec1...',
+                    spellCheck: false,
+                    autoCapitalize: 'off',
+                    autoCorrect: 'off',
                   }}
-                  placeholder='nsec1...'
-                  spellCheck={false}
-                  autoCapitalize='off'
-                  autoCorrect='off'
                 />
-                <button
-                  type='button'
+                <UiButton
+                  icon='upload'
                   className='simple-voter-secondary'
-                  onClick={() => onRestoreNsec(restoreNsec)}
-                  disabled={!restoreNsec.trim()}
+                  onPress={() => onRestoreNsec(restoreNsec)}
+                  isDisabled={!restoreNsec.trim()}
                 >
                   Restore identity
-                </button>
+                </UiButton>
               </div>
               {restoreMessage ? (
                 <p className='simple-voter-note'>{restoreMessage}</p>
@@ -200,38 +204,40 @@ export default function SimpleIdentityPanel({
           {onLogin ? (
             <div className='simple-identity-restore'>
               <div className='simple-identity-label'>Login</div>
-              <button
-                type='button'
+              <UiButton
+                icon='login'
                 className='simple-voter-secondary'
-                onClick={onLogin}
+                onPress={onLogin}
               >
                 Login
-              </button>
+              </UiButton>
             </div>
           ) : null}
           {onDownloadBackup || onRestoreBackupFile ? (
             <div className='simple-identity-restore'>
               <div className='simple-identity-label'>Backup</div>
-              <input
-                className='simple-voter-input'
-                value={backupPassphrase}
-                onChange={(event) => setBackupPassphrase(event.target.value)}
-                placeholder={backupPassphraseRequired ? 'Backup passphrase' : 'Optional backup passphrase'}
-                type='password'
-                spellCheck={false}
-                autoCapitalize='off'
-                autoCorrect='off'
+              <UiTextField
+                inputClassName='simple-voter-input'
+                inputProps={{
+                  value: backupPassphrase,
+                  onChange: (event) => setBackupPassphrase(event.target.value),
+                  placeholder: backupPassphraseRequired ? 'Backup passphrase' : 'Optional backup passphrase',
+                  type: 'password',
+                  spellCheck: false,
+                  autoCapitalize: 'off',
+                  autoCorrect: 'off',
+                }}
               />
               <div className='simple-voter-inline-field'>
                 {onDownloadBackup ? (
-                  <button
-                    type='button'
+                  <UiButton
+                    icon='download'
                     className='simple-voter-secondary'
-                    onClick={() => void onDownloadBackup(backupPassphrase)}
-                    disabled={backupPassphraseRequired && !backupPassphrase.trim()}
+                    onPress={() => void onDownloadBackup(backupPassphrase)}
+                    isDisabled={backupPassphraseRequired && !backupPassphrase.trim()}
                   >
                     {backupPassphraseRequired ? 'Download full backup' : 'Download backup'}
-                  </button>
+                  </UiButton>
                 ) : null}
                 {onRestoreBackupFile ? (
                   <label className='simple-voter-secondary simple-voter-file-button'>
@@ -259,39 +265,41 @@ export default function SimpleIdentityPanel({
           {onProtectLocalState || onDisableLocalStateProtection ? (
             <div className='simple-identity-restore'>
               <div className='simple-identity-label'>Local state</div>
-              <input
-                className='simple-voter-input'
-                value={backupPassphrase}
-                onChange={(event) => setBackupPassphrase(event.target.value)}
-                placeholder='Passphrase to lock/unlock local state'
-                type='password'
-                spellCheck={false}
-                autoCapitalize='off'
-                autoCorrect='off'
+              <UiTextField
+                inputClassName='simple-voter-input'
+                inputProps={{
+                  value: backupPassphrase,
+                  onChange: (event) => setBackupPassphrase(event.target.value),
+                  placeholder: 'Passphrase to lock/unlock local state',
+                  type: 'password',
+                  spellCheck: false,
+                  autoCapitalize: 'off',
+                  autoCorrect: 'off',
+                }}
               />
               <div className='simple-voter-inline-field'>
                 {onProtectLocalState ? (
-                  <button
-                    type='button'
+                  <UiButton
+                    icon='shield'
                     className='simple-voter-secondary'
-                    onClick={() => void onProtectLocalState(backupPassphrase)}
-                    disabled={!backupPassphrase.trim()}
+                    onPress={() => void onProtectLocalState(backupPassphrase)}
+                    isDisabled={!backupPassphrase.trim()}
                   >
                     {localStateProtected
                       ? 'Update passphrase'
                       : 'Protect local state'}
-                  </button>
+                  </UiButton>
                 ) : null}
                 {onDisableLocalStateProtection ? (
-                  <button
-                    type='button'
+                  <UiButton
+                    icon='delete'
                     className='simple-voter-secondary'
-                    onClick={() =>
+                    onPress={() =>
                       void onDisableLocalStateProtection(backupPassphrase)
                     }
                   >
                     Remove protection
-                  </button>
+                  </UiButton>
                 ) : null}
               </div>
               {localStateMessage ? (
@@ -309,14 +317,14 @@ export default function SimpleIdentityPanel({
           aria-label='Expanded npub QR code'
           onClick={() => setQrExpanded(false)}
         >
-          <button
-            type='button'
+          <UiButton
+            icon='cancel'
             className='simple-identity-qr-overlay-close'
-            onClick={() => setQrExpanded(false)}
+            onPress={() => setQrExpanded(false)}
             aria-label='Close QR preview'
           >
             Close
-          </button>
+          </UiButton>
           <div
             className='simple-identity-qr-overlay-card'
             onClick={(event) => event.stopPropagation()}

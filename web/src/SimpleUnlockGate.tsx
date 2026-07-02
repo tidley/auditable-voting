@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { UiButton, UiTextField } from "./ui/DesignLayer";
 
 export default function SimpleUnlockGate({
   roleLabel,
@@ -20,33 +21,35 @@ export default function SimpleUnlockGate({
         <p className="simple-voter-question">
           Enter the passphrase to unlock the encrypted local state on this device.
         </p>
-        <input
-          className="simple-voter-input"
-          type="password"
-          value={passphrase}
-          onChange={(event) => setPassphrase(event.target.value)}
-          placeholder="Passphrase"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
+        <UiTextField
+          inputClassName="simple-voter-input"
+          inputProps={{
+            type: "password",
+            value: passphrase,
+            onChange: (event) => setPassphrase(event.target.value),
+            placeholder: "Passphrase",
+            autoCapitalize: "off",
+            autoCorrect: "off",
+            spellCheck: false,
+          }}
         />
         <div className="simple-voter-inline-field">
-          <button
-            type="button"
+          <UiButton
+            icon="key"
             className="simple-voter-primary"
-            onClick={() => void onUnlock(passphrase)}
-            disabled={!passphrase.trim()}
+            onPress={() => void onUnlock(passphrase)}
+            isDisabled={!passphrase.trim()}
           >
             Unlock
-          </button>
+          </UiButton>
           {onReset ? (
-            <button
-              type="button"
+            <UiButton
+              icon="reset"
               className="simple-voter-secondary"
-              onClick={() => void onReset()}
+              onPress={() => void onReset()}
             >
               Reset local state
-            </button>
+            </UiButton>
           ) : null}
         </div>
         {status ? <p className="simple-voter-note">{status}</p> : null}

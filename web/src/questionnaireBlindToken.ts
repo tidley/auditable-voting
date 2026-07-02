@@ -11,6 +11,7 @@ export type QuestionnaireBlindTokenScope = {
   slotId?: string | null;
   slotIndex?: number | null;
   version?: number | null;
+  credentialIndex?: number | null;
 };
 
 type CanonicalValue =
@@ -98,7 +99,10 @@ export function normaliseBlindTokenScope(scope: QuestionnaireBlindTokenScope | n
   const version = Number.isFinite(scope.version)
     ? Math.max(1, Math.floor(scope.version as number))
     : null;
-  if (!questionId && !slotId && !slotIndex && !version) {
+  const credentialIndex = Number.isFinite(scope.credentialIndex)
+    ? Math.max(1, Math.floor(scope.credentialIndex as number))
+    : null;
+  if (!questionId && !slotId && !slotIndex && !version && (!credentialIndex || credentialIndex <= 1)) {
     return null;
   }
   return {
@@ -106,6 +110,7 @@ export function normaliseBlindTokenScope(scope: QuestionnaireBlindTokenScope | n
     ...(slotId ? { slot_id: slotId } : {}),
     ...(slotIndex ? { slot_index: slotIndex } : {}),
     ...(version ? { version } : {}),
+    ...(credentialIndex && credentialIndex > 1 ? { credential_index: credentialIndex } : {}),
   };
 }
 

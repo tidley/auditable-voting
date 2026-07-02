@@ -46,7 +46,7 @@ import {
   type WorkerDelegationRevocation,
 } from "./questionnaireWorkerDelegation";
 
-const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 5;
+const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 6;
 
 type QuestionnaireBlindResponseEntry = {
   event: NostrEvent;

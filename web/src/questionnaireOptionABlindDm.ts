@@ -28,7 +28,7 @@ import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 
-const OPTION_A_BLIND_DM_RELAYS_MAX = 3;
+const OPTION_A_BLIND_DM_RELAYS_MAX = 4;
 const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 4;
 const OPTION_A_BLIND_DM_READ_RELAYS_FALLBACK_MAX = 5;
 const OPTION_A_BLIND_DM_HINT_RELAYS_MAX = 8;
@@ -256,6 +256,7 @@ export type WorkerElectionConfigSnapshot = {
   workerNpub: string;
   expectedInviteeCount?: number;
   whitelistNpubs?: string[];
+  proxyVoterNpubs?: string[];
   bearerInviteCodes?: BearerInviteCodeEntry[];
   eligibilityRequired?: boolean;
   blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
@@ -1283,6 +1284,12 @@ function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConf
     if (
       snapshot.whitelistNpubs !== undefined
       && (!Array.isArray(snapshot.whitelistNpubs) || snapshot.whitelistNpubs.some((entry) => typeof entry !== "string"))
+    ) {
+      return null;
+    }
+    if (
+      snapshot.proxyVoterNpubs !== undefined
+      && (!Array.isArray(snapshot.proxyVoterNpubs) || snapshot.proxyVoterNpubs.some((entry) => typeof entry !== "string"))
     ) {
       return null;
     }

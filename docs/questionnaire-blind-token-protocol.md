@@ -45,6 +45,7 @@ Shape (camelCase in the shipped client):
 - `ballotCredentialMode?: "questionnaire" | "per_question"`
 - `questions[]` (`yes_no`, `multiple_choice`, `rank`, `free_text`; free text may set `encryptResponses: true`)
 - each question may carry `ballotSlot: { slotId, slotIndex, version }` when `ballotCredentialMode` is `per_question`; questions with the same `slotIndex` and `version` share one ballot credential
+- `credentialsPerVoter` may be present in legacy definitions, but current proxy voting is per voter: the organiser stores the allowance in the whitelist/invite metadata, sends `credentialsPerVoter: 2` only to that voter, and includes the proxy-voter npub list in worker config so other voters cannot receive a second credential
 
 Tags:
 
@@ -112,7 +113,7 @@ Blind-token admission object:
 - optional `tokenProofs[]` for scoped responses, each carrying `tokenCommitment`, `questionnaireId`, `signature`, `questionId?`, and `ballotScope?`; current per-question submissions carry one scoped entry per submitted ballot index
 - `answers` (public mode) or `encryptedPayload` + `payloadHash` (encrypted mode)
 
-`ballotScope` canonical fields are `questionId`, `slotId`, `slotIndex`, and `version`. The live scope key is `slotIndex + version`; `questionId` and `slotId` remain descriptive/canonical fields. The signed blind-token message includes the canonical scope when present:
+`ballotScope` canonical fields are `questionId`, `slotId`, `slotIndex`, `version`, and optional `credentialIndex`. The live scope key is `slotIndex + version + credentialIndex`; `questionId` and `slotId` remain descriptive/canonical fields. `credentialIndex` is omitted for the first credential and included as `credential_index` for proxy credential `2`. The signed blind-token message includes the canonical scope when present:
 
 - `questionnaire_id`
 - `response_mode = blind_token`
