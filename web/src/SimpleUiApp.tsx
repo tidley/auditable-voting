@@ -442,10 +442,14 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const [coordinatorDraft, setCoordinatorDraft] = useState("");
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
-  const linkedQuestionnaireId = useMemo(() => readLinkedQuestionnaireIdFromUrl(), []);
-  const autoRequestBallotFromUrl = useMemo(() => shouldAutoRequestBallotFromUrl(), []);
-  const linkedPrivateInviteCode = useMemo(() => readPrivateQuestionnaireInviteCodeFromUrl(), []);
-  const linkedCoordinatorNpub = useMemo(() => readLinkedCoordinatorNpubFromUrl(), []);
+  const initialLinkedQuestionnaireId = useMemo(() => readLinkedQuestionnaireIdFromUrl(), []);
+  const initialAutoRequestBallotFromUrl = useMemo(() => shouldAutoRequestBallotFromUrl(), []);
+  const initialLinkedPrivateInviteCode = useMemo(() => readPrivateQuestionnaireInviteCodeFromUrl(), []);
+  const initialLinkedCoordinatorNpub = useMemo(() => readLinkedCoordinatorNpubFromUrl(), []);
+  const [linkedQuestionnaireId, setLinkedQuestionnaireId] = useState(initialLinkedQuestionnaireId);
+  const [autoRequestBallotFromUrl, setAutoRequestBallotFromUrl] = useState(initialAutoRequestBallotFromUrl);
+  const [linkedPrivateInviteCode, setLinkedPrivateInviteCode] = useState(initialLinkedPrivateInviteCode);
+  const [linkedCoordinatorNpub, setLinkedCoordinatorNpub] = useState(initialLinkedCoordinatorNpub);
   const urlCoordinatorTargets = useMemo(() => sanitizeCoordinatorNpubs([linkedCoordinatorNpub]), [linkedCoordinatorNpub]);
   const shouldHydrateSavedManualCoordinators = useMemo(
     () => hasVoterInviteContextInUrl() && urlCoordinatorTargets.length === 0 && !linkedQuestionnaireId && !linkedPrivateInviteCode,
@@ -1603,7 +1607,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     setSubmitStatus(null);
   }, [selectedVotingId]);
 
-  function clearVoterSessionState(options?: { clearManualCoordinators?: boolean }) {
+  function clearVoterSessionState(options?: { clearManualCoordinators?: boolean; clearInviteContext?: boolean }) {
     if (options?.clearManualCoordinators ?? false) {
       setManualCoordinators([]);
       setCoordinatorDraft("");
@@ -1623,6 +1627,16 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     setDmAcknowledgements([]);
     setDiscoveredSessions([]);
     setKnownBlindKeys({});
+    if (options?.clearInviteContext ?? false) {
+      setLinkedQuestionnaireId("");
+      setAutoRequestBallotFromUrl(false);
+      setLinkedPrivateInviteCode("");
+      setLinkedCoordinatorNpub("");
+      setAnnouncedQuestionnaireIds([]);
+      setReadyAnnouncedQuestionnaireIds([]);
+      setQuestionnaireContext({ hasDefinition: false, state: null });
+      autoRequestBallotConsumedRef.current = false;
+    }
     setSelectedVotingId("");
     setActiveTab("configure");
     setShowVoteDetails(false);
@@ -1648,7 +1662,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     setVoterKeypair(nextKeypair);
     setIdentityStatus(null);
     setBackupStatus(null);
-    clearVoterSessionState({ clearManualCoordinators: true });
+    clearVoterSessionState({ clearManualCoordinators: true, clearInviteContext: true });
   }
 
   function signOutSignerSession() {

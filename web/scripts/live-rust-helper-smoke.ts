@@ -21,6 +21,7 @@ import {
 import {
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionAWorkerElectionConfigDmsWithNsec,
+  publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
   publishOptionAWorkerElectionConfigDm,
   type WorkerElectionConfigSnapshot,
@@ -46,10 +47,15 @@ import {
 import {
   fetchQuestionnaireActiveWorkerDelegationForCapability,
   fetchQuestionnaireBlindResponses,
+  fetchQuestionnaireSubmissionDecisions,
   evaluateQuestionnaireBlindAdmissions,
 } from "../src/questionnaireTransport";
 import { publishQuestionnaireBlindResponsePublic } from "../src/questionnaireResponsePublish";
-import { QUESTIONNAIRE_RESPONSE_BLIND_KIND, QUESTIONNAIRE_SUBMISSION_DECISION_KIND } from "../src/questionnaireResponsePublish";
+import {
+  parseQuestionnaireBlindResponseEvent,
+  QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+} from "../src/questionnaireResponsePublish";
 import { createWorkerDelegationCertificate, publishWorkerDelegationCertificate } from "../src/questionnaireWorkerDelegation";
 import { buildIssueBlindTokensWorkerRouting } from "../src/questionnaireWorkerRouting";
 import { getSharedNostrPool } from "../src/sharedNostrPool";
@@ -95,6 +101,11 @@ if (!globalThis.crypto) {
 function envInt(name: string, fallback: number) {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function envIntAllowZero(name: string, fallback: number) {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function sleep(ms: number) {
@@ -291,6 +302,7 @@ function buildDefinition(input: {
 function ballotScopeForQuestion(
   question: QuestionnaireDefinition["questions"][number],
   index: number,
+  credentialIndex = 1,
 ): BallotScope {
   return {
     questionId: question.questionId,
@@ -301,6 +313,7 @@ function ballotScopeForQuestion(
     version: Number.isFinite(question.ballotSlot?.version)
       ? Math.max(1, Math.floor(question.ballotSlot!.version))
       : 1,
+    ...(credentialIndex > 1 ? { credentialIndex } : {}),
   };
 }
 
@@ -326,13 +339,97 @@ function resolveWorkerBinary() {
   return path.resolve(process.cwd(), "..", "worker", "target", "debug", "auditable-voting-worker");
 }
 
-async function queryDecisionEvents(relays: string[], workerHex: string, limit = 100) {
+function scopedEligibleVoterIndexes(input: {
+  questionIndex: number;
+  baseQuestionCount: number;
+  voterCount: number;
+  restrictedQuestionGroupCount: number;
+  restrictedEligibleCount: number;
+}) {
+  if (input.questionIndex < input.baseQuestionCount || input.restrictedQuestionGroupCount <= 0) {
+    return Array.from({ length: input.voterCount }, (_, index) => index);
+  }
+  const groupIndex = input.questionIndex - input.baseQuestionCount;
+  const start = (groupIndex * input.restrictedEligibleCount) % input.voterCount;
+  return Array.from({ length: Math.min(input.restrictedEligibleCount, input.voterCount) }, (_, offset) => (
+    (start + offset) % input.voterCount
+  ));
+}
+
+function scopedCredentialIndexes(voterIndex: number, proxyVoterCount: number) {
+  return voterIndex < proxyVoterCount ? [1, 2] : [1];
+}
+
+async function queryDecisionEvents(input: {
+  relays: string[];
+  workerHex: string;
+  questionnaireId: string;
+  limit?: number;
+  readRelayLimit?: number;
+}) {
+  const limit = input.limit ?? 100;
   const pool = getSharedNostrPool();
-  return await withTimeout("submission decision relay query", pool.querySync(relays, {
-    authors: [workerHex],
+  const directEvents = await withTimeout("submission decision author relay query", pool.querySync(input.relays, {
+    authors: [input.workerHex],
     kinds: [QUESTIONNAIRE_SUBMISSION_DECISION_KIND],
+    "#q": [input.questionnaireId],
     limit,
-  }), 10_000);
+  }), 10_000).catch(() => [] as NostrEvent[]);
+  if (directEvents.length > 0) {
+    return directEvents;
+  }
+
+  const entries = await withTimeout(
+    "submission decision relay query",
+    fetchQuestionnaireSubmissionDecisions({
+      questionnaireId: input.questionnaireId,
+      relays: input.relays,
+      limit,
+      readRelayLimit: input.readRelayLimit,
+      maxPages: Math.max(1, Math.ceil(limit / 500) + 2),
+      timeBudgetMs: 20_000,
+    }),
+    25_000,
+  );
+  return [...new Map([...directEvents, ...entries
+    .filter((entry) => entry.event.pubkey === input.workerHex)
+    .map((entry) => entry.event)].map((event) => [event.id, event])).values()];
+}
+
+async function queryBlindResponseEntries(input: {
+  relays: string[];
+  questionnaireId: string;
+  limit?: number;
+  readRelayLimit?: number;
+}) {
+  const limit = input.limit ?? 200;
+  const pool = getSharedNostrPool();
+  const directEvents = await withTimeout("blind response q relay query", pool.querySync(input.relays, {
+    kinds: [QUESTIONNAIRE_RESPONSE_BLIND_KIND],
+    "#q": [input.questionnaireId],
+    limit,
+  }), 10_000).catch(() => [] as NostrEvent[]);
+  const directEntries = directEvents
+    .map((event) => ({ event, response: parseQuestionnaireBlindResponseEvent(event.content) }))
+    .filter((entry) => entry.response?.questionnaireId === input.questionnaireId)
+    .filter((entry): entry is NonNullable<typeof entry> & { response: NonNullable<typeof entry.response> } => Boolean(entry.response));
+  if (directEntries.length > 0) {
+    return directEntries;
+  }
+
+  return await withTimeout(
+    "blind response relay query",
+    fetchQuestionnaireBlindResponses({
+      questionnaireId: input.questionnaireId,
+      relays: input.relays,
+      readRelayLimit: input.readRelayLimit,
+      preferKindOnly: true,
+      limit,
+      maxPages: Math.max(16, Math.ceil(limit / 500) + 2),
+      timeBudgetMs: 20_000,
+    }),
+    25_000,
+  );
 }
 
 async function querySummaryEvents(relays: string[], workerHex: string) {
@@ -500,10 +597,16 @@ async function main() {
   const configRetryLimit = envInt("OPTIONA_LIVE_RUST_HELPER_CONFIG_RETRY_LIMIT", 3);
   const requestRetryLimit = envInt("OPTIONA_LIVE_RUST_HELPER_REQUEST_RETRY_LIMIT", 3);
   const voterCount = envInt("OPTIONA_LIVE_RUST_HELPER_VOTER_COUNT", 1);
-  const questionCount = envInt("OPTIONA_LIVE_RUST_HELPER_QUESTION_COUNT", 1);
+  const baseQuestionCount = envInt("OPTIONA_LIVE_RUST_HELPER_QUESTION_COUNT", 1);
+  const restrictedQuestionGroupCount = envInt("OPTIONA_LIVE_RUST_HELPER_RESTRICTED_QUESTION_GROUPS", 0);
+  const restrictedEligibleCount = envInt("OPTIONA_LIVE_RUST_HELPER_RESTRICTED_ELIGIBLE_COUNT", Math.max(1, Math.floor(voterCount / 3)));
+  const proxyVoterCount = Math.min(voterCount, envInt("OPTIONA_LIVE_RUST_HELPER_PROXY_VOTER_COUNT", 0));
+  const questionCount = baseQuestionCount + restrictedQuestionGroupCount;
   const submissionMode = envSubmissionMode("OPTIONA_LIVE_RUST_HELPER_SUBMISSION_MODE", "bundled");
   const perQuestionSubmissions = submissionMode === "per_question";
   const scopedSubmissionSchedule = envScopedSubmissionSchedule("OPTIONA_LIVE_RUST_HELPER_SCOPED_SUBMISSION_SCHEDULE");
+  const preissueScopedCredentials = perQuestionSubmissions
+    && envBool("OPTIONA_LIVE_RUST_HELPER_PREISSUE_SCOPED_CREDENTIALS", false);
   const requestRetryWaitMs = envInt(
     "OPTIONA_LIVE_RUST_HELPER_REQUEST_RETRY_WAIT_MS",
     perQuestionSubmissions ? Math.max(intervalMs, 30_000) : intervalMs,
@@ -519,7 +622,7 @@ async function main() {
   );
   const responseDelayMaxMs = Math.max(
     responseDelayMinMs,
-    envInt("OPTIONA_LIVE_RUST_HELPER_RESPONSE_DELAY_MAX_MS", perQuestionSubmissions ? 250 : 30_000),
+    envIntAllowZero("OPTIONA_LIVE_RUST_HELPER_RESPONSE_DELAY_MAX_MS", perQuestionSubmissions ? 250 : 30_000),
   );
   const submissionConcurrency = envInt(
     "OPTIONA_LIVE_RUST_HELPER_SUBMISSION_CONCURRENCY",
@@ -529,6 +632,12 @@ async function main() {
   const inviteBaseUrl = process.env.OPTIONA_LIVE_RUST_HELPER_INVITE_BASE_URL?.trim()
     || "https://auditable-voting.pages.dev/";
   const requireRelayReadback = envBool("OPTIONA_LIVE_RUST_HELPER_REQUIRE_RELAY_READBACK", false);
+  const waveRelayReadback = envBool("OPTIONA_LIVE_RUST_HELPER_WAVE_RELAY_READBACK", false);
+  const fastPublicPublish = envBool("OPTIONA_LIVE_RUST_HELPER_FAST_PUBLIC_PUBLISH", false);
+  const responsePublishRetryLimit = envInt(
+    "OPTIONA_LIVE_RUST_HELPER_RESPONSE_PUBLISH_RETRY_LIMIT",
+    fastPublicPublish ? 3 : 1,
+  );
   const workerBinary = resolveWorkerBinary();
   const workerStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "auditable-voting-worker-live-"));
 
@@ -546,7 +655,18 @@ async function main() {
     perQuestionCredentials: perQuestionSubmissions,
   });
   const expectedSubmissionCount = perQuestionSubmissions
-    ? voters.length * definition.questions.length
+    ? definition.questions.reduce((total, _question, questionIndex) => {
+      const eligibleIndexes = scopedEligibleVoterIndexes({
+        questionIndex,
+        baseQuestionCount,
+        voterCount: voters.length,
+        restrictedQuestionGroupCount,
+        restrictedEligibleCount,
+      });
+      return total + eligibleIndexes.reduce((questionTotal, voterIndex) => (
+        questionTotal + scopedCredentialIndexes(voterIndex, proxyVoterCount).length
+      ), 0);
+    }, 0)
     : voters.length;
 
   process.stdout.write(`Live Rust helper smoke\n`);
@@ -555,15 +675,22 @@ async function main() {
   process.stdout.write(`Audit proxy: ${worker.npub}\n`);
   process.stdout.write(`Voters: ${voters.length}\n`);
   process.stdout.write(`Questions: ${definition.questions.length}\n`);
+  process.stdout.write(`Base questions: ${baseQuestionCount}\n`);
+  process.stdout.write(`Restricted question groups: ${restrictedQuestionGroupCount} x ${Math.min(restrictedEligibleCount, voters.length)} eligible voter(s)\n`);
+  process.stdout.write(`Proxy voters: ${proxyVoterCount}\n`);
   process.stdout.write(`Submission mode: ${submissionMode}\n`);
   if (perQuestionSubmissions) {
     process.stdout.write(`Scoped submission schedule: ${scopedSubmissionSchedule}\n`);
+    process.stdout.write(`Pre-issue scoped credentials: ${preissueScopedCredentials ? "yes" : "no"}\n`);
   }
   process.stdout.write(`Expected submissions: ${expectedSubmissionCount}\n`);
   process.stdout.write(`First voter: ${voters[0]?.npub ?? "none"}\n`);
   process.stdout.write(`Bulk invite concurrency: ${Math.max(1, Math.min(inviteConcurrency, voters.length))}\n`);
   process.stdout.write(`Submission concurrency: ${Math.max(1, Math.min(submissionConcurrency, expectedSubmissionCount))}\n`);
   process.stdout.write(`Submission start delay: ${responseDelayMinMs}-${responseDelayMaxMs}ms\n`);
+  process.stdout.write(`Fast public publish: ${fastPublicPublish ? "yes" : "no"}\n`);
+  process.stdout.write(`Question wave relay readback: ${waveRelayReadback ? "yes" : "no"}\n`);
+  process.stdout.write(`Response publish retry limit: ${responsePublishRetryLimit}\n`);
   process.stdout.write(`Binary: ${workerBinary}\n`);
   process.stdout.write(`State dir: ${workerStateDir}\n`);
   process.stdout.write(`Relays: ${relays.join(", ")}\n`);
@@ -671,6 +798,7 @@ async function main() {
       workerNpub: worker.npub,
       expectedInviteeCount: expectedSubmissionCount,
       whitelistNpubs: voters.map((voter) => voter.npub),
+      proxyVoterNpubs: voters.slice(0, proxyVoterCount).map((voter) => voter.npub),
       bearerInviteCodes: [],
       eligibilityRequired: true,
       blindSigningPrivateKey,
@@ -742,13 +870,14 @@ async function main() {
         schemaVersion: 1,
         electionId: questionnaireId,
         title: definition.title,
-        description: definition.description,
+        description: definition.description ?? "",
         voteUrl: "",
         invitedNpub: voter.npub,
         coordinatorNpub: coordinator.npub,
         blindSigningPublicKey,
         issueBlindTokensWorker,
         definition,
+        ...(index < proxyVoterCount ? { credentialsPerVoter: 2 as const } : {}),
         expiresAt: null,
       };
       const invite: ElectionInviteMessage = {
@@ -843,20 +972,47 @@ async function main() {
           ballotScope: input.ballotScope,
         }]
         : undefined;
-      const publishedBlindResponse = await publishQuestionnaireBlindResponsePublic({
-        responseNsec,
-        questionnaireId,
-        questionnaireDefinitionEventId: publishedDefinition.eventId,
-        responseId: submissionId,
-        submittedAt,
-        tokenNullifier,
-        ...(tokenNullifiers ? { tokenNullifiers } : {}),
-        tokenProof,
-        ...(input.ballotScope ? { tokenProofs: [tokenProof] } : {}),
-        answers: input.responseAnswers,
-        relays,
-      });
-      assert(publishedBlindResponse.successes > 0, `expected ${input.voterLabel} public blind response publish to succeed on at least one relay`);
+      let publishedBlindResponse: Awaited<ReturnType<typeof publishQuestionnaireBlindResponsePublic>> | null = null;
+      let publishError: unknown = null;
+      for (let attempt = 1; attempt <= responsePublishRetryLimit; attempt += 1) {
+        try {
+          const result = await publishQuestionnaireBlindResponsePublic({
+            responseNsec,
+            questionnaireId,
+            questionnaireDefinitionEventId: publishedDefinition.eventId,
+            responseId: submissionId,
+            submittedAt,
+            tokenNullifier,
+            ...(tokenNullifiers ? { tokenNullifiers } : {}),
+            tokenProof,
+            ...(input.ballotScope ? { tokenProofs: [tokenProof] } : {}),
+            answers: input.responseAnswers,
+            relays,
+            ...(fastPublicPublish ? {
+              includeDefaultRelays: false,
+              usePublishQueue: false,
+              relayStaggerMs: 0,
+              minPublishIntervalMs: 0,
+              publishMaxWaitMs: 5_000,
+            } : {}),
+          });
+          publishedBlindResponse = result;
+          if (result.successes > 0) {
+            break;
+          }
+          publishError = new Error("zero relay successes");
+        } catch (error) {
+          publishError = error;
+        }
+        if (attempt < responsePublishRetryLimit) {
+          process.stdout.write(`Retried ${input.voterLabel} public blind response publish attempt ${attempt + 1}/${responsePublishRetryLimit}\n`);
+          await sleep(Math.min(1_000, intervalMs));
+        }
+      }
+      assert(
+        publishedBlindResponse && publishedBlindResponse.successes > 0,
+        `expected ${input.voterLabel} public blind response publish to succeed on at least one relay: ${publishError instanceof Error ? publishError.message : String(publishError ?? "zero relay successes")}`,
+      );
       completedVoters.push({
         requestId: input.request.requestId,
         issuanceId: input.issuance.issuanceId,
@@ -871,6 +1027,37 @@ async function main() {
       ) {
         process.stdout.write(`Completed submission ${completedSubmissionCount}/${input.totalSubmissions}: ${input.voterLabel}, request=${input.request.requestId}, submission=${submissionId}\n`);
       }
+    }
+
+    async function waitForWaveRelayReadback(input: {
+      questionLabel: string;
+      submissionIds: string[];
+    }) {
+      if (!waveRelayReadback || input.submissionIds.length === 0) {
+        return;
+      }
+      const startedAt = Date.now();
+      const expectedIds = new Set(input.submissionIds);
+      await waitForValue(
+        `${input.questionLabel} public blind response relay readback`,
+        async () => {
+          const entries = await queryBlindResponseEntries({
+            questionnaireId,
+            relays,
+            readRelayLimit,
+            limit: Math.max(expectedSubmissionCount + 100, expectedIds.size + 50),
+          });
+          return new Set(entries.map((entry) => entry.response.responseId));
+        },
+        (seenIds) => input.submissionIds.every((submissionId) => seenIds.has(submissionId)),
+        timeoutMs,
+        intervalMs,
+        Math.max(30_000, intervalMs * 2),
+        () => workerExit.assertRunning(),
+      );
+      process.stdout.write(
+        `Read back ${input.questionLabel}: submissions=${input.submissionIds.length}, elapsedMs=${Date.now() - startedAt}\n`,
+      );
     }
 
     async function buildBlindRequest(input: {
@@ -910,14 +1097,175 @@ async function main() {
       };
     }
 
+    type ScopedRequestEntry = Awaited<ReturnType<typeof buildBlindRequest>> & {
+      question: QuestionnaireDefinition["questions"][number];
+      questionIndex: number;
+      credentialIndex: number;
+      answer: QuestionnaireResponseAnswer;
+    };
+
+    type ScopedIssuedEntry = ScopedRequestEntry & {
+      voter: ReturnType<typeof makeNostrIdentity>;
+      voterIndex: number;
+      issuance: Awaited<ReturnType<typeof fetchOptionABlindIssuanceDmsWithNsec>>[number];
+    };
+
+    async function buildScopedRequestEntriesForVoter(
+      voter: ReturnType<typeof makeNostrIdentity>,
+      voterIndex: number,
+    ): Promise<ScopedRequestEntry[]> {
+      return await Promise.all(definition.questions.flatMap((question, questionIndex) => {
+        const eligibleVoterIndexes = scopedEligibleVoterIndexes({
+          questionIndex,
+          baseQuestionCount,
+          voterCount: voters.length,
+          restrictedQuestionGroupCount,
+          restrictedEligibleCount,
+        });
+        if (!eligibleVoterIndexes.includes(voterIndex)) {
+          return [];
+        }
+        return scopedCredentialIndexes(voterIndex, proxyVoterCount).map(async (credentialIndex) => ({
+          question,
+          questionIndex,
+          credentialIndex,
+          answer: answerForQuestion(question, questionIndex),
+          ...(await buildBlindRequest({
+            voterNpub: voter.npub,
+            ballotScope: ballotScopeForQuestion(question, questionIndex, credentialIndex),
+          })),
+        }));
+      }));
+    }
+
+    async function publishScopedRequestEntriesForVoter(input: {
+      voter: ReturnType<typeof makeNostrIdentity>;
+      voterIndex: number;
+      requestEntries: ScopedRequestEntry[];
+    }) {
+      const voterLabel = `voter ${input.voterIndex + 1}/${voters.length}`;
+      const requestIds = new Set(input.requestEntries.map((entry) => entry.request.requestId));
+      const helperSeenRequestIds = new Set<string>();
+      for (let attempt = 1; attempt <= requestRetryLimit; attempt += 1) {
+        const pendingEntries = input.requestEntries.filter((entry) => !helperSeenRequestIds.has(entry.request.requestId));
+        if (pendingEntries.length === 0) {
+          break;
+        }
+        const publishFailures: string[] = [];
+        try {
+          if (pendingEntries.length === 1) {
+            const entry = pendingEntries[0]!;
+            const publishedBlindRequest = await publishOptionABlindRequestDm({
+              signer: signer(input.voter.npub),
+              recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
+              request: entry.request,
+              fallbackNsec: input.voter.nsec,
+              relays: visibleDelegation?.controlRelays ?? relays,
+            });
+            if (publishedBlindRequest.successes === 0) {
+              publishFailures.push(`${entry.question.questionId}: zero relay successes`);
+            }
+          } else {
+            const publishedBlindRequest = await publishOptionABlindRequestBundleDm({
+              signer: signer(input.voter.npub),
+              recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
+              requests: pendingEntries.map((entry) => entry.request),
+              fallbackNsec: input.voter.nsec,
+              relays: visibleDelegation?.controlRelays ?? relays,
+            });
+            if (publishedBlindRequest.successes === 0) {
+              publishFailures.push("bundle: zero relay successes");
+            }
+          }
+        } catch (error) {
+          publishFailures.push(`bundle: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (publishFailures.length > 0) {
+          process.stdout.write(`Retryable ${voterLabel} scoped blind request publish failures on attempt ${attempt}/${requestRetryLimit}: ${publishFailures.join("; ")}\n`);
+        }
+        if (attempt > 1) {
+          process.stdout.write(`Retried ${voterLabel} scoped blind request publish attempt ${attempt}/${requestRetryLimit} for ${pendingEntries.length} pending request(s)\n`);
+        }
+        const waitStartedAt = Date.now();
+        const waitUntil = waitStartedAt + (attempt < requestRetryLimit ? requestRetryWaitMs : intervalMs);
+        do {
+          await sleep(Math.min(intervalMs, Math.max(0, waitUntil - Date.now())));
+          workerExit.assertRunning();
+          const helperState = getHelperElectionState(await readHelperState(workerStateDir), questionnaireId);
+          for (const requestId of helperState?.seen_blind_request_ids ?? []) {
+            if (requestIds.has(requestId)) {
+              helperSeenRequestIds.add(requestId);
+            }
+          }
+          if (input.requestEntries.every((entry) => helperSeenRequestIds.has(entry.request.requestId))) {
+            break;
+          }
+        } while (Date.now() < waitUntil);
+      }
+
+      const missingSeenRequests = input.requestEntries.filter((entry) => !helperSeenRequestIds.has(entry.request.requestId));
+      if (missingSeenRequests.length > 0) {
+        process.stdout.write(
+          `Waiting for ${voterLabel} scoped blind issuance after ${missingSeenRequests.length} request(s) remained unconfirmed after ${requestRetryLimit} publish attempts: ${missingSeenRequests.map((entry) => entry.request.requestId).join(", ")}\n`,
+        );
+      }
+
+      const issuanceEntries = await waitForValue(
+        `${voterLabel} scoped blind issuance DM batch from spawned Rust helper`,
+        async () => {
+          const entries = await fetchOptionABlindIssuanceDmsWithNsec({
+            nsec: input.voter.nsec,
+            electionId: questionnaireId,
+            relays,
+            limit: Math.max(100, definition.questions.length * 3),
+          });
+          return entries.filter((entry) => requestIds.has(entry.requestId));
+        },
+        (value) => input.requestEntries.every((requestEntry) => value.some((entry) => (
+          entry.requestId === requestEntry.request.requestId
+          && entry.invitedNpub === input.voter.npub
+        ))),
+        timeoutMs,
+        intervalMs,
+        undefined,
+        () => workerExit.assertRunning(),
+      );
+      return new Map(issuanceEntries.map((entry) => [entry.requestId, entry]));
+    }
+
+    async function publishIssuedScopedEntry(input: {
+      entry: ScopedRequestEntry;
+      issuance: ScopedIssuedEntry["issuance"];
+      voter: ReturnType<typeof makeNostrIdentity>;
+      voterIndex: number;
+      totalSubmissions: number;
+    }) {
+      const credentialLabel = input.entry.credentialIndex > 1 ? ` credential ${input.entry.credentialIndex}` : "";
+      await publishCompletedSubmission({
+        voterNsec: input.voter.nsec,
+        voterLabel: `voter ${input.voterIndex + 1}/${voters.length}${credentialLabel} question ${input.entry.questionIndex + 1}/${definition.questions.length}`,
+        request: input.entry.request,
+        issuance: input.issuance,
+        blindTokenMessage: input.entry.blindTokenMessage,
+        blindingFactor: input.entry.blindingFactor,
+        tokenSecret: input.entry.tokenSecret,
+        tokenCommitment: input.entry.tokenCommitment,
+        ballotScope: input.entry.ballotScope,
+        responseAnswers: [input.entry.answer],
+        totalSubmissions: input.totalSubmissions,
+      });
+    }
+
     async function submitScopedEntry(input: {
       voter: ReturnType<typeof makeNostrIdentity>;
       voterIndex: number;
       question: QuestionnaireDefinition["questions"][number];
       questionIndex: number;
+      credentialIndex: number;
       totalSubmissions: number;
     }) {
-      const voterLabel = `voter ${input.voterIndex + 1}/${voters.length} question ${input.questionIndex + 1}/${definition.questions.length}`;
+      const credentialLabel = input.credentialIndex > 1 ? ` credential ${input.credentialIndex}` : "";
+      const voterLabel = `voter ${input.voterIndex + 1}/${voters.length}${credentialLabel} question ${input.questionIndex + 1}/${definition.questions.length}`;
       const submissionDelayMs = randomDelayMs(responseDelayMinMs, responseDelayMaxMs);
       if (submissionDelayMs > 0) {
         await sleep(submissionDelayMs);
@@ -929,7 +1277,7 @@ async function main() {
         answer: answerForQuestion(input.question, input.questionIndex),
         ...(await buildBlindRequest({
           voterNpub: input.voter.npub,
-          ballotScope: ballotScopeForQuestion(input.question, input.questionIndex),
+          ballotScope: ballotScopeForQuestion(input.question, input.questionIndex, input.credentialIndex),
         })),
       };
 
@@ -1047,24 +1395,103 @@ async function main() {
     }
 
     if (perQuestionSubmissions) {
-      if (scopedSubmissionSchedule === "question_waves") {
-        process.stdout.write(`Submitting ${expectedSubmissionCount} scoped blind response job(s) in ${definition.questions.length} question wave(s)...\n`);
+      if (preissueScopedCredentials) {
+        const issuedEntries: ScopedIssuedEntry[] = [];
+        let preissuedVoterCount = 0;
+        process.stdout.write(`Pre-issuing ${expectedSubmissionCount} scoped credential(s) in ${voters.length} voter registration batch(es)...\n`);
+        await runWithConcurrency(voters, inviteConcurrency, async (voter, voterIndex) => {
+          workerExit.assertRunning();
+          const requestEntries = await buildScopedRequestEntriesForVoter(voter, voterIndex);
+          if (requestEntries.length === 0) {
+            return;
+          }
+          const issuanceByRequestId = await publishScopedRequestEntriesForVoter({
+            voter,
+            voterIndex,
+            requestEntries,
+          });
+          for (const entry of requestEntries) {
+            const issuance = issuanceByRequestId.get(entry.request.requestId);
+            assert(issuance, `missing voter ${voterIndex + 1}/${voters.length} ${entry.question.questionId} issuance after pre-issue readback`);
+            issuedEntries.push({
+              ...entry,
+              voter,
+              voterIndex,
+              issuance,
+            });
+          }
+          preissuedVoterCount += 1;
+          if (preissuedVoterCount === voters.length || preissuedVoterCount % 10 === 0) {
+            process.stdout.write(`Pre-issued scoped credentials for ${preissuedVoterCount}/${voters.length} voters; credentials=${issuedEntries.length}/${expectedSubmissionCount}\n`);
+          }
+        });
+        assert.equal(issuedEntries.length, expectedSubmissionCount, "expected every scoped credential to be pre-issued before question waves");
+        process.stdout.write(`Submitting ${expectedSubmissionCount} pre-issued blind response job(s) in ${definition.questions.length} question wave(s)...\n`);
         for (const [questionIndex, question] of definition.questions.entries()) {
           const waveStartedAt = Date.now();
           const completedBeforeWave = completedSubmissionCount;
-          process.stdout.write(`Starting question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, voters=${voters.length}\n`);
-          await runWithConcurrency(voters, submissionConcurrency, async (voter, voterIndex) => {
-            await submitScopedEntry({
-              voter,
-              voterIndex,
-              question,
-              questionIndex,
+          const waveEntries = issuedEntries.filter((entry) => entry.questionIndex === questionIndex);
+          process.stdout.write(`Starting question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, submissions=${waveEntries.length}\n`);
+          await runWithConcurrency(waveEntries, submissionConcurrency, async (entry) => {
+            await publishIssuedScopedEntry({
+              entry,
+              issuance: entry.issuance,
+              voter: entry.voter,
+              voterIndex: entry.voterIndex,
               totalSubmissions: expectedSubmissionCount,
             });
           });
           const waveCompletedCount = completedSubmissionCount - completedBeforeWave;
-          assert.equal(waveCompletedCount, voters.length, `expected ${voters.length} submissions in ${question.questionId} wave`);
-          process.stdout.write(`Completed question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, submissions=${waveCompletedCount}/${voters.length}, elapsedMs=${Date.now() - waveStartedAt}\n`);
+          const waveSubmissionIds = completedVoters
+            .slice(completedBeforeWave)
+            .map((entry) => entry.submissionId);
+          assert.equal(waveCompletedCount, waveEntries.length, `expected ${waveEntries.length} submissions in ${question.questionId} wave`);
+          await waitForWaveRelayReadback({
+            questionLabel: `question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}`,
+            submissionIds: waveSubmissionIds,
+          });
+          process.stdout.write(`Completed question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, submissions=${waveCompletedCount}/${waveEntries.length}, elapsedMs=${Date.now() - waveStartedAt}\n`);
+        }
+      } else if (scopedSubmissionSchedule === "question_waves") {
+        process.stdout.write(`Submitting ${expectedSubmissionCount} scoped blind response job(s) in ${definition.questions.length} question wave(s)...\n`);
+        for (const [questionIndex, question] of definition.questions.entries()) {
+          const waveStartedAt = Date.now();
+          const completedBeforeWave = completedSubmissionCount;
+          const eligibleVoterIndexes = scopedEligibleVoterIndexes({
+            questionIndex,
+            baseQuestionCount,
+            voterCount: voters.length,
+            restrictedQuestionGroupCount,
+            restrictedEligibleCount,
+          });
+          const waveJobs = eligibleVoterIndexes.flatMap((voterIndex) => (
+            scopedCredentialIndexes(voterIndex, proxyVoterCount).map((credentialIndex) => ({
+              voter: voters[voterIndex],
+              voterIndex,
+              credentialIndex,
+            }))
+          ));
+          process.stdout.write(`Starting question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, voters=${eligibleVoterIndexes.length}, submissions=${waveJobs.length}\n`);
+          await runWithConcurrency(waveJobs, submissionConcurrency, async (job) => {
+            await submitScopedEntry({
+              voter: job.voter,
+              voterIndex: job.voterIndex,
+              question,
+              questionIndex,
+              credentialIndex: job.credentialIndex,
+              totalSubmissions: expectedSubmissionCount,
+            });
+          });
+          const waveCompletedCount = completedSubmissionCount - completedBeforeWave;
+          const waveSubmissionIds = completedVoters
+            .slice(completedBeforeWave)
+            .map((entry) => entry.submissionId);
+          assert.equal(waveCompletedCount, waveJobs.length, `expected ${waveJobs.length} submissions in ${question.questionId} wave`);
+          await waitForWaveRelayReadback({
+            questionLabel: `question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}`,
+            submissionIds: waveSubmissionIds,
+          });
+          process.stdout.write(`Completed question wave ${questionIndex + 1}/${definition.questions.length}: ${question.questionId}, submissions=${waveCompletedCount}/${waveJobs.length}, elapsedMs=${Date.now() - waveStartedAt}\n`);
         }
       } else {
         process.stdout.write(`Submitting ${expectedSubmissionCount} scoped blind response job(s) in ${voters.length} voter batch(es)...\n`);
@@ -1075,15 +1502,31 @@ async function main() {
           await sleep(submissionDelayMs);
         }
         workerExit.assertRunning();
-        const requestEntries = await Promise.all(definition.questions.map(async (question, questionIndex) => ({
-          question,
-          questionIndex,
-          answer: answerForQuestion(question, questionIndex),
-          ...(await buildBlindRequest({
-            voterNpub: voter.npub,
-            ballotScope: ballotScopeForQuestion(question, questionIndex),
-          })),
-        })));
+        const requestEntries = await Promise.all(definition.questions.flatMap((question, questionIndex) => {
+          const eligibleVoterIndexes = scopedEligibleVoterIndexes({
+            questionIndex,
+            baseQuestionCount,
+            voterCount: voters.length,
+            restrictedQuestionGroupCount,
+            restrictedEligibleCount,
+          });
+          if (!eligibleVoterIndexes.includes(voterIndex)) {
+            return [];
+          }
+          return scopedCredentialIndexes(voterIndex, proxyVoterCount).map(async (credentialIndex) => ({
+            question,
+            questionIndex,
+            credentialIndex,
+            answer: answerForQuestion(question, questionIndex),
+            ...(await buildBlindRequest({
+              voterNpub: voter.npub,
+              ballotScope: ballotScopeForQuestion(question, questionIndex, credentialIndex),
+            })),
+          }));
+        }));
+        if (requestEntries.length === 0) {
+          return;
+        }
 
         const requestIds = new Set(requestEntries.map((entry) => entry.request.requestId));
         const helperSeenRequestIds = new Set<string>();
@@ -1093,8 +1536,9 @@ async function main() {
             break;
           }
           const publishFailures: string[] = [];
-          await runWithConcurrency(pendingEntries, Math.min(5, pendingEntries.length), async (entry) => {
-            try {
+          try {
+            if (pendingEntries.length === 1) {
+              const entry = pendingEntries[0]!;
               const publishedBlindRequest = await publishOptionABlindRequestDm({
                 signer: signer(voter.npub),
                 recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
@@ -1105,10 +1549,21 @@ async function main() {
               if (publishedBlindRequest.successes === 0) {
                 publishFailures.push(`${entry.question.questionId}: zero relay successes`);
               }
-            } catch (error) {
-              publishFailures.push(`${entry.question.questionId}: ${error instanceof Error ? error.message : String(error)}`);
+            } else {
+              const publishedBlindRequest = await publishOptionABlindRequestBundleDm({
+                signer: signer(voter.npub),
+                recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
+                requests: pendingEntries.map((entry) => entry.request),
+                fallbackNsec: voter.nsec,
+                relays: visibleDelegation?.controlRelays ?? relays,
+              });
+              if (publishedBlindRequest.successes === 0) {
+                publishFailures.push(`bundle: zero relay successes`);
+              }
             }
-          });
+          } catch (error) {
+            publishFailures.push(`bundle: ${error instanceof Error ? error.message : String(error)}`);
+          }
           if (publishFailures.length > 0) {
             process.stdout.write(`Retryable ${voterLabel} scoped blind request publish failures on attempt ${attempt}/${requestRetryLimit}: ${publishFailures.join("; ")}\n`);
           }
@@ -1352,14 +1807,11 @@ async function main() {
       publicResponses = await waitForValue(
         "public blind response visibility",
         async () => {
-          const entries = await fetchQuestionnaireBlindResponses({
+          const entries = await queryBlindResponseEntries({
             questionnaireId,
             relays,
             readRelayLimit,
-            preferKindOnly: true,
-            limit: Math.max(100, expectedSubmissionCount),
-            maxPages: Math.max(16, Math.ceil(expectedSubmissionCount / 500) + 2),
-            timeBudgetMs: Math.min(timeoutMs, Math.max(60_000, intervalMs * 4)),
+            limit: Math.max(100, expectedSubmissionCount * 2),
           });
           const seen = new Set(entries.map((entry) => entry.response.responseId));
           return completedVoters.every((entry) => seen.has(entry.submissionId)) ? entries : [];
@@ -1395,7 +1847,13 @@ async function main() {
       submissionDecisions = await waitForValue(
         "public submission decision visibility from spawned Rust helper",
         async () => {
-          const events = await queryDecisionEvents(relays, worker.hex, Math.max(100, expectedSubmissionCount));
+          const events = await queryDecisionEvents({
+            relays,
+            workerHex: worker.hex,
+            questionnaireId,
+            limit: Math.max(100, expectedSubmissionCount),
+            readRelayLimit,
+          });
           return events
             .map((event) => {
               try {

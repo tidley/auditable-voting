@@ -74,8 +74,19 @@ export type QuestionnaireBlindResponseDecryptionResult = {
 
 export type QuestionnaireSubmissionDecisionEvent = QuestionnaireSubmissionDecision;
 
-function buildPublicRelays(relays?: string[]) {
-  return rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
+type PublicPublishOptions = {
+  includeDefaultRelays?: boolean;
+  usePublishQueue?: boolean;
+  minPublishIntervalMs?: number;
+  relayStaggerMs?: number;
+  publishMaxWaitMs?: number;
+};
+
+function buildPublicRelays(relays?: string[], includeDefaultRelays = true) {
+  return rankRelaysByBackoff(normalizeRelaysRust([
+    ...(relays ?? []),
+    ...(includeDefaultRelays ? SIMPLE_PUBLIC_RELAYS : []),
+  ]));
 }
 
 function decodeNsecSecretKey(nsec: string) {
@@ -107,7 +118,7 @@ async function publishEvent(input: {
   eventPayload: QuestionnaireBlindResponseEvent;
   tags: string[][];
   relays?: string[];
-}) {
+} & PublicPublishOptions) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const event = finalizeEvent({
     kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
@@ -116,16 +127,19 @@ async function publishEvent(input: {
     content: JSON.stringify(input.eventPayload),
   }, secretKey);
 
-  const relays = buildPublicRelays(input.relays);
+  const relays = buildPublicRelays(input.relays, input.includeDefaultRelays);
   const pool = getSharedNostrPool();
-  const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+  const publishTask = () => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: input.publishMaxWaitMs ?? SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
       relays,
-      { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
-    ),
-    { channel: "questionnaire-response-blind", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
-  );
+      { staggerMs: input.relayStaggerMs ?? SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+    );
+  const results = input.usePublishQueue === false
+    ? await publishTask()
+    : await queueNostrPublish(
+      publishTask,
+      { channel: "questionnaire-response-blind", minIntervalMs: input.minPublishIntervalMs ?? SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
 
   const relayResults = results.map((result, index) => (
     result.status === "fulfilled"
@@ -161,7 +175,7 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
   tokenProofs?: BlindTokenProof[];
   answers: QuestionnaireResponseAnswer[];
   relays?: string[];
-}) {
+} & PublicPublishOptions) {
   const authorPubkey = nip19.npubEncode(getPublicKey(decodeNsecSecretKey(input.responseNsec)));
   const eventPayload: QuestionnaireBlindResponseEvent = {
     schemaVersion: 1,
@@ -192,6 +206,11 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
         : []),
     ],
     relays: input.relays,
+    includeDefaultRelays: input.includeDefaultRelays,
+    usePublishQueue: input.usePublishQueue,
+    minPublishIntervalMs: input.minPublishIntervalMs,
+    relayStaggerMs: input.relayStaggerMs,
+    publishMaxWaitMs: input.publishMaxWaitMs,
   });
 }
 

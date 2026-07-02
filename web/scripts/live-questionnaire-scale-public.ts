@@ -18,6 +18,7 @@ type RelayResult = {
 };
 
 const DEFAULT_RELAYS = [
+  "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
   "wss://nos.lol",
 ];

@@ -15,6 +15,7 @@ import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selec
 import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_PUBLIC_RELAYS = [
+  "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",

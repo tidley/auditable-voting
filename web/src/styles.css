@@ -4668,6 +4668,26 @@ code {
   margin-bottom: 14px;
 }
 
+.simple-auditor-refresh-button {
+  flex: 0 0 auto;
+}
+
+.simple-auditor-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.55fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.simple-auditor-round-field {
+  grid-column: 1 / -1;
+}
+
+.simple-auditor-filters .simple-voter-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .simple-auditor-results-meta {
   display: flex;
   flex-wrap: wrap;
@@ -4846,6 +4866,7 @@ code {
 
 .simple-auditor-export-button {
   flex: 0 0 auto;
+  min-width: 142px;
 }
 
 .simple-auditor-status-grid {
@@ -5077,6 +5098,10 @@ code {
 
 .simple-auditor-text-button {
   justify-self: start;
+}
+
+.simple-auditor-pager-button {
+  min-width: 104px;
 }
 
 .simple-auditor-bars {
@@ -7869,13 +7894,13 @@ code {
   grid-column: 1 / -1;
 }
 
-.simple-auditor-submitted-filter .simple-voter-label,
-.simple-auditor-submitted-decrypt .simple-voter-label {
-  margin-bottom: 6px;
+.simple-auditor-submitted-filter .av-ui-label,
+.simple-auditor-submitted-decrypt .av-ui-label {
+  margin-bottom: 0;
 }
 
-.simple-auditor-submitted-filter .simple-voter-input,
-.simple-auditor-submitted-decrypt .simple-voter-input {
+.simple-auditor-submitted-filter .av-ui-input,
+.simple-auditor-submitted-decrypt .av-ui-input {
   margin-bottom: 0;
 }
 
@@ -7888,6 +7913,8 @@ code {
   display: inline-flex;
   align-items: center;
   margin-top: 8px;
+  color: var(--simple-muted);
+  font-size: 0.88rem;
 }
 
 .simple-auditor-invalid-toggle input[type="checkbox"] {
@@ -7923,7 +7950,6 @@ code {
   gap: 8px;
 }
 
-.simple-auditor-submitted-pager-actions .simple-voter-secondary,
 .simple-auditor-submitted-pager-actions .av-ui-button {
   min-height: 34px;
   padding-inline: 10px;
@@ -7997,7 +8023,8 @@ code {
   background: transparent;
 }
 
-.simple-session-submitted-toolbar .simple-voter-label {
+.simple-session-submitted-toolbar .simple-voter-label,
+.simple-session-submitted-toolbar .av-ui-label {
   display: none;
 }
 
@@ -8182,6 +8209,14 @@ code {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .simple-auditor-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-auditor-round-field {
+    grid-column: auto;
+  }
+
   .simple-auditor-status-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -8230,6 +8265,15 @@ code {
   .simple-auditor-submitted-pager {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .simple-auditor-submitted-pager-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .simple-auditor-pager-button {
+    flex: 1 1 128px;
   }
 
   .simple-auditor-result-marker {

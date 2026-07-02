@@ -38,7 +38,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
 use tracing::{debug, error, info, warn};
@@ -56,6 +56,7 @@ const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
+const PUBLIC_ARCHIVE_SEND_TIMEOUT_SECS: u64 = 10;
 const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
 const COMPRESSED_BUNDLE_MESSAGE_TYPE: &str = "optiona_compressed_bundle_dm";
 const COMPRESSED_BUNDLE_ENCODING: &str = "gzip+base64url";
@@ -92,6 +93,10 @@ const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &[
 ];
 const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
 const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
+const PUBLIC_RESPONSE_CONCURRENCY: usize = 16;
+const CONTROL_BLIND_REQUEST_QUEUE_SIZE: usize = 1024;
+const CONTROL_BLIND_REQUEST_BATCH_MAX_REQUESTS: usize = 128;
+const CONTROL_BLIND_REQUEST_BATCH_INTERVAL_MS: u64 = 75;
 
 fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
     let value = jwk
@@ -1238,12 +1243,40 @@ struct WorkerRuntime {
     state: Arc<Mutex<WorkerPersistentState>>,
     relay_backoff: Arc<Mutex<HashMap<String, RelayBackoffState>>>,
     completion_in_flight: Arc<Mutex<HashSet<String>>>,
+    queued_control_event_ids: Arc<Mutex<HashSet<String>>>,
+    public_response_permits: Arc<Semaphore>,
+    public_archive_sender: Option<mpsc::Sender<PublicArchiveJob>>,
+    control_blind_request_sender: mpsc::Sender<ControlBlindRequestJob>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct RelayBackoffState {
     failures: u32,
     next_retry_at: Option<Instant>,
+}
+
+struct PublicArchiveJob {
+    relay: RelayUrl,
+    event: Event,
+    label: String,
+}
+
+#[derive(Debug)]
+enum ControlMessageAction {
+    Processed(bool),
+    BlindRequests(Vec<BlindBallotRequest>),
+}
+
+struct ControlBlindRequestJob {
+    event_id: String,
+    requests: Vec<BlindBallotRequest>,
+    mark_seen_on_deferred: bool,
+}
+
+struct QueuedPreparedBlindIssuance {
+    job_index: usize,
+    request: BlindBallotRequest,
+    issuance: BlindBallotIssuance,
 }
 
 #[tokio::main]
@@ -1273,12 +1306,17 @@ async fn main() -> Result<()> {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+    let public_archive_relay_strings = config
+        .public_archive_relays
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
     info!(
         "starting auditable-voting-worker v{}",
         env!("CARGO_PKG_VERSION")
     );
     info!(
-        "worker startup config: coordinator_npub={}, relay_source={}, relay_count={}, relays={:?}, dm_relay_source={}, dm_relay_count={}, dm_relays={:?}, state_dir={}, heartbeat_seconds={}, poll_seconds={}",
+        "worker startup config: coordinator_npub={}, relay_source={}, relay_count={}, relays={:?}, dm_relay_source={}, dm_relay_count={}, dm_relays={:?}, public_archive_relay_count={}, public_archive_relays={:?}, public_archive_interval_ms={}, public_archive_queue_size={}, state_dir={}, heartbeat_seconds={}, poll_seconds={}",
         config.coordinator_npub,
         if config.worker_relays_from_env { "env" } else { "default" },
         relay_strings.len(),
@@ -1286,10 +1324,29 @@ async fn main() -> Result<()> {
         if config.worker_dm_relays_from_env { "env" } else { "default" },
         dm_relay_strings.len(),
         dm_relay_strings,
+        public_archive_relay_strings.len(),
+        public_archive_relay_strings,
+        config.public_archive_interval_ms,
+        config.public_archive_queue_size,
         config.worker_state_dir.display(),
         config.heartbeat_seconds,
         config.poll_seconds
     );
+
+    let public_archive_sender = if config.public_archive_relays.is_empty() {
+        None
+    } else {
+        let (sender, receiver) = mpsc::channel(config.public_archive_queue_size);
+        spawn_public_archive_task(
+            Client::new(keys.clone()),
+            config.public_archive_relays.clone(),
+            receiver,
+            Duration::from_millis(config.public_archive_interval_ms),
+        );
+        Some(sender)
+    };
+    let (control_blind_request_sender, control_blind_request_receiver) =
+        mpsc::channel(CONTROL_BLIND_REQUEST_QUEUE_SIZE);
 
     let client = Client::new(keys);
     for relay in &config.worker_relays {
@@ -1321,12 +1378,18 @@ async fn main() -> Result<()> {
         state: Arc::new(Mutex::new(persistent)),
         relay_backoff: Arc::new(Mutex::new(HashMap::new())),
         completion_in_flight: Arc::new(Mutex::new(HashSet::new())),
+        queued_control_event_ids: Arc::new(Mutex::new(HashSet::new())),
+        public_response_permits: Arc::new(Semaphore::new(PUBLIC_RESPONSE_CONCURRENCY)),
+        public_archive_sender,
+        control_blind_request_sender,
     };
 
     info!("worker started as {}", worker_npub);
 
     let mut heartbeat_task = spawn_heartbeat_task(runtime.clone());
     let mut control_task = spawn_control_task(runtime.clone());
+    let mut control_blind_request_task =
+        spawn_control_blind_request_task(runtime.clone(), control_blind_request_receiver);
     let mut public_task = spawn_public_task(runtime.clone());
     let mut housekeeping_task = spawn_housekeeping_task(runtime.clone());
 
@@ -1339,6 +1402,10 @@ async fn main() -> Result<()> {
             result = &mut control_task => {
                 log_task_exit("control plane", result);
                 control_task = spawn_control_task(runtime.clone());
+            },
+            result = &mut control_blind_request_task => {
+                log_task_exit("control blind request queue", result);
+                anyhow::bail!("control blind request queue task exited");
             },
             result = &mut public_task => {
                 log_task_exit("public plane", result);
@@ -1377,6 +1444,17 @@ fn spawn_control_task(runtime: WorkerRuntime) -> JoinHandle<()> {
                     sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
                 }
             }
+        }
+    })
+}
+
+fn spawn_control_blind_request_task(
+    runtime: WorkerRuntime,
+    receiver: mpsc::Receiver<ControlBlindRequestJob>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        if let Err(error) = runtime.run_control_blind_request_queue(receiver).await {
+            error!("control blind request queue failed: {error}");
         }
     })
 }
@@ -1420,6 +1498,60 @@ fn log_task_exit(label: &str, result: std::result::Result<(), tokio::task::JoinE
         Err(error) if error.is_panic() => error!("{label} task panicked: {error}; restarting"),
         Err(error) => error!("{label} task failed: {error}; restarting"),
     }
+}
+
+fn spawn_public_archive_task(
+    client: Client,
+    relays: Vec<RelayUrl>,
+    mut receiver: mpsc::Receiver<PublicArchiveJob>,
+    interval: Duration,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        for relay in &relays {
+            if let Err(error) = client.add_relay(relay.clone()).await {
+                warn!("unable to add public archive relay {relay}: {error}");
+            }
+        }
+        client.connect().await;
+        info!(
+            "public archive fanout active: relays={}, interval_ms={}",
+            relays.len(),
+            interval.as_millis()
+        );
+
+        while let Some(job) = receiver.recv().await {
+            let event_id = job.event.id.to_hex();
+            let result = timeout(
+                Duration::from_secs(PUBLIC_ARCHIVE_SEND_TIMEOUT_SECS),
+                client.send_event_to([job.relay.clone()], &job.event),
+            )
+            .await;
+            match result {
+                Ok(Ok(output)) if !output.success.is_empty() => {
+                    debug!("archived {} event {} to {}", job.label, event_id, job.relay);
+                }
+                Ok(Ok(output)) => {
+                    warn!(
+                        "public archive relay rejected {} event {} on {}: {:?}",
+                        job.label, event_id, job.relay, output.failed
+                    );
+                }
+                Ok(Err(error)) => {
+                    warn!(
+                        "public archive publish failed for {} event {} on {}: {error}",
+                        job.label, event_id, job.relay
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        "public archive publish timed out for {} event {} on {}",
+                        job.label, event_id, job.relay
+                    );
+                }
+            }
+            sleep(interval).await;
+        }
+    })
 }
 
 impl WorkerRuntime {
@@ -1562,6 +1694,214 @@ impl WorkerRuntime {
         Ok(successes)
     }
 
+    fn enqueue_public_archive_event(&self, event: &Event, label: &str) {
+        let Some(sender) = &self.public_archive_sender else {
+            return;
+        };
+        for relay in &self.config.public_archive_relays {
+            let job = PublicArchiveJob {
+                relay: relay.clone(),
+                event: event.clone(),
+                label: label.to_string(),
+            };
+            match sender.try_send(job) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    warn!(
+                        "public archive queue full; dropping archive copies for {} event {}",
+                        label, event.id
+                    );
+                    break;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    warn!(
+                        "public archive queue closed; dropping archive copies for {} event {}",
+                        label, event.id
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn run_control_blind_request_queue(
+        &self,
+        mut receiver: mpsc::Receiver<ControlBlindRequestJob>,
+    ) -> Result<()> {
+        while let Some(first_job) = receiver.recv().await {
+            let mut jobs = vec![first_job];
+            let mut request_count = jobs
+                .first()
+                .map(|job| job.requests.len())
+                .unwrap_or_default();
+            let deadline =
+                Instant::now() + Duration::from_millis(CONTROL_BLIND_REQUEST_BATCH_INTERVAL_MS);
+            let mut receiver_open = true;
+
+            while request_count < CONTROL_BLIND_REQUEST_BATCH_MAX_REQUESTS {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match timeout(remaining, receiver.recv()).await {
+                    Ok(Some(job)) => {
+                        request_count += job.requests.len();
+                        jobs.push(job);
+                    }
+                    Ok(None) => {
+                        receiver_open = false;
+                        break;
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            let event_ids = jobs
+                .iter()
+                .map(|job| job.event_id.clone())
+                .collect::<Vec<_>>();
+            let job_count = jobs.len();
+            match self.process_control_blind_request_jobs(jobs).await {
+                Ok(()) => {
+                    debug!(
+                        "control blind request batch processed: jobs={}, requests={}",
+                        job_count, request_count
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        "control blind request batch failed and will remain retryable: jobs={}, requests={}, error={error}",
+                        job_count, request_count
+                    );
+                }
+            }
+            self.clear_queued_control_events(&event_ids).await;
+            if !receiver_open {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_control_blind_request_jobs(
+        &self,
+        jobs: Vec<ControlBlindRequestJob>,
+    ) -> Result<()> {
+        let mut handled_by_job = vec![false; jobs.len()];
+        let mut prepared_by_recipient: HashMap<(String, String), Vec<QueuedPreparedBlindIssuance>> =
+            HashMap::new();
+
+        for (job_index, job) in jobs.iter().enumerate() {
+            let mut seen_bundle_scope_keys = HashSet::new();
+            for request in job.requests.iter().cloned() {
+                let scope_key = blind_request_issuance_scope_key(&request);
+                if !seen_bundle_scope_keys.insert(scope_key.clone()) {
+                    warn!(
+                        "blind request bundle skipped duplicate voter/scope entry: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
+                        request.election_id,
+                        request.request_id,
+                        request.invited_npub,
+                        ballot_scope_key(&request.ballot_scope)
+                    );
+                    handled_by_job[job_index] = true;
+                    continue;
+                }
+                match self.prepare_blind_issuance(request).await? {
+                    PreparedBlindIssuance::Deferred => {}
+                    PreparedBlindIssuance::Handled => handled_by_job[job_index] = true,
+                    PreparedBlindIssuance::Issuance { request, issuance } => {
+                        handled_by_job[job_index] = true;
+                        prepared_by_recipient
+                            .entry((request.invited_npub.clone(), request.election_id.clone()))
+                            .or_default()
+                            .push(QueuedPreparedBlindIssuance {
+                                job_index,
+                                request,
+                                issuance,
+                            });
+                    }
+                }
+            }
+        }
+
+        for ((recipient_npub, election_id), entries) in prepared_by_recipient {
+            let issuances = entries
+                .iter()
+                .map(|entry| entry.issuance.clone())
+                .collect::<Vec<_>>();
+            let successes = self
+                .publish_prepared_blind_issuances(&recipient_npub, &issuances)
+                .await?;
+            debug!(
+                "blind issuance batch published: election_id={}, recipient_npub={}, issuances={}, relay_successes={}",
+                election_id,
+                recipient_npub,
+                issuances.len(),
+                successes
+            );
+            let requests = entries
+                .iter()
+                .map(|entry| entry.request.clone())
+                .collect::<Vec<_>>();
+            for entry in &entries {
+                handled_by_job[entry.job_index] = true;
+            }
+            self.mark_blind_issuances_published(&requests).await?;
+        }
+
+        for (job_index, job) in jobs.iter().enumerate() {
+            if handled_by_job[job_index] || job.mark_seen_on_deferred {
+                self.mark_control_event_processed(&job.event_id).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn mark_control_event_processed(&self, event_id: &str) -> Result<()> {
+        let mut state = self.state.lock().await;
+        state
+            .seen_control_event_ids
+            .insert(event_id.to_string(), now_iso());
+        prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
+        state.last_dm_scan_at = Some(now_iso());
+        self.store.save(&state)?;
+        Ok(())
+    }
+
+    async fn clear_queued_control_events(&self, event_ids: &[String]) {
+        let mut queued = self.queued_control_event_ids.lock().await;
+        for event_id in event_ids {
+            queued.remove(event_id);
+        }
+    }
+
+    async fn publish_public_event_builder(
+        &self,
+        builder: EventBuilder,
+        label: &str,
+    ) -> Result<String> {
+        let event = self.client.sign_event_builder(builder).await?;
+        let relays = self.effective_worker_relays().await;
+        self.ensure_relays_connected(&relays).await;
+        let output = self.client.send_event_to(relays.clone(), &event).await?;
+        if output.success.is_empty() {
+            anyhow::bail!(
+                "{label} publish failed on all hot relays: {:?}",
+                output.failed
+            );
+        }
+        if !output.failed.is_empty() {
+            debug!(
+                "{label} publish had {} relay failure(s): {:?}",
+                output.failed.len(),
+                output.failed
+            );
+        }
+        self.enqueue_public_archive_event(&event, label);
+        Ok(event.id.to_hex())
+    }
+
     async fn run_control_subscription(&self) -> Result<bool> {
         let since_ts = fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS);
         let filter = Filter::new()
@@ -1660,6 +2000,13 @@ impl WorkerRuntime {
         if !replay_seen_event {
             return Ok(());
         }
+        let already_queued = {
+            let queued = self.queued_control_event_ids.lock().await;
+            queued.contains(&event_id)
+        };
+        if already_queued {
+            return Ok(());
+        }
 
         let unwrapped = self.client.unwrap_gift_wrap(event).await?;
         log_decrypted_worker_dm(event, &unwrapped.rumor);
@@ -1668,20 +2015,31 @@ impl WorkerRuntime {
             return Ok(());
         }
         match self.process_control_message(&rumor_content).await {
-            Ok(true) => {
-                let mut state = self.state.lock().await;
-                state.seen_control_event_ids.insert(event_id, now_iso());
-                prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
-                state.last_dm_scan_at = Some(now_iso());
-                self.store.save(&state)?;
+            Ok(ControlMessageAction::Processed(true)) => {
+                self.mark_control_event_processed(&event_id).await?;
             }
-            Ok(false) => {
+            Ok(ControlMessageAction::Processed(false)) => {
                 if replay_seen_control_events {
-                    let mut state = self.state.lock().await;
-                    state.seen_control_event_ids.insert(event_id, now_iso());
-                    prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
-                    state.last_dm_scan_at = Some(now_iso());
-                    self.store.save(&state)?;
+                    self.mark_control_event_processed(&event_id).await?;
+                }
+            }
+            Ok(ControlMessageAction::BlindRequests(requests)) => {
+                if requests.is_empty() {
+                    return Ok(());
+                }
+                {
+                    let mut queued = self.queued_control_event_ids.lock().await;
+                    queued.insert(event_id.clone());
+                }
+                let job = ControlBlindRequestJob {
+                    event_id: event_id.clone(),
+                    requests,
+                    mark_seen_on_deferred: replay_seen_control_events,
+                };
+                if let Err(error) = self.control_blind_request_sender.send(job).await {
+                    let mut queued = self.queued_control_event_ids.lock().await;
+                    queued.remove(&event_id);
+                    anyhow::bail!("control blind request queue closed: {error}");
                 }
             }
             Err(error) => return Err(error),
@@ -1811,16 +2169,16 @@ impl WorkerRuntime {
         );
     }
 
-    async fn process_control_message(&self, content: &str) -> Result<bool> {
+    async fn process_control_message(&self, content: &str) -> Result<ControlMessageAction> {
         let raw_value: serde_json::Value = match serde_json::from_str(content) {
             Ok(parsed) => parsed,
-            Err(_) => return Ok(true),
+            Err(_) => return Ok(ControlMessageAction::Processed(true)),
         };
         let value = match unwrap_compressed_bundle_value(raw_value) {
             Ok(parsed) => parsed,
             Err(error) => {
                 warn!("failed to decode compressed control message: {error}");
-                return Ok(true);
+                return Ok(ControlMessageAction::Processed(true));
             }
         };
         let message_type = value
@@ -1832,21 +2190,21 @@ impl WorkerRuntime {
             "optiona_worker_delegation_dm" => {
                 let envelope: WorkerDelegationEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(true),
+                    Err(_) => return Ok(ControlMessageAction::Processed(true)),
                 };
                 self.apply_delegation(envelope.delegation).await?;
             }
             "optiona_worker_delegation_revocation_dm" => {
                 let envelope: WorkerRevocationEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(true),
+                    Err(_) => return Ok(ControlMessageAction::Processed(true)),
                 };
                 self.apply_revocation(envelope.revocation).await?;
             }
             "optiona_worker_election_config_dm" => {
                 let envelope: WorkerElectionConfigEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(true),
+                    Err(_) => return Ok(ControlMessageAction::Processed(true)),
                 };
                 info!(
                     "worker election config received: election_id={}, delegation_id={}",
@@ -1861,7 +2219,7 @@ impl WorkerRuntime {
                         warn!(
                             "blind request control message could not be decoded and will be retried: {error}"
                         );
-                        return Ok(false);
+                        return Ok(ControlMessageAction::Processed(false));
                     }
                 };
                 debug!(
@@ -1870,7 +2228,7 @@ impl WorkerRuntime {
                     envelope.request.request_id,
                     envelope.request.invited_npub
                 );
-                return self.handle_blind_request(envelope.request).await;
+                return Ok(ControlMessageAction::BlindRequests(vec![envelope.request]));
             }
             "optiona_blind_request_bundle_dm" => {
                 let envelope: BlindBallotRequestBundleEnvelope = match serde_json::from_value(value)
@@ -1880,18 +2238,18 @@ impl WorkerRuntime {
                         warn!(
                             "blind request bundle control message could not be decoded and will be retried: {error}"
                         );
-                        return Ok(false);
+                        return Ok(ControlMessageAction::Processed(false));
                     }
                 };
                 debug!(
                     "blind request bundle received: requests={}",
                     envelope.requests.len()
                 );
-                return self.handle_blind_request_bundle(envelope.requests).await;
+                return Ok(ControlMessageAction::BlindRequests(envelope.requests));
             }
-            _ => return Ok(true),
+            _ => return Ok(ControlMessageAction::Processed(true)),
         }
-        Ok(true)
+        Ok(ControlMessageAction::Processed(true))
     }
 
     async fn run_public_subscription(&self) -> Result<bool> {
@@ -2011,8 +2369,23 @@ impl WorkerRuntime {
                     event,
                     ..
                 }) if event_subscription_id == public_response_subscription_id => {
-                    self.process_public_response_event(&event, &since_ts)
-                        .await?;
+                    let runtime = self.clone();
+                    let since_ts = since_ts;
+                    let permit = runtime
+                        .public_response_permits
+                        .clone()
+                        .acquire_owned()
+                        .await
+                        .context("public response semaphore closed")?;
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        if let Err(error) = runtime
+                            .process_public_response_event(&event, &since_ts)
+                            .await
+                        {
+                            warn!("public response event {} failed: {error}", event.id);
+                        }
+                    });
                 }
                 Ok(RelayPoolNotification::Event {
                     subscription_id: event_subscription_id,
@@ -2176,6 +2549,7 @@ impl WorkerRuntime {
                 "public plane handled 1 new blind response event from {}",
                 event.id
             );
+            self.enqueue_public_archive_event(event, "blind response");
         }
         if handled {
             self.finalize_completed_elections().await?;
@@ -2188,96 +2562,110 @@ impl WorkerRuntime {
     }
 
     async fn handle_submission(&self, submission: QuestionnaireBlindResponseEvent) -> Result<bool> {
-        let mut state = self.state.lock().await;
-        let Some(election) = state.elections.get_mut(&submission.questionnaire_id) else {
-            return Ok(false);
-        };
-        if election
-            .processed_submission_ids
-            .contains(&submission.response_id)
-        {
-            return Ok(false);
-        }
-
-        let mut accepted = true;
-        let mut reason = "accepted".to_string();
-        let nullifiers = blind_response_nullifiers(&submission);
-        let commitments = blind_response_token_commitments(&submission);
-        let unique_nullifiers = nullifiers.iter().cloned().collect::<HashSet<_>>();
-        let unique_commitments = commitments.iter().cloned().collect::<HashSet<_>>();
-
-        if submission.event_type != "questionnaire_response_blind" {
-            accepted = false;
-            reason = "invalid_payload_shape".to_string();
-        } else if nullifiers.is_empty()
-            || commitments.is_empty()
-            || nullifiers.len() != unique_nullifiers.len()
-            || commitments.len() != unique_commitments.len()
-            || submission.response_id.trim().is_empty()
-            || submission.author_pubkey.trim().is_empty()
-        {
-            accepted = false;
-            reason = "invalid_payload_shape".to_string();
-        } else if !verify_blind_response_proofs(election, &submission) {
-            accepted = false;
-            reason = "invalid_token_proof".to_string();
-        } else if nullifiers
-            .iter()
-            .any(|nullifier| election.accepted_nullifiers.contains(nullifier))
-            || commitments
-                .iter()
-                .any(|commitment| election.accepted_token_commitments.contains(commitment))
-        {
-            accepted = false;
-            reason = "duplicate_nullifier".to_string();
-        }
-
-        if accepted {
-            for nullifier in &nullifiers {
-                election.accepted_nullifiers.insert(nullifier.clone());
-            }
-            for commitment in &commitments {
-                election
-                    .accepted_token_commitments
-                    .insert(commitment.clone());
-            }
-            election
-                .accepted_response_authors
-                .insert(submission.author_pubkey.clone());
-            election.accepted_response_count = election.accepted_response_count.saturating_add(1);
-        } else {
-            election.rejected_response_count = election.rejected_response_count.saturating_add(1);
-        }
-        election
-            .processed_submission_ids
-            .insert(submission.response_id.clone());
-        election.last_vote_verification_at = Some(now_iso());
-
-        if election
-            .capabilities
-            .contains(&WorkerCapability::PublishSubmissionDecisions)
-        {
-            let decision = QuestionnaireSubmissionDecisionEvent {
-                schema_version: 1,
-                event_type: "questionnaire_submission_decision".to_string(),
-                questionnaire_id: submission.questionnaire_id.clone(),
-                submission_id: submission.response_id.clone(),
-                token_nullifier: submission.token_nullifier.clone(),
-                accepted,
-                reason: reason.clone(),
-                decided_at: Timestamp::now().as_secs() as i64,
-                coordinator_pubkey: self.config.coordinator_npub.clone(),
-                delegation_id: Some(election.delegation_id.clone()),
-                worker_pubkey: Some(self.worker_npub.clone()),
+        let decision = {
+            let mut state = self.state.lock().await;
+            let Some(election) = state.elections.get_mut(&submission.questionnaire_id) else {
+                return Ok(false);
             };
-            let event_id = self.publish_submission_decision(&decision).await?;
-            election
-                .published_decisions
-                .insert(decision.submission_id.clone(), event_id);
-            election.last_decision_publish_at = Some(now_iso());
-        }
+            if election
+                .processed_submission_ids
+                .contains(&submission.response_id)
+            {
+                return Ok(false);
+            }
 
-        self.store.save(&state)?;
+            let mut accepted = true;
+            let mut reason = "accepted".to_string();
+            let nullifiers = blind_response_nullifiers(&submission);
+            let commitments = blind_response_token_commitments(&submission);
+            let unique_nullifiers = nullifiers.iter().cloned().collect::<HashSet<_>>();
+            let unique_commitments = commitments.iter().cloned().collect::<HashSet<_>>();
+
+            if submission.event_type != "questionnaire_response_blind" {
+                accepted = false;
+                reason = "invalid_payload_shape".to_string();
+            } else if nullifiers.is_empty()
+                || commitments.is_empty()
+                || nullifiers.len() != unique_nullifiers.len()
+                || commitments.len() != unique_commitments.len()
+                || submission.response_id.trim().is_empty()
+                || submission.author_pubkey.trim().is_empty()
+            {
+                accepted = false;
+                reason = "invalid_payload_shape".to_string();
+            } else if !verify_blind_response_proofs(election, &submission) {
+                accepted = false;
+                reason = "invalid_token_proof".to_string();
+            } else if nullifiers
+                .iter()
+                .any(|nullifier| election.accepted_nullifiers.contains(nullifier))
+                || commitments
+                    .iter()
+                    .any(|commitment| election.accepted_token_commitments.contains(commitment))
+            {
+                accepted = false;
+                reason = "duplicate_nullifier".to_string();
+            }
+
+            if accepted {
+                for nullifier in &nullifiers {
+                    election.accepted_nullifiers.insert(nullifier.clone());
+                }
+                for commitment in &commitments {
+                    election
+                        .accepted_token_commitments
+                        .insert(commitment.clone());
+                }
+                election
+                    .accepted_response_authors
+                    .insert(submission.author_pubkey.clone());
+                election.accepted_response_count =
+                    election.accepted_response_count.saturating_add(1);
+            } else {
+                election.rejected_response_count =
+                    election.rejected_response_count.saturating_add(1);
+            }
+            election
+                .processed_submission_ids
+                .insert(submission.response_id.clone());
+            election.last_vote_verification_at = Some(now_iso());
+
+            let decision = if election
+                .capabilities
+                .contains(&WorkerCapability::PublishSubmissionDecisions)
+            {
+                Some(QuestionnaireSubmissionDecisionEvent {
+                    schema_version: 1,
+                    event_type: "questionnaire_submission_decision".to_string(),
+                    questionnaire_id: submission.questionnaire_id.clone(),
+                    submission_id: submission.response_id.clone(),
+                    token_nullifier: submission.token_nullifier.clone(),
+                    accepted,
+                    reason: reason.clone(),
+                    decided_at: Timestamp::now().as_secs() as i64,
+                    coordinator_pubkey: self.config.coordinator_npub.clone(),
+                    delegation_id: Some(election.delegation_id.clone()),
+                    worker_pubkey: Some(self.worker_npub.clone()),
+                })
+            } else {
+                None
+            };
+
+            self.store.save(&state)?;
+            decision
+        };
+
+        if let Some(decision) = decision {
+            let event_id = self.publish_submission_decision(&decision).await?;
+            let mut state = self.state.lock().await;
+            if let Some(election) = state.elections.get_mut(&decision.questionnaire_id) {
+                election
+                    .published_decisions
+                    .insert(decision.submission_id.clone(), event_id);
+                election.last_decision_publish_at = Some(now_iso());
+                self.store.save(&state)?;
+            }
+        }
         Ok(true)
     }
 
@@ -2404,48 +2792,14 @@ impl WorkerRuntime {
             Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION),
             content,
         );
-        let tags = vec![
-            vec![
-                "t".to_string(),
-                "questionnaire_submission_decision".to_string(),
-            ],
-            vec![
-                "questionnaire".to_string(),
-                decision.questionnaire_id.clone(),
-            ],
-            vec!["schema".to_string(), "1".to_string()],
-            vec![
-                "etype".to_string(),
-                "questionnaire_submission_decision".to_string(),
-            ],
-            vec!["submission-id".to_string(), decision.submission_id.clone()],
-            vec!["nullifier".to_string(), decision.token_nullifier.clone()],
-            vec![
-                "accepted".to_string(),
-                if decision.accepted {
-                    "1".to_string()
-                } else {
-                    "0".to_string()
-                },
-            ],
-            vec!["reason".to_string(), decision.reason.clone()],
-            vec![
-                "coordinator".to_string(),
-                decision.coordinator_pubkey.clone(),
-            ],
-            vec!["worker".to_string(), self.worker_npub.clone()],
-            vec![
-                "delegation-id".to_string(),
-                decision.delegation_id.clone().unwrap_or_default(),
-            ],
-        ];
+        let tags = submission_decision_tags(decision, &self.worker_npub);
         for tag in tags {
             if let Ok(parsed) = Tag::parse(tag) {
                 builder = builder.tag(parsed);
             }
         }
-        let output = self.client.send_event_builder(builder).await?;
-        Ok(output.val.to_hex())
+        self.publish_public_event_builder(builder, "submission decision")
+            .await
     }
 
     async fn publish_questionnaire_closed_state(
@@ -2486,8 +2840,8 @@ impl WorkerRuntime {
                 builder = builder.tag(parsed);
             }
         }
-        let output = self.client.send_event_builder(builder).await?;
-        Ok(output.val.to_hex())
+        self.publish_public_event_builder(builder, "questionnaire close")
+            .await
     }
 
     async fn publish_result_summary(
@@ -2522,8 +2876,8 @@ impl WorkerRuntime {
                 builder = builder.tag(parsed);
             }
         }
-        let output = self.client.send_event_builder(builder).await?;
-        Ok(output.val.to_hex())
+        self.publish_public_event_builder(builder, "result summary")
+            .await
     }
 
     async fn apply_election_config(&self, snapshot: WorkerElectionConfigSnapshot) -> Result<()> {
@@ -2861,91 +3215,6 @@ impl WorkerRuntime {
             .await
     }
 
-    async fn handle_blind_request(&self, request: BlindBallotRequest) -> Result<bool> {
-        let (request, issuance) = match self.prepare_blind_issuance(request).await? {
-            PreparedBlindIssuance::Deferred => return Ok(false),
-            PreparedBlindIssuance::Handled => return Ok(true),
-            PreparedBlindIssuance::Issuance { request, issuance } => (request, issuance),
-        };
-        let envelope = BlindBallotIssuanceEnvelope {
-            message_type: "optiona_blind_issuance_dm".to_string(),
-            schema_version: 1,
-            issuance: issuance.clone(),
-            sent_at: now_iso(),
-        };
-        let content = serde_json::to_string(&envelope)?;
-        let recipient = PublicKey::from_bech32(&request.invited_npub)
-            .context("invalid invited npub on blind request")?;
-        let successes = self
-            .send_private_msg_best_effort(recipient, content, "blind issuance")
-            .await?;
-        debug!(
-            "blind issuance published: election_id={}, request_id={}, invited_npub={}, relay_successes={}",
-            request.election_id,
-            request.request_id,
-            request.invited_npub,
-            successes
-        );
-        self.mark_blind_issuances_published(&[request]).await?;
-        Ok(true)
-    }
-
-    async fn handle_blind_request_bundle(&self, requests: Vec<BlindBallotRequest>) -> Result<bool> {
-        let mut handled_any = false;
-        let mut prepared_by_recipient: std::collections::HashMap<
-            (String, String),
-            Vec<(BlindBallotRequest, BlindBallotIssuance)>,
-        > = std::collections::HashMap::new();
-        let mut seen_bundle_scope_keys = std::collections::HashSet::new();
-        for request in requests {
-            let scope_key = blind_request_issuance_scope_key(&request);
-            if !seen_bundle_scope_keys.insert(scope_key.clone()) {
-                warn!(
-                    "blind request bundle skipped duplicate voter/scope entry: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
-                    request.election_id,
-                    request.request_id,
-                    request.invited_npub,
-                    ballot_scope_key(&request.ballot_scope)
-                );
-                handled_any = true;
-                continue;
-            }
-            match self.prepare_blind_issuance(request).await? {
-                PreparedBlindIssuance::Deferred => {}
-                PreparedBlindIssuance::Handled => handled_any = true,
-                PreparedBlindIssuance::Issuance { request, issuance } => {
-                    handled_any = true;
-                    prepared_by_recipient
-                        .entry((request.invited_npub.clone(), request.election_id.clone()))
-                        .or_default()
-                        .push((request, issuance));
-                }
-            }
-        }
-        for ((recipient_npub, election_id), entries) in prepared_by_recipient {
-            let issuances = entries
-                .iter()
-                .map(|(_, issuance)| issuance.clone())
-                .collect::<Vec<_>>();
-            let successes = self
-                .publish_prepared_blind_issuances(&recipient_npub, &issuances)
-                .await?;
-            debug!(
-                "blind issuance bundle published: election_id={}, recipient_npub={}, issuances={}, relay_successes={}",
-                election_id,
-                recipient_npub,
-                issuances.len(),
-                successes
-            );
-            let requests = entries
-                .into_iter()
-                .map(|(request, _)| request)
-                .collect::<Vec<_>>();
-            self.mark_blind_issuances_published(&requests).await?;
-        }
-        Ok(handled_any)
-    }
-
     async fn apply_delegation(&self, delegation: WorkerDelegationCertificate) -> Result<()> {
         if delegation.message_type != "worker_delegation" || delegation.schema_version != 1 {
             return Ok(());
@@ -3070,6 +3339,48 @@ fn result_summary_tags(
     ]
 }
 
+fn submission_decision_tags(
+    decision: &QuestionnaireSubmissionDecisionEvent,
+    worker_npub: &str,
+) -> Vec<Vec<String>> {
+    vec![
+        vec![
+            "t".to_string(),
+            "questionnaire_submission_decision".to_string(),
+        ],
+        vec!["q".to_string(), decision.questionnaire_id.clone()],
+        vec![
+            "questionnaire".to_string(),
+            decision.questionnaire_id.clone(),
+        ],
+        vec!["schema".to_string(), "1".to_string()],
+        vec![
+            "etype".to_string(),
+            "questionnaire_submission_decision".to_string(),
+        ],
+        vec!["submission-id".to_string(), decision.submission_id.clone()],
+        vec!["nullifier".to_string(), decision.token_nullifier.clone()],
+        vec![
+            "accepted".to_string(),
+            if decision.accepted {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            },
+        ],
+        vec!["reason".to_string(), decision.reason.clone()],
+        vec![
+            "coordinator".to_string(),
+            decision.coordinator_pubkey.clone(),
+        ],
+        vec!["worker".to_string(), worker_npub.to_string()],
+        vec![
+            "delegation-id".to_string(),
+            decision.delegation_id.clone().unwrap_or_default(),
+        ],
+    ]
+}
+
 fn fixed_lookback_timestamp(lookback_secs: u64) -> Timestamp {
     let now = Timestamp::now().as_secs();
     Timestamp::from(now.saturating_sub(lookback_secs))
@@ -3176,7 +3487,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     fn sample_request() -> BlindBallotRequest {
         BlindBallotRequest {
@@ -3321,6 +3632,8 @@ mod tests {
         state.coordinator_npub = coordinator_npub.clone();
         state.relays = vec!["wss://relay.example.com".to_string()];
         store.save(&state).expect("save initial worker state");
+        let (control_blind_request_sender, _control_blind_request_receiver) =
+            mpsc::channel(CONTROL_BLIND_REQUEST_QUEUE_SIZE);
 
         let runtime = WorkerRuntime {
             config: WorkerConfig {
@@ -3328,11 +3641,14 @@ mod tests {
                 coordinator_npub,
                 worker_relays: vec![RelayUrl::parse("wss://relay.example.com").expect("relay")],
                 worker_dm_relays: vec![RelayUrl::parse("wss://relay.example.com").expect("relay")],
+                public_archive_relays: Vec::new(),
                 worker_relays_from_env: true,
                 worker_dm_relays_from_env: true,
                 worker_state_dir: state_dir.clone(),
                 heartbeat_seconds: 30,
                 poll_seconds: 5,
+                public_archive_interval_ms: 500,
+                public_archive_queue_size: 10_000,
             },
             client: Client::new(worker_keys.clone()),
             worker_pubkey: worker_keys.public_key(),
@@ -3342,8 +3658,38 @@ mod tests {
             state: Arc::new(Mutex::new(state)),
             relay_backoff: Arc::new(Mutex::new(HashMap::new())),
             completion_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            queued_control_event_ids: Arc::new(Mutex::new(HashSet::new())),
+            public_response_permits: Arc::new(Semaphore::new(PUBLIC_RESPONSE_CONCURRENCY)),
+            public_archive_sender: None,
+            control_blind_request_sender,
         };
         (runtime, state_dir)
+    }
+
+    fn throughput_scoped_request(voter_index: usize, question_index: usize) -> BlindBallotRequest {
+        let mut request = sample_request();
+        let slot_index = question_index + 1;
+        request.election_id = "q_throughput_bundle".to_string();
+        request.request_id = format!("request_{voter_index:03}_{slot_index:02}");
+        request.invited_npub = format!("npub1throughput{voter_index:048}");
+        request.blinded_message =
+            format!("blind_{voter_index:03}_{slot_index:02}_{}", "x".repeat(512));
+        request.client_nonce = format!("nonce_{voter_index:03}_{slot_index:02}");
+        request.ballot_scope = Some(json!({
+            "questionId": format!("q{slot_index}"),
+            "slotId": format!("q{slot_index}"),
+            "slotIndex": slot_index,
+            "version": 1
+        }));
+        request
+    }
+
+    fn stress_env_usize(name: &str, fallback: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(fallback)
     }
 
     fn public_definition(questionnaire_id: &str, key_id: &str) -> serde_json::Value {
@@ -4583,6 +4929,234 @@ mod tests {
         assert!(decoded_envelope.requests[0].blinded_message.len() > 16_000);
     }
 
+    #[tokio::test]
+    #[ignore = "local throughput probe"]
+    async fn throughput_stress_control_bundle_decode() {
+        let voter_count = stress_env_usize("WORKER_THROUGHPUT_BUNDLE_VOTERS", 60);
+        let question_count = stress_env_usize("WORKER_THROUGHPUT_BUNDLE_QUESTIONS", 23);
+        let coordinator_keys = Keys::generate();
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+        let mut compressed_count = 0usize;
+        let bundles = (0..voter_count)
+            .map(|voter_index| {
+                let envelope = BlindBallotRequestBundleEnvelope {
+                    message_type: "optiona_blind_request_bundle_dm".to_string(),
+                    schema_version: 1,
+                    requests: (0..question_count)
+                        .map(|question_index| {
+                            throughput_scoped_request(voter_index, question_index)
+                        })
+                        .collect(),
+                    sent_at: "2026-07-02T00:00:00Z".to_string(),
+                };
+                let content = serde_json::to_string(&envelope).expect("serialize request bundle");
+                let encoded = maybe_compress_bundle_content(
+                    content,
+                    "optiona_blind_request_bundle_dm",
+                    "2026-07-02T00:00:00Z",
+                )
+                .expect("encode request bundle");
+                let encoded_type = serde_json::from_str::<serde_json::Value>(&encoded)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("type")
+                            .and_then(|entry| entry.as_str())
+                            .map(str::to_string)
+                    });
+                if encoded_type.as_deref() == Some(COMPRESSED_BUNDLE_MESSAGE_TYPE) {
+                    compressed_count += 1;
+                }
+                encoded
+            })
+            .collect::<Vec<_>>();
+        let payload_bytes = bundles.iter().map(|bundle| bundle.len()).sum::<usize>();
+        let started = Instant::now();
+        let mut decoded_requests = 0usize;
+
+        for bundle in &bundles {
+            match runtime
+                .process_control_message(bundle)
+                .await
+                .expect("process bundled control message")
+            {
+                ControlMessageAction::BlindRequests(requests) => {
+                    decoded_requests += requests.len();
+                }
+                other => panic!("expected blind request bundle, got {other:?}"),
+            }
+        }
+
+        let elapsed = started.elapsed();
+        assert_eq!(decoded_requests, voter_count * question_count);
+        eprintln!(
+            "throughput_stress_control_bundle_decode bundles={} requests={} compressed_bundles={} payload_bytes={} elapsed_ms={} requests_per_sec={:.1}",
+            voter_count,
+            decoded_requests,
+            compressed_count,
+            payload_bytes,
+            elapsed.as_millis(),
+            decoded_requests as f64 / elapsed.as_secs_f64().max(0.001)
+        );
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[test]
+    #[ignore = "local throughput probe"]
+    fn throughput_stress_worker_state_save_large_session() {
+        let submission_count = stress_env_usize("WORKER_THROUGHPUT_STATE_SUBMISSIONS", 1_495);
+        let iteration_count = stress_env_usize("WORKER_THROUGHPUT_STATE_SAVE_ITERATIONS", 25);
+        let state_dir = unique_worker_state_dir("throughput-state-save");
+        let store = WorkerStore::open(&state_dir).expect("open worker store");
+        let mut state = WorkerPersistentState {
+            coordinator_npub: "npub1coordinator".to_string(),
+            worker_npub: "npub1worker".to_string(),
+            relays: vec!["wss://vm-1734.lnvps.cloud/".to_string()],
+            ..WorkerPersistentState::default()
+        };
+        state.seen_control_event_ids = (0..60)
+            .map(|index| (format!("control_event_{index:03}"), now_iso()))
+            .collect();
+        let mut election = ElectionRuntimeState {
+            election_id: "q_throughput_state".to_string(),
+            delegation_id: "delegation_throughput_state".to_string(),
+            capabilities: vec![
+                WorkerCapability::IssueBlindTokens,
+                WorkerCapability::VerifyPublicSubmissions,
+                WorkerCapability::PublishSubmissionDecisions,
+            ],
+            control_relays: vec!["wss://vm-1734.lnvps.cloud/".to_string()],
+            expires_at: (Utc::now() + ChronoDuration::days(1)).to_rfc3339(),
+            expected_invitee_count: Some(65),
+            accepted_response_count: submission_count as u64,
+            eligibility_configured: true,
+            ..ElectionRuntimeState::default()
+        };
+        for index in 0..65 {
+            election
+                .whitelist_npubs
+                .insert(format!("npub1voter{index:056}"));
+            election
+                .accepted_response_authors
+                .insert(format!("npub1voter{index:056}"));
+            election
+                .issued_invited_npubs
+                .insert(format!("npub1voter{index:056}"));
+        }
+        for index in 0..submission_count {
+            election
+                .processed_submission_ids
+                .insert(format!("submission_{index:04}"));
+            election
+                .accepted_nullifiers
+                .insert(format!("nullifier_{index:04}"));
+            election
+                .accepted_token_commitments
+                .insert(format!("commitment_{index:04}"));
+            election.published_decisions.insert(
+                format!("submission_{index:04}"),
+                format!("decision_event_{index:04}"),
+            );
+            election
+                .seen_blind_request_ids
+                .insert(format!("request_{index:04}"));
+            election.issued_invited_scope_keys.insert(format!(
+                "npub1voter{:056}|q{}",
+                index % 65,
+                (index % 23) + 1
+            ));
+        }
+        state
+            .elections
+            .insert(election.election_id.clone(), election);
+
+        store.save(&state).expect("warm save worker state");
+        let state_bytes = fs::metadata(state_dir.join("state.json"))
+            .expect("state metadata")
+            .len();
+        let started = Instant::now();
+        for _ in 0..iteration_count {
+            store.save(&state).expect("save worker state");
+        }
+        let elapsed = started.elapsed();
+        eprintln!(
+            "throughput_stress_worker_state_save_large_session submissions={} iterations={} state_bytes={} elapsed_ms={} avg_save_ms={:.3}",
+            submission_count,
+            iteration_count,
+            state_bytes,
+            elapsed.as_millis(),
+            elapsed.as_secs_f64() * 1000.0 / iteration_count as f64
+        );
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[tokio::test]
+    #[ignore = "local throughput probe"]
+    async fn throughput_stress_submission_update_without_publish() {
+        let submission_count = stress_env_usize("WORKER_THROUGHPUT_SUBMISSIONS", 100);
+        let questionnaire_id = "q_throughput_submission";
+        let (definition, keypair) = test_definition_and_keypair(questionnaire_id);
+        let coordinator_keys = Keys::generate();
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            questionnaire_id.to_string(),
+            ElectionRuntimeState {
+                election_id: questionnaire_id.to_string(),
+                delegation_id: "delegation_throughput_submission".to_string(),
+                capabilities: vec![WorkerCapability::VerifyPublicSubmissions],
+                expires_at: (Utc::now() + ChronoDuration::days(1)).to_rfc3339(),
+                definition: Some(definition),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let build_started = Instant::now();
+        let submissions = (0..submission_count)
+            .map(|index| {
+                signed_submission(
+                    &keypair,
+                    questionnaire_id,
+                    &format!("response_{index:04}"),
+                    &format!("commitment_{index:04}"),
+                    &format!("nullifier_{index:04}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let build_elapsed = build_started.elapsed();
+        let started = Instant::now();
+
+        for submission in submissions {
+            assert!(runtime
+                .handle_submission(submission)
+                .await
+                .expect("handle submission"));
+        }
+
+        let elapsed = started.elapsed();
+        {
+            let state = runtime.state.lock().await;
+            let election = state
+                .elections
+                .get(questionnaire_id)
+                .expect("throughput election");
+            assert_eq!(election.accepted_response_count, submission_count as u64);
+            assert_eq!(election.rejected_response_count, 0);
+        }
+        let state_bytes = fs::metadata(state_dir.join("state.json"))
+            .expect("state metadata")
+            .len();
+        eprintln!(
+            "throughput_stress_submission_update_without_publish submissions={} build_ms={} handle_ms={} handle_per_sec={:.1} state_bytes={}",
+            submission_count,
+            build_elapsed.as_millis(),
+            elapsed.as_millis(),
+            submission_count as f64 / elapsed.as_secs_f64().max(0.001),
+            state_bytes
+        );
+        fs::remove_dir_all(state_dir).ok();
+    }
+
     #[test]
     fn delegated_issuance_duplicate_guard_is_scoped() {
         let mut election = ElectionRuntimeState::default();
@@ -4801,13 +5375,33 @@ mod tests {
     #[test]
     fn result_summary_tags_include_q_index() {
         let tags = result_summary_tags("q_summary_test", "npub1worker", "npub1coordinator");
-        assert!(tags.contains(&vec![
-            "q".to_string(),
-            "q_summary_test".to_string(),
-        ]));
+        assert!(tags.contains(&vec!["q".to_string(), "q_summary_test".to_string(),]));
         assert!(tags.contains(&vec![
             "questionnaire-id".to_string(),
             "q_summary_test".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn submission_decision_tags_include_q_index() {
+        let decision = QuestionnaireSubmissionDecisionEvent {
+            schema_version: 1,
+            event_type: "questionnaire_submission_decision".to_string(),
+            questionnaire_id: "q_decision_test".to_string(),
+            submission_id: "submission_1".to_string(),
+            token_nullifier: "nullifier_1".to_string(),
+            accepted: true,
+            reason: "accepted".to_string(),
+            decided_at: 1_700_000_000,
+            coordinator_pubkey: "npub1coordinator".to_string(),
+            delegation_id: None,
+            worker_pubkey: Some("npub1worker".to_string()),
+        };
+        let tags = submission_decision_tags(&decision, "npub1worker");
+        assert!(tags.contains(&vec!["q".to_string(), "q_decision_test".to_string()]));
+        assert!(tags.contains(&vec![
+            "questionnaire".to_string(),
+            "q_decision_test".to_string(),
         ]));
     }
 
@@ -4856,7 +5450,10 @@ mod tests {
             )
             .await
             .expect("process malformed single blind request");
-        assert!(!single_handled);
+        assert!(matches!(
+            single_handled,
+            ControlMessageAction::Processed(false)
+        ));
 
         let bundle_handled = runtime
             .process_control_message(
@@ -4864,7 +5461,10 @@ mod tests {
             )
             .await
             .expect("process malformed blind request bundle");
-        assert!(!bundle_handled);
+        assert!(matches!(
+            bundle_handled,
+            ControlMessageAction::Processed(false)
+        ));
 
         fs::remove_dir_all(state_dir).ok();
     }

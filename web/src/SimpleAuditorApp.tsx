@@ -49,7 +49,7 @@ const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
 const AUDITOR_QUESTIONNAIRE_RESPONSE_PAGE_LIMIT = 500;
 const AUDITOR_QUESTIONNAIRE_RESPONSE_MAX_PAGES = 32;
 const AUDITOR_QUESTIONNAIRE_RESPONSE_TIME_BUDGET_MS = 30_000;
-const AUDITOR_RESPONSE_AUTO_REFRESH_MS = 8_000;
+const AUDITOR_RESPONSE_AUTO_REFRESH_MS = 60_000;
 const AUDITOR_LIST_AUTO_REFRESH_MS = 30_000;
 
 type AuditorQuestionnaireEntry = {
@@ -140,6 +140,14 @@ function calculateAuditorResponseFetchLimit(...counts: Array<number | null | und
   return Math.max(AUDITOR_QUESTIONNAIRE_RESPONSE_PAGE_LIMIT, expectedCount + headroom);
 }
 
+function selectedResponsesMatchPublishedTotal(
+  summary: QuestionnaireResultSummary | null,
+  responseDetails: AuditorQuestionnaireResponseDetail[],
+) {
+  const publishedTotal = (summary?.acceptedResponseCount ?? 0) + (summary?.rejectedResponseCount ?? 0);
+  return publishedTotal > 0 && responseDetails.length >= publishedTotal;
+}
+
 export default function SimpleAuditorApp() {
   const initialQuestionnaireId = useMemo(() => readInitialQuestionnaireIdFromUrl() || auditorMemoryCache.selectedQuestionnaireId, []);
   const canUseCachedSelection = initialQuestionnaireId === auditorMemoryCache.selectedQuestionnaireId;
@@ -170,9 +178,12 @@ export default function SimpleAuditorApp() {
     canUseCachedSelection ? auditorMemoryCache.responseRefreshStatus : null
   ));
   const [refreshInFlight, setRefreshInFlight] = useState(false);
+  const [manualRefreshInFlight, setManualRefreshInFlight] = useState(false);
   const initialListLoadDoneRef = useRef(auditorMemoryCache.questionnaires.length > 0);
   const initialSelectedLoadDoneRef = useRef(canUseCachedSelection && auditorMemoryCache.selectedResponseDetails.length >= 0);
   const selectedQuestionnaireIdRef = useRef("");
+  const selectedResponseDetailsRef = useRef<AuditorQuestionnaireResponseDetail[]>([]);
+  const selectedResultSummaryRef = useRef<QuestionnaireResultSummary | null>(null);
   const selectedRefreshEffectHasRunRef = useRef(false);
   const selectedChangeFromRefreshRef = useRef(false);
   const refreshQueueRef = useRef<{
@@ -189,6 +200,12 @@ export default function SimpleAuditorApp() {
   useEffect(() => {
     selectedQuestionnaireIdRef.current = selectedQuestionnaireId;
   }, [selectedQuestionnaireId]);
+  useEffect(() => {
+    selectedResponseDetailsRef.current = selectedResponseDetails;
+  }, [selectedResponseDetails]);
+  useEffect(() => {
+    selectedResultSummaryRef.current = selectedResultSummary;
+  }, [selectedResultSummary]);
   useEffect(() => {
     questionnairesRef.current = questionnaires;
   }, [questionnaires]);
@@ -511,6 +528,9 @@ export default function SimpleAuditorApp() {
   const drainRefreshQueue = useCallback(async (forceWhenHidden = false) => {
     if (refreshQueueRef.current.inFlightPromise) {
       await refreshQueueRef.current.inFlightPromise;
+      if (refreshQueueRef.current.pendingList || refreshQueueRef.current.pendingSelected) {
+        await drainRefreshQueue(forceWhenHidden);
+      }
       return;
     }
     setRefreshInFlight(true);
@@ -576,6 +596,9 @@ export default function SimpleAuditorApp() {
       if (!visible() || !selectedQuestionnaireIdRef.current.trim()) {
         return;
       }
+      if (selectedResponsesMatchPublishedTotal(selectedResultSummaryRef.current, selectedResponseDetailsRef.current)) {
+        return;
+      }
       void enqueueRefresh({ list: false, selected: true });
     };
     const refreshList = () => {
@@ -619,7 +642,8 @@ export default function SimpleAuditorApp() {
       ],
       relays: selectedQuestionnaire?.questionnaireRelays,
       readRelayLimit: 8,
-      limit: AUDITOR_QUESTIONNAIRE_RESPONSE_PAGE_LIMIT,
+      limit: 50,
+      since: Math.floor(Date.now() / 1000),
       parseQuestionnaireIdFromEvent: (event) => {
         if (event.kind === QUESTIONNAIRE_DEFINITION_KIND) {
           return parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null;
@@ -647,6 +671,9 @@ export default function SimpleAuditorApp() {
         return null;
       },
       onEvent: () => {
+        if (selectedResponsesMatchPublishedTotal(selectedResultSummaryRef.current, selectedResponseDetailsRef.current)) {
+          return;
+        }
         void enqueueRefresh({ list: false, selected: true });
       },
       onError: () => undefined,
@@ -777,11 +804,19 @@ export default function SimpleAuditorApp() {
     && selectedResultSummary,
   );
   async function refreshNow() {
+    if (manualRefreshInFlight) {
+      return;
+    }
     const nextQuestionnaireStatus = "Refreshing public questionnaires...";
     const nextResponseStatus = "Refreshing questionnaire responses...";
-    setQuestionnaireRefreshStatus((previous) => (previous === nextQuestionnaireStatus ? previous : nextQuestionnaireStatus));
-    setResponseRefreshStatus((previous) => (previous === nextResponseStatus ? previous : nextResponseStatus));
-    await enqueueRefresh({ list: true, selected: true, forceWhenHidden: true });
+    setManualRefreshInFlight(true);
+    try {
+      setQuestionnaireRefreshStatus((previous) => (previous === nextQuestionnaireStatus ? previous : nextQuestionnaireStatus));
+      setResponseRefreshStatus((previous) => (previous === nextResponseStatus ? previous : nextResponseStatus));
+      await enqueueRefresh({ list: true, selected: true, forceWhenHidden: true });
+    } finally {
+      setManualRefreshInFlight(false);
+    }
   }
 
   function formatQuestionnaireTime(unix: number | null) {
@@ -838,19 +873,19 @@ export default function SimpleAuditorApp() {
           <div className='simple-voter-header-row'>
             <h2 className='simple-voter-section-title'>Find Published Questionnaires</h2>
             <UiButton
-              icon={refreshInFlight ? "spinner" : "refresh"}
-              className='simple-voter-secondary'
+              icon={manualRefreshInFlight ? "spinner" : "refresh"}
+              className='simple-auditor-refresh-button'
               onPress={() => void refreshNow()}
-              isDisabled={refreshInFlight}
+              isDisabled={manualRefreshInFlight}
             >
-              {refreshInFlight ? "Busy..." : "Refresh"}
+              {manualRefreshInFlight ? "Busy..." : "Refresh"}
             </UiButton>
           </div>
           {questionnaires.length > 0 ? (
-            <>
+            <div className='simple-auditor-filters'>
               <UiTextField
                 label='Search'
-                inputClassName='simple-voter-input'
+                fieldClassName='simple-auditor-search-field'
                 inputProps={{
                   id: 'simple-auditor-search',
                   value: searchQuery,
@@ -861,7 +896,7 @@ export default function SimpleAuditorApp() {
               <UiSelect
                 label='Questionnaire organiser identity'
                 id='simple-auditor-coordinator-npub'
-                selectClassName='simple-voter-input'
+                fieldClassName='simple-auditor-organiser-field'
                 value={selectedCoordinatorNpub}
                 onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
               >
@@ -873,25 +908,23 @@ export default function SimpleAuditorApp() {
                 ))}
               </UiSelect>
               {filteredQuestionnaires.length > 0 ? (
-                <>
-                  <UiSelect
-                    label='Round'
-                    id='simple-auditor-round'
-                    selectClassName='simple-voter-input'
-                    value={selectedQuestionnaire?.questionnaireId ?? ''}
-                    onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
-                  >
-                    {filteredQuestionnaires.map((entry) => (
-                      <option key={entry.eventId} value={entry.questionnaireId}>
-                        {formatRoundOptionLabel(entry)}
-                      </option>
-                    ))}
-                  </UiSelect>
-                </>
+                <UiSelect
+                  label='Round'
+                  id='simple-auditor-round'
+                  fieldClassName='simple-auditor-round-field'
+                  value={selectedQuestionnaire?.questionnaireId ?? ''}
+                  onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
+                >
+                  {filteredQuestionnaires.map((entry) => (
+                    <option key={entry.eventId} value={entry.questionnaireId}>
+                      {formatRoundOptionLabel(entry)}
+                    </option>
+                  ))}
+                </UiSelect>
               ) : (
                 <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
               )}
-            </>
+            </div>
           ) : !initialListLoadDoneRef.current && refreshInFlight ? (
             <p className='simple-voter-note'>Loading questionnaires from Nostr relays...</p>
           ) : (
@@ -931,7 +964,6 @@ export default function SimpleAuditorApp() {
             <div className='simple-auditor-decrypt-control'>
               <UiTextField
                 label='Decrypt answer details'
-                inputClassName='simple-voter-input'
                 inputProps={{
                   id: 'simple-auditor-decrypt-nsec',
                   type: 'password',

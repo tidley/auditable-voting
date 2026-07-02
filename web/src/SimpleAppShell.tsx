@@ -116,6 +116,29 @@ function writeRoleToUrl(role: SimpleRole) {
   window.history.replaceState({}, "", url.toString());
 }
 
+function clearVoterInviteUrlContext() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  for (const key of [
+    "q",
+    "election_id",
+    "questionnaire",
+    "coordinator",
+    "invited",
+    "invite",
+    "invite_code",
+    "code",
+    "request_ballot",
+    "auto_request",
+  ]) {
+    url.searchParams.delete(key);
+  }
+  window.history.replaceState({}, "", url.toString());
+}
+
 function getLandingPageUrl() {
   if (typeof window === "undefined") {
     return "/";
@@ -456,6 +479,9 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     const targetRole = newIdentityConfirmRole;
     setNewIdentityConfirmRole(null);
     setAccountMenuOpen(false);
+    if (targetRole === "voter") {
+      clearVoterInviteUrlContext();
+    }
     window.dispatchEvent(new Event(`auditable-voting:${targetRole}-new`));
   }
 

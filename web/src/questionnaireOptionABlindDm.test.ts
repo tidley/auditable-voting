@@ -197,7 +197,7 @@ describe("questionnaireOptionABlindDm", () => {
     expect(relays.slice(0, 3)).toEqual([
       "wss://recipient.one",
       "wss://recipient.two",
-      "wss://relay.nostr.net",
+      "wss://vm-1734.lnvps.cloud/",
     ]);
     expect(relays).not.toContain("wss://relay.nostr.info");
   });
@@ -524,6 +524,7 @@ describe("questionnaireOptionABlindDm", () => {
     const relays = giftWrapCall?.[0] as string[];
 
     expect(relays).toEqual([
+      "wss://vm-1734.lnvps.cloud/",
       "wss://relay.nostr.net",
       "wss://nos.lol",
     ]);

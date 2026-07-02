@@ -20,7 +20,6 @@ type RelayProbe = {
 };
 
 const RELAY_PROBE_TIMEOUT_MS = 4000;
-const RELAY_PROBE_RETRY_DELAY_MS = 350;
 const RELAY_PROBE_CONCURRENCY = 3;
 
 function classifyRelayStrength(latencyMs: number): RelayStrength {
@@ -99,16 +98,11 @@ async function probeRelay(relay: string): Promise<RelayProbe> {
   try {
     return await attemptRelayProbe(relay);
   } catch {
-    await new Promise((resolve) => window.setTimeout(resolve, RELAY_PROBE_RETRY_DELAY_MS));
-    try {
-      return await attemptRelayProbe(relay);
-    } catch {
-      return {
-        relay,
-        strength: 'offline',
-        detail: 'Offline',
-      };
-    }
+    return {
+      relay,
+      strength: 'offline',
+      detail: 'Offline',
+    };
   }
 }
 
@@ -128,43 +122,22 @@ async function probeRelaysInBatches(
 function RelayProbeList({
   title,
   relays,
+  probesByRelay,
   renderRelayAction,
 }: {
   title: string;
   relays: string[];
+  probesByRelay: Map<string, RelayProbe>;
   renderRelayAction?: (relay: string) => ReactNode;
 }) {
-  const [probes, setProbes] = useState<RelayProbe[]>(() =>
-    relays.map((relay) => ({
+  const probes = useMemo(
+    () => relays.map((relay) => probesByRelay.get(relay) ?? ({
       relay,
-      strength: 'checking',
+      strength: 'checking' as const,
       detail: 'Checking',
     })),
+    [probesByRelay, relays],
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    setProbes(
-      relays.map((relay) => ({
-        relay,
-        strength: 'checking',
-        detail: 'Checking',
-      })),
-    );
-
-    void probeRelaysInBatches(relays, (probe) => {
-      if (cancelled) {
-        return;
-      }
-      setProbes((current) => current.map((entry) => (
-        entry.relay === probe.relay ? probe : entry
-      )));
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [relays]);
 
   return (
     <div className='simple-relay-group'>
@@ -216,6 +189,39 @@ export default function SimpleRelayPanel({
   const displayedQuestionnaireRelays = useDefaultQuestionnaireRelays
     ? DEFAULT_QUESTIONNAIRE_RELAYS
     : configuredQuestionnaireRelays;
+  const allDisplayedRelays = useMemo(
+    () => Array.from(new Set([
+      ...displayedQuestionnaireRelays,
+      ...publicRelays,
+      ...dmRelays,
+      ...mailboxRelays,
+    ])),
+    [displayedQuestionnaireRelays, dmRelays, mailboxRelays, publicRelays],
+  );
+  const [probesByRelay, setProbesByRelay] = useState<Map<string, RelayProbe>>(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    setProbesByRelay(new Map(allDisplayedRelays.map((relay) => [relay, {
+      relay,
+      strength: 'checking',
+      detail: 'Checking',
+    }])));
+
+    void probeRelaysInBatches(allDisplayedRelays, (probe) => {
+      if (cancelled) {
+        return;
+      }
+      setProbesByRelay((current) => {
+        const next = new Map(current);
+        next.set(probe.relay, probe);
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [allDisplayedRelays]);
   const questionnaireRelayStatus = !useDefaultQuestionnaireRelays && questionnaireRelayMetadata.length > 0
     ? `${questionnaireRelayMetadata.length} custom relay${questionnaireRelayMetadata.length === 1 ? "" : "s"} will be published in new questionnaire metadata.`
     : !useDefaultQuestionnaireRelays
@@ -292,6 +298,7 @@ export default function SimpleRelayPanel({
           <RelayProbeList
             title={useDefaultQuestionnaireRelays ? 'Default questionnaire relays' : 'Custom questionnaire relays'}
             relays={displayedQuestionnaireRelays}
+            probesByRelay={probesByRelay}
             renderRelayAction={useDefaultQuestionnaireRelays
               ? undefined
               : (relay) => (
@@ -306,9 +313,9 @@ export default function SimpleRelayPanel({
           />
         </div>
       ) : null}
-      <RelayProbeList title='Public relays' relays={publicRelays} />
-      <RelayProbeList title='DM relays' relays={dmRelays} />
-      <RelayProbeList title='Mailbox relays' relays={mailboxRelays} />
+      <RelayProbeList title='Public relays' relays={publicRelays} probesByRelay={probesByRelay} />
+      <RelayProbeList title='DM relays' relays={dmRelays} probesByRelay={probesByRelay} />
+      <RelayProbeList title='Mailbox relays' relays={mailboxRelays} probesByRelay={probesByRelay} />
     </SimpleCollapsibleSection>
   );
 }

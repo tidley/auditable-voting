@@ -188,7 +188,11 @@ describe("SimpleAppShell invite-link login", () => {
     const handleNewIdentity = () => {
       newIdentityEvents.push("voter");
     };
-    window.history.pushState(null, "", "/?role=voter");
+    window.history.pushState(
+      null,
+      "",
+      "/?role=voter&q=q_public_link&coordinator=npub1organiser&invited=npub1voter&invite_code=abc123&request_ballot=1",
+    );
     window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
@@ -215,6 +219,13 @@ describe("SimpleAppShell invite-link login", () => {
       await user.click(await screen.findByRole("button", { name: "Create new identity" }));
 
       expect(newIdentityEvents).toEqual(["voter"]);
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("role")).toBe("voter");
+      expect(params.get("q")).toBeNull();
+      expect(params.get("coordinator")).toBeNull();
+      expect(params.get("invited")).toBeNull();
+      expect(params.get("invite_code")).toBeNull();
+      expect(params.get("request_ballot")).toBeNull();
     } finally {
       window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
       confirmSpy.mockRestore();

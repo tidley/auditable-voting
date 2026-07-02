@@ -15,8 +15,8 @@ Optional audit proxy runtime for election-scoped coordinator delegation.
 WORKER_NSEC=nsec1...
 COORDINATOR_NPUB=npub1...
 # Optional override:
-# WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net
-# WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net
+# WORKER_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net
+# WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net
 ```
 
 Optional:
@@ -25,8 +25,13 @@ Optional:
 WORKER_STATE_DIR=/var/lib/auditable-voting-worker
 WORKER_HEARTBEAT_SECONDS=30
 WORKER_POLL_SECONDS=5
-WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net
+WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net
+WORKER_PUBLIC_ARCHIVE_RELAYS=wss://nos.lol,wss://relay.primal.net,wss://relay.damus.io
+WORKER_PUBLIC_ARCHIVE_INTERVAL_MS=500
+WORKER_PUBLIC_ARCHIVE_QUEUE_SIZE=10000
 ```
+
+`WORKER_PUBLIC_ARCHIVE_RELAYS` is optional. When set, the worker still publishes public responses, decisions, close events, and summaries to the hot worker relays first, then copies those same signed events to the archive relays one relay/event at a time at `WORKER_PUBLIC_ARCHIVE_INTERVAL_MS`. Archive fanout is best-effort and bounded by `WORKER_PUBLIC_ARCHIVE_QUEUE_SIZE`.
 
 ## Run
 
@@ -57,9 +62,11 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - retry configured and delegated control relays with per-relay backoff instead of permanently dropping older persisted relay hints
 - consume audit proxy election-config DMs carrying the blind-signing key, public questionnaire definition pointer, whitelisted voter npubs, and one-use private invite-code hashes
 - consume delegated blind-token requests over private DMs, accepting both plain JSON request bundles and gzip+base64url compressed bundle wrappers
+- queue parsed blind-token request DMs behind a bounded worker queue and drain them in short batches so relay notifications are not blocked by issuance publishing, while deferred requests remain retryable
 - issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled, but only after the matching election config has arrived; unlisted general-link requests stay retryable until the organiser's later whitelist sync authorises them, and large multi-credential issuance bundles are compressed before NIP-17 encryption when that reduces the payload
 - redeem private invite codes locally from configured code hashes while voters also copy the same request to the organiser so the organiser UI can show the link as claimed
 - process public questionnaire submissions only after the public questionnaire definition and a positive expected participant count are configured, and stop scanning a round once expected accepted completion is reached
 - publish delegated public submission decisions with delegation provenance tags
+- optionally drip-feed handled public responses, submission decisions, close events, and result summaries to public archive relays without blocking the hot worker relay path
 - optionally publish a delegated close-state event and result summary when delegated capabilities are enabled, expected invitee completion is reached using accepted valid responses only, and no delegated blind request is still waiting for authorisation/configuration
 - keep running after currently known delegated work completes so later sessions and late general-invite ballot requests can still be handled; stop with Ctrl-C or terminate the process when you are done with the current proxy identity

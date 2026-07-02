@@ -97,6 +97,32 @@ describe("SimpleAuditorApp", () => {
 
     expect(firstResponseFetch?.limit).toBeGreaterThanOrEqual(1320);
   });
+
+  it("keeps manual refresh available while background refresh is waiting", async () => {
+    setupTransportMocks();
+    let resolveDefinitions: (entries: typeof definitions) => void = () => undefined;
+    transportMocks.fetchQuestionnaireDefinitions.mockImplementation((input?: { questionnaireId?: string }) => {
+      const questionnaireId = input?.questionnaireId?.trim();
+      if (questionnaireId) {
+        return Promise.resolve(definitions.filter((entry) => entry.definition.questionnaireId === questionnaireId));
+      }
+      return new Promise<typeof definitions>((resolve) => {
+        resolveDefinitions = resolve;
+      });
+    });
+    const { default: SimpleAuditorApp } = await import("./SimpleAuditorApp");
+
+    render(<SimpleAuditorApp />);
+
+    await waitFor(() => {
+      expect(transportMocks.fetchQuestionnaireDefinitions).toHaveBeenCalled();
+    });
+    const refreshButton = screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement;
+    expect(refreshButton.disabled).toBe(false);
+    expect(refreshButton.getAttribute("aria-disabled")).not.toBe("true");
+
+    resolveDefinitions(definitions);
+  });
 });
 
 function setupTransportMocks() {

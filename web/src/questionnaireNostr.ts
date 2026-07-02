@@ -158,7 +158,11 @@ async function queryQuestionnaireEventsPaginated(input: {
       limit: pageLimit,
     });
     const sortedPage = sortEventsNewestFirst(uniqueEvents(pageEvents));
+    let addedCount = 0;
     for (const event of sortedPage) {
+      if (!eventsById.has(event.id)) {
+        addedCount += 1;
+      }
       eventsById.set(event.id, event);
     }
     if (sortedPage.length < pageLimit) {
@@ -168,7 +172,9 @@ async function queryQuestionnaireEventsPaginated(input: {
     if (!Number.isFinite(oldestCreatedAt) || oldestCreatedAt <= 0) {
       break;
     }
-    until = Math.min(until ?? oldestCreatedAt, oldestCreatedAt) - 1;
+    until = until === oldestCreatedAt && addedCount === 0
+      ? oldestCreatedAt - 1
+      : oldestCreatedAt;
   }
 
   const sortedEvents = sortEventsNewestFirst([...eventsById.values()]);
@@ -575,6 +581,7 @@ export function subscribeQuestionnaireEventKinds(input: {
   kinds: number[];
   relays?: string[];
   limit?: number;
+  since?: number;
   readRelayLimit?: number;
   useQuestionnaireIdTagFilter?: boolean;
   parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
@@ -601,11 +608,15 @@ export function subscribeQuestionnaireEventKinds(input: {
     const baseFilter: {
       kinds: number[];
       limit: number;
+      since?: number;
       "#q"?: string[];
     } = {
       kinds: eventKinds,
       limit: input.limit ?? 200,
     };
+    if (typeof input.since === "number") {
+      baseFilter.since = input.since;
+    }
     if (input.useQuestionnaireIdTagFilter !== false && input.questionnaireId.trim()) {
       baseFilter["#q"] = [input.questionnaireId.trim()];
     }
