@@ -3,6 +3,15 @@ import { normaliseQuestionnaireInviteCode } from "./questionnaireInviteCode";
 
 const DEFAULT_INVITE_BASE_URL = "https://example.invalid/";
 
+function parseCredentialsPerVoter(params: URLSearchParams): 2 | undefined {
+  const value = (
+    params.get("credentials_per_voter")
+    ?? params.get("credentialsPerVoter")
+    ?? ""
+  ).trim();
+  return value === "2" ? 2 : undefined;
+}
+
 export function parseInviteFromUrl(search = typeof window !== "undefined" ? window.location.search : ""): {
   electionId: string | null;
   invite: ElectionInviteMessage | null;
@@ -13,6 +22,7 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
   const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
   const coordinatorNpub = (params.get("coordinator") ?? "").trim();
   const invitedNpub = (params.get("invited") ?? "").trim();
+  const credentialsPerVoter = parseCredentialsPerVoter(params);
   const relayHints = params.getAll("relay")
     .concat((params.get("relays") ?? "").split(","))
     .map((entry) => entry.trim())
@@ -40,6 +50,7 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
             coordinatorNpub,
             relays: relayHints.length > 0 ? relayHints : undefined,
           },
+          ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
           expiresAt: null,
         },
         inviteCode: inviteCode || null,
@@ -77,6 +88,7 @@ export function buildInviteUrl(input: {
     coordinatorNpub: input.invite.coordinatorNpub,
     invitedNpub: input.invite.invitedNpub,
     relays: input.invite.definitionReference?.relays,
+    credentialsPerVoter: input.invite.credentialsPerVoter,
   });
 }
 
@@ -89,6 +101,7 @@ export function buildQuestionnaireInviteUrl(input: {
   login?: boolean;
   autoRequestBallot?: boolean;
   relays?: string[] | null;
+  credentialsPerVoter?: 1 | 2 | null;
 }) {
   const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : DEFAULT_INVITE_BASE_URL);
   const url = new URL("./", base);
@@ -117,6 +130,9 @@ export function buildQuestionnaireInviteUrl(input: {
   }
   if (input.autoRequestBallot) {
     url.searchParams.set("request_ballot", "1");
+  }
+  if (input.credentialsPerVoter === 2) {
+    url.searchParams.set("credentials_per_voter", "2");
   }
   return url.toString();
 }
@@ -157,7 +173,9 @@ export function isGeneralVoterInviteUrl(search = typeof window !== "undefined" ?
     || (params.get("invited") ?? "").trim()
     || (params.get("invite") ?? "").trim()
     || (params.get("invite_code") ?? "").trim()
-    || (params.get("code") ?? "").trim(),
+    || (params.get("code") ?? "").trim()
+    || (params.get("credentials_per_voter") ?? "").trim()
+    || (params.get("credentialsPerVoter") ?? "").trim(),
   );
 
   return !hasPrivateInviteContext;

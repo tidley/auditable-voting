@@ -510,6 +510,10 @@ function mergeInvitesByKey(...groups: ElectionInviteMessage[][]) {
   return [...byKey.values()];
 }
 
+function inviteGrantsProxyCredential(invite: ElectionInviteMessage | null | undefined, questionnaireId: string) {
+  return Boolean(invite?.electionId === questionnaireId && invite.credentialsPerVoter === 2);
+}
+
 type QuestionnaireOptionAVoterPanelProps = {
   announcedQuestionnaireIds?: string[];
   localVoterNpub?: string;
@@ -742,16 +746,59 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? (questionnaireDefinition?.questionnaireId === currentQuestionnaireId ? questionnaireDefinition : null)
     ?? (currentQuestionnaireId ? readCachedQuestionnaireDefinition(currentQuestionnaireId) : null);
   const perQuestionMode = questionnaireUsesPerQuestionCredentials(currentDefinition);
-  const credentialInvite = (snapshot?.inviteMessage?.electionId === currentQuestionnaireId ? snapshot.inviteMessage : null)
-    ?? (activeInvite?.electionId === currentQuestionnaireId ? activeInvite : null)
-    ?? contextPendingInvites.find((invite) => invite.electionId === currentQuestionnaireId)
-    ?? (inviteContext.invite?.electionId === currentQuestionnaireId ? inviteContext.invite : null);
-  const credentialCount = credentialInvite?.credentialsPerVoter === 2 ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
+  const proxyCredentialInvite = [
+    snapshot?.inviteMessage,
+    activeInvite,
+    ...contextPendingInvites,
+    inviteContext.invite,
+  ].find((invite) => inviteGrantsProxyCredential(invite, currentQuestionnaireId)) ?? null;
+  const credentialCount = proxyCredentialInvite ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
   const showProxyBallotsTogether = perQuestionMode && credentialCount > 1;
   const credentialIndexes = useMemo(
     () => Array.from({ length: credentialCount }, (_, index) => index + 1),
     [credentialCount],
   );
+  useEffect(() => {
+    const invite = proxyCredentialInvite;
+    if (
+      !runtime
+      || !snapshot?.loginVerified
+      || !invite
+      || snapshot.electionId !== currentQuestionnaireId
+      || snapshot.inviteMessage?.credentialsPerVoter === 2
+    ) {
+      return;
+    }
+
+    const next = runtime.bootstrapWithLocalIdentity({
+      invitedNpub: snapshot.invitedNpub,
+      coordinatorNpub: invite.coordinatorNpub,
+      invite,
+      allowInviteRecipientMismatch: true,
+      allowInviteMissing: true,
+    });
+    setSignedInNpub(next.invitedNpub);
+    setRefreshNonce((value) => value + 1);
+
+    if (perQuestionMode && next.blindRequestSent && !next.submission) {
+      void runtime.requestBlindBallot({ forceResend: true }).then(() => {
+        markSignerWaitRecoveryBaseline();
+        scheduleSignerInitialPull();
+        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+        setRefreshNonce((value) => value + 1);
+      }).catch(() => undefined);
+    }
+  }, [
+    currentQuestionnaireId,
+    perQuestionMode,
+    proxyCredentialInvite,
+    runtime,
+    snapshot?.electionId,
+    snapshot?.invitedNpub,
+    snapshot?.inviteMessage?.credentialsPerVoter,
+    snapshot?.loginVerified,
+    snapshot?.submission,
+  ]);
   const submittedQuestionKey = Object.entries(
     snapshot?.electionId === currentQuestionnaireId ? snapshot.submissions ?? {} : {},
   ).map(([key, submission]) => `${key}:${submission.submissionId}`).sort().join("|");
@@ -1503,10 +1550,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   useEffect(() => {
     const voterNpub = signedInNpub.trim();
-    if (!voterNpub || hasInFlightState() || inviteContext.invite) {
+    const inFlight = hasInFlightState();
+    if (!voterNpub || inviteContext.invite) {
       return;
     }
-    if (pendingInvites.length > 0 || activeInvite) {
+    if (!inFlight && (pendingInvites.length > 0 || activeInvite)) {
       return;
     }
 
@@ -1520,6 +1568,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
       inviteRefreshAtRef.current = now;
       void loadPendingInvites({ voterNpub, allowRelayFetch: true }).then((invites) => {
+        if (inFlight && currentQuestionnaireId) {
+          const matchingInvites = invites.filter((invite) => invite.electionId === currentQuestionnaireId);
+          if (matchingInvites.length > 0) {
+            setPendingInvites((current) => mergeInvitesByKey(current, matchingInvites));
+          }
+          return;
+        }
         setPendingInvites(invites);
         const usableInvites = linkedContextElectionId
           ? invites.filter((invite) => invite.electionId === linkedContextElectionId)
@@ -1554,7 +1609,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       window.removeEventListener("online", triggerRefresh);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [activeInvite, electionId, inviteContext.invite, latestAnnouncedQuestionnaireId, linkedContextElectionId, pendingInvites.length, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.blindIssuance?.issuanceId, snapshot?.submission?.submissionId]);
+  }, [activeInvite, currentQuestionnaireId, electionId, inviteContext.invite, latestAnnouncedQuestionnaireId, linkedContextElectionId, pendingInvites.length, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.blindIssuance?.issuanceId, snapshot?.submission?.submissionId]);
 
   useEffect(() => {
     const voterNpub = signedInNpub.trim()
@@ -1623,15 +1678,27 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function findBestLocalInvite(voterNpub: string, preferredElectionId = electionId || linkedContextElectionId) {
-    const localInvites = [...listInvitesFromMailbox(voterNpub)];
+    const voter = voterNpub.trim();
+    const localInvites = [...listInvitesFromMailbox(voter)];
+    const urlInvite = inviteContext.invite?.invitedNpub?.trim() === voter ? inviteContext.invite : null;
+    const chooseInvite = (
+      localInvite: ElectionInviteMessage | null | undefined,
+      matchingUrlInvite: ElectionInviteMessage | null | undefined,
+    ) => (
+      matchingUrlInvite?.credentialsPerVoter === 2 ? matchingUrlInvite : localInvite ?? matchingUrlInvite ?? null
+    );
     const preferredId = preferredElectionId.trim();
     if (preferredId) {
-      return localInvites.find((invite) => invite.electionId === preferredId) ?? null;
+      const matchingUrlInvite = urlInvite?.electionId === preferredId ? urlInvite : null;
+      const matchingLocalInvite = localInvites.find((invite) => invite.electionId === preferredId) ?? null;
+      return chooseInvite(matchingLocalInvite, matchingUrlInvite);
     }
     if (latestAnnouncedQuestionnaireId) {
-      return localInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) ?? null;
+      const matchingUrlInvite = urlInvite?.electionId === latestAnnouncedQuestionnaireId ? urlInvite : null;
+      const matchingLocalInvite = localInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) ?? null;
+      return chooseInvite(matchingLocalInvite, matchingUrlInvite);
     }
-    return localInvites.at(-1) ?? null;
+    return chooseInvite(localInvites.at(-1), urlInvite);
   }
 
   function ensureLocalSession(options?: { allowInviteMissing?: boolean; allowRelayInviteFetch?: boolean }) {

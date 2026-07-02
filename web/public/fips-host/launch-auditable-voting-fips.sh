@@ -90,7 +90,8 @@ Common environment overrides:
 Optional proxy environment:
   WORKER_NSEC=nsec1...
   COORDINATOR_NPUB=npub1...
-  WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol
+  WORKER_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol
+  WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net
 EOF
 }
 
@@ -847,10 +848,11 @@ install_proxy_service() {
 RUST_LOG=debug
 WORKER_NSEC=${WORKER_NSEC:-nsec1...}
 COORDINATOR_NPUB=${COORDINATOR_NPUB:-npub1...}
-WORKER_RELAYS=${WORKER_RELAYS:-wss://relay.nostr.net,wss://nos.lol}
+WORKER_RELAYS=${WORKER_RELAYS:-wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol}
+WORKER_DM_RELAYS=${WORKER_DM_RELAYS:-wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net}
 WORKER_STATE_DIR=/var/lib/auditable-voting-worker
 WORKER_HEARTBEAT_SECONDS=${WORKER_HEARTBEAT_SECONDS:-30}
-WORKER_POLL_SECONDS=${WORKER_POLL_SECONDS:-15}
+WORKER_POLL_SECONDS=${WORKER_POLL_SECONDS:-5}
 EOF
     chmod 0600 /etc/auditable-voting/worker.env
   fi

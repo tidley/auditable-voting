@@ -2337,6 +2337,131 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     ]);
   });
 
+  it("picks up a later proxy-voter invite while a public-link ballot request is pending", async () => {
+    const localVoterNpub = "npub1" + "v".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      questionnaireId: "q_proxy_late_invite",
+      title: "Late proxy invite",
+      description: "",
+      createdAt: 1781540000,
+      openAt: 1781540000,
+      closeAt: 1781543600,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseMode: "blind_token" as const,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question" as const,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1" as const,
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no" as const,
+        prompt: "Approve proxy item?",
+        required: true,
+        ballotSlot: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+      }],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    fetchOptionAInviteDmsMock.mockResolvedValue([{
+      type: "election_invite",
+      schemaVersion: 1,
+      electionId: "q_proxy_late_invite",
+      title: "Late proxy invite",
+      description: "",
+      voteUrl: "https://example.test/vote?q=q_proxy_late_invite",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      blindSigningPublicKey: definition.blindSigningPublicKey,
+      definition,
+      credentialsPerVoter: 2,
+      expiresAt: null,
+    }]);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_proxy_late_invite",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      loginVerified: true,
+      loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+      inviteMessage: {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_proxy_late_invite",
+        title: "Late proxy invite",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_proxy_late_invite",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: definition.blindSigningPublicKey,
+        definition,
+        expiresAt: null,
+      },
+      blindRequest: {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: "q_proxy_late_invite",
+        requestId: "request_proxy_1",
+        invitedNpub: localVoterNpub,
+        blindedMessage: "blinded_proxy_1",
+        clientNonce: "nonce_proxy_1",
+        blindSigningKeyId: "blind_key",
+        ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+        createdAt: "2026-06-15T23:00:00.000Z",
+        lastSentAt: "2026-06-15T23:00:00.000Z",
+      },
+      blindRequests: {
+        "slot:1:v1": {
+          type: "blind_ballot_request",
+          schemaVersion: 1,
+          electionId: "q_proxy_late_invite",
+          requestId: "request_proxy_1",
+          invitedNpub: localVoterNpub,
+          blindedMessage: "blinded_proxy_1",
+          clientNonce: "nonce_proxy_1",
+          blindSigningKeyId: "blind_key",
+          ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+          createdAt: "2026-06-15T23:00:00.000Z",
+          lastSentAt: "2026-06-15T23:00:00.000Z",
+        },
+      },
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-06-15T23:00:00.000Z",
+      blindIssuance: null,
+      blindIssuances: {},
+      blindTokenSecret: null,
+      blindTokenSecrets: {},
+      credentialReady: false,
+      draftResponses: [],
+      submissions: {},
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-06-15T23:00:00.000Z",
+    });
+    const requestCalls: Array<Parameters<QuestionnaireOptionAVoterRuntime["requestBlindBallot"]>[0]> = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(
+        this: QuestionnaireOptionAVoterRuntime,
+        options?: Parameters<QuestionnaireOptionAVoterRuntime["requestBlindBallot"]>[0],
+      ) {
+        requestCalls.push(options);
+        return this.getSnapshot()!;
+      });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_proxy_late_invite"]} localVoterNpub={localVoterNpub} />);
+
+    await waitFor(() => {
+      expect(fetchOptionAInviteDmsMock).toHaveBeenCalled();
+      expect(requestCalls).toContainEqual({ forceResend: true });
+    });
+  });
+
   it("does not mark a per-question session all answered after only one ballot submission", async () => {
     const localVoterNpub = "npub1" + "p".repeat(58);
     const coordinatorNpub = "npub1" + "b".repeat(58);

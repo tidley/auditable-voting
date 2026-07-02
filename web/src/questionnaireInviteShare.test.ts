@@ -49,6 +49,20 @@ describe("questionnaire invite sharing", () => {
     expect(parsed.invite?.invitedNpub).toBe(invitedNpub);
   });
 
+  it("preserves proxy-voter credential count in personalised links", () => {
+    const url = buildQuestionnaireInviteUrl({
+      baseUrl: "https://vote.example/simple-coordinator.html?role=coordinator",
+      electionId: "q_public_123",
+      coordinatorNpub: "npub1coordinator",
+      invitedNpub: "npub1invited",
+      credentialsPerVoter: 2,
+    });
+    const parsed = parseInviteFromUrl(new URL(url).search);
+
+    expect(url).toBe("https://vote.example/?login=1&role=voter&q=q_public_123&coordinator=npub1coordinator&invited=npub1invited&credentials_per_voter=2");
+    expect(parsed.invite?.credentialsPerVoter).toBe(2);
+  });
+
   it("can build a private code link that opens the questionnaire directly", () => {
     const url = buildQuestionnaireInviteUrl({
       baseUrl: "https://vote.example/simple-coordinator.html?role=coordinator",

@@ -4766,7 +4766,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (optionACoordinatorRuntime && optionAElectionId.trim()) {
       optionACoordinatorRuntime.setWhitelistCredentialsPerVoter(npub, proxyVoter ? 2 : 1);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      void syncActiveWorkerElectionConfig().catch(() => false);
+      void (async () => {
+        if (proxyVoter) {
+          await sendInviteToKnownVoter(npub, {
+            silent: true,
+            syncWorkerConfig: false,
+            statusTarget: "admitted",
+          });
+        }
+        await syncActiveWorkerElectionConfig().catch(() => false);
+      })();
     }
   }
 
@@ -5201,6 +5210,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!electionId || !coordinatorNpub || !normalizedInvitedNpub) {
       return "";
     }
+    const whitelistEntry = optionACoordinatorRuntime?.getSnapshot()?.whitelist?.[normalizedInvitedNpub]
+      ?? optionAKnownVoters.find((entry) => entry.invitedNpub.trim() === normalizedInvitedNpub)
+      ?? null;
     return buildQuestionnaireInviteUrl({
       electionId,
       coordinatorNpub,
@@ -5208,6 +5220,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       relays: readCachedQuestionnaireDefinition(electionId)?.questionnaireRelays
         ?? loadElectionSummary(electionId)?.questionnaireRelays
         ?? null,
+      credentialsPerVoter: whitelistEntry?.credentialsPerVoter === 2
+        || admittedVoters[normalizedInvitedNpub]?.proxyVoter === true
+        ? 2
+        : undefined,
     });
   }
 
