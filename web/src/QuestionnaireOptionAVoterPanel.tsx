@@ -190,6 +190,10 @@ function answerRecordEquals(left: Record<string, unknown>, right: Record<string,
   });
 }
 
+function proxyAnswerKey(questionId: string, credentialIndex: number) {
+  return `${questionId}:credential:${credentialIndex}`;
+}
+
 function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
   return definition.questions.map((question) => ({
     questionId: question.questionId,
@@ -743,6 +747,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? contextPendingInvites.find((invite) => invite.electionId === currentQuestionnaireId)
     ?? (inviteContext.invite?.electionId === currentQuestionnaireId ? inviteContext.invite : null);
   const credentialCount = credentialInvite?.credentialsPerVoter === 2 ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
+  const showProxyBallotsTogether = perQuestionMode && credentialCount > 1;
   const credentialIndexes = useMemo(
     () => Array.from({ length: credentialCount }, (_, index) => index + 1),
     [credentialCount],
@@ -771,6 +776,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     : "";
   const groupKeyForQuestionId = (questionId: string, credentialIndex = activeCredentialIndex) => (
     scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, questionId, credentialIndex))
+  );
+  const answerKeyForQuestion = (questionId: string, credentialIndex = activeCredentialIndex) => (
+    showProxyBallotsTogether ? proxyAnswerKey(questionId, credentialIndex) : questionId
   );
   const activeQuestionGroupEntries = useMemo(() => (
     perQuestionMode && activeQuestion && activeQuestionScopeKey
@@ -834,7 +842,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     return keys;
   }, [acceptedQuestionKey, currentDefinition, currentQuestionnaireId, perQuestionMode, snapshot?.electionId, snapshot?.submissionDecisions, snapshot?.submissions]);
-  const activeQuestionSubmitted = Boolean(activeQuestionScopeKey && submittedQuestionGroupKeys.has(activeQuestionScopeKey));
+  const activeQuestionSubmittedForCredential = (credentialIndex: number) => (
+    activeQuestionIds.length > 0
+      && activeQuestionIds.every((questionId) => submittedQuestionGroupKeys.has(groupKeyForQuestionId(questionId, credentialIndex)))
+  );
+  const activeQuestionSubmitted = showProxyBallotsTogether
+    ? credentialIndexes.every(activeQuestionSubmittedForCredential)
+    : Boolean(activeQuestionScopeKey && submittedQuestionGroupKeys.has(activeQuestionScopeKey));
   const allQuestionResponsesSubmitted = perQuestionMode
     && questions.length > 0
     && credentialIndexes.every((credentialIndex) => (
@@ -849,6 +863,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const activeQuestionIssuance = perQuestionMode && activeQuestionScopeKey
     ? snapshot?.blindIssuances?.[activeQuestionScopeKey] ?? null
     : snapshot?.blindIssuance ?? null;
+  const activeQuestionCredentialReadyForCredential = (credentialIndex: number) => (
+    activeQuestionIds.length > 0
+      && activeQuestionIds.every((questionId) => Boolean(snapshot?.blindIssuances?.[groupKeyForQuestionId(questionId, credentialIndex)]))
+  );
   const activeQuestionSubmission = perQuestionMode
     ? snapshot?.submissions?.[activeQuestionScopeKey] ?? activeQuestionIds.map((questionId) => snapshot?.submissions?.[questionId] ?? null).find((submission) => {
       if (!submission) {
@@ -862,7 +880,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }) ?? null
     : snapshot?.submission ?? null;
   const activeQuestionCredentialReady = perQuestionMode
-    ? Boolean(activeQuestionIssuance)
+    ? showProxyBallotsTogether
+      ? credentialIndexes.every((credentialIndex) => (
+        activeQuestionSubmittedForCredential(credentialIndex) || activeQuestionCredentialReadyForCredential(credentialIndex)
+      ))
+      : Boolean(activeQuestionIssuance)
     : Boolean(snapshot?.credentialReady);
   const activeQuestionRequestSent = perQuestionMode
     ? Boolean(activeQuestionRequest && (activeQuestionRequest.lastSentAt || snapshot?.blindRequestSent))
@@ -2020,45 +2042,56 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
-  function pushAnswers() {
+  function buildDraftResponsesForCredential(credentialIndex = activeCredentialIndex, questionIds?: string[]) {
+    const targetQuestionIds = questionIds && questionIds.length > 0 ? new Set(questionIds) : null;
+    return questions
+      .filter((question) => !targetQuestionIds || targetQuestionIds.has(question.questionId))
+      .map((question) => {
+        const key = answerKeyForQuestion(question.questionId, credentialIndex);
+        return answerToOptionA(
+          question,
+          answers[key],
+          question.type === "free_text"
+            ? Boolean(question.encryptResponses || encryptFreeTextByQuestionId[key])
+            : false,
+        );
+      })
+      .filter((value): value is QuestionnaireAnswer => Boolean(value));
+  }
+
+  function pushAnswers(credentialIndex = activeCredentialIndex, questionIds?: string[]) {
     if (!runtime || responseSubmittedForCurrentQuestionnaire) {
       return;
     }
-    const next = questions
-      .map((question) => answerToOptionA(
-        question,
-        answers[question.questionId],
-        question.type === "free_text"
-          ? Boolean(question.encryptResponses || encryptFreeTextByQuestionId[question.questionId])
-          : false,
-      ))
-      .filter((value): value is QuestionnaireAnswer => Boolean(value));
+    const next = buildDraftResponsesForCredential(credentialIndex, questionIds);
     runtime.updateDraftResponses(next);
     setRefreshNonce((value) => value + 1);
   }
 
-  function addRankedAnswer(questionId: string, optionId: string) {
-    if (responseSubmittedForCurrentQuestionnaire) {
+  function addRankedAnswer(questionId: string, optionId: string, credentialIndex = activeCredentialIndex) {
+    if (responseSubmittedForCurrentQuestionnaire || activeQuestionSubmittedForCredential(credentialIndex)) {
       return;
     }
+    const key = answerKeyForQuestion(questionId, credentialIndex);
     setAnswers((current) => {
-      const existing = Array.isArray(current[questionId])
-        ? (current[questionId] as string[])
+      const existing = Array.isArray(current[key])
+        ? (current[key] as string[])
         : [];
       if (existing.includes(optionId)) {
         return current;
       }
-      return { ...current, [questionId]: [...existing, optionId] };
+      return { ...current, [key]: [...existing, optionId] };
     });
   }
 
-  function moveRankedAnswer(questionId: string, optionId: string, direction: -1 | 1) {
-    if (responseSubmittedForCurrentQuestionnaire) {
+  function moveRankedAnswer(questionId: string, optionId: string, direction: -1 | 1, credentialIndex = activeCredentialIndex) {
+    if (responseSubmittedForCurrentQuestionnaire || activeQuestionSubmittedForCredential(credentialIndex)) {
       return;
     }
+    const key = answerKeyForQuestion(questionId, credentialIndex);
     setAnswers((current) => {
-      const existing = Array.isArray(current[questionId])
-        ? [...(current[questionId] as string[])]
+      const existing = Array.isArray(current[key])
+        ? [...(current[key] as string[])]
         : [];
       const index = existing.indexOf(optionId);
       const target = index + direction;
@@ -2068,19 +2101,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const swap = existing[index];
       existing[index] = existing[target];
       existing[target] = swap;
-      return { ...current, [questionId]: existing };
+      return { ...current, [key]: existing };
     });
   }
 
-  function removeRankedAnswer(questionId: string, optionId: string) {
-    if (responseSubmittedForCurrentQuestionnaire) {
+  function removeRankedAnswer(questionId: string, optionId: string, credentialIndex = activeCredentialIndex) {
+    if (responseSubmittedForCurrentQuestionnaire || activeQuestionSubmittedForCredential(credentialIndex)) {
       return;
     }
+    const key = answerKeyForQuestion(questionId, credentialIndex);
     setAnswers((current) => {
-      const existing = Array.isArray(current[questionId])
-        ? (current[questionId] as string[])
+      const existing = Array.isArray(current[key])
+        ? (current[key] as string[])
         : [];
-      return { ...current, [questionId]: existing.filter((entry) => entry !== optionId) };
+      return { ...current, [key]: existing.filter((entry) => entry !== optionId) };
     });
   }
 
@@ -2329,14 +2363,22 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return index;
   }
 
-  function findNextUnsubmittedQuestionIndex(fromIndex: number, credentialIndex = activeCredentialIndex, justSubmittedQuestionIds: string[] = []) {
+  function findNextUnsubmittedQuestionIndex(fromIndex: number, credentialIndex = activeCredentialIndex, justSubmittedQuestionIds: string[] = [], justSubmittedCredentialIndexes: number[] = [credentialIndex]) {
     if (!perQuestionMode || questions.length === 0) {
       return -1;
     }
     const justSubmittedGroupKeys = new Set(
-      justSubmittedQuestionIds.map((questionId) => groupKeyForQuestionId(questionId, credentialIndex)),
+      justSubmittedCredentialIndexes.flatMap((submittedCredentialIndex) => (
+        justSubmittedQuestionIds.map((questionId) => groupKeyForQuestionId(questionId, submittedCredentialIndex))
+      )),
     );
     const isSubmitted = (questionId: string) => {
+      if (showProxyBallotsTogether) {
+        return credentialIndexes.every((candidateCredentialIndex) => {
+          const groupKey = groupKeyForQuestionId(questionId, candidateCredentialIndex);
+          return submittedQuestionGroupKeys.has(groupKey) || justSubmittedGroupKeys.has(groupKey);
+        });
+      }
       const groupKey = groupKeyForQuestionId(questionId, credentialIndex);
       return submittedQuestionGroupKeys.has(groupKey) || justSubmittedGroupKeys.has(groupKey);
     };
@@ -2393,12 +2435,37 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     setSubmitInFlight(true);
     try {
-      pushAnswers();
       const submitQuestionIds = perQuestionMode ? activeQuestionIds : [];
       const submitQuestionIdSet = new Set(submitQuestionIds);
       const submitRequiredQuestionIds = submitQuestionIdSet.size > 0
         ? requiredQuestionIds.filter((questionId) => submitQuestionIdSet.has(questionId))
         : requiredQuestionIds;
+      if (showProxyBallotsTogether && submitQuestionIds.length > 0) {
+        const submittedCredentialIndexes: number[] = [];
+        for (const credentialIndex of proxyCredentialIndexesToSubmit) {
+          runtime.updateDraftResponses(buildDraftResponsesForCredential(credentialIndex, submitQuestionIds));
+          await runtime.submitVote(submitRequiredQuestionIds, {
+            questionIds: submitQuestionIds,
+            credentialIndex,
+          });
+          submittedCredentialIndexes.push(credentialIndex);
+        }
+        const nextQuestionIndex = findNextUnsubmittedQuestionIndex(
+          activeQuestionIndex,
+          activeCredentialIndex,
+          submitQuestionIds,
+          submittedCredentialIndexes,
+        );
+        if (nextQuestionIndex >= 0) {
+          setActiveQuestionIndex(nextQuestionIndex);
+          setStatus(null);
+        } else {
+          setStatus("All question responses submitted.");
+        }
+        setRefreshNonce((value) => value + 1);
+        return;
+      }
+      pushAnswers();
       await runtime.submitVote(
         submitRequiredQuestionIds,
         submitQuestionIds.length > 0
@@ -3081,8 +3148,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && manualResendClockMs >= manualResendAvailableAtMs;
   const canRequestOrResendBallot = !privateInviteBlock && (flags.canRequestBallot || manualResendRequestVisible);
 
-  const questionHasResponse = (question: (typeof questions)[number]) => {
-    const value = answers[question.questionId];
+  const questionHasResponseForCredential = (question: (typeof questions)[number], credentialIndex = activeCredentialIndex) => {
+    const value = answers[answerKeyForQuestion(question.questionId, credentialIndex)];
     if (Array.isArray(value)) {
       if (question.type === "rank") {
         return value.length >= Math.max(1, question.minimumRanked ?? 1);
@@ -3091,16 +3158,36 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     return value !== undefined && value !== null && String(value).trim().length > 0;
   };
+  const questionHasResponse = (question: (typeof questions)[number]) => questionHasResponseForCredential(question, activeCredentialIndex);
   const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every(questionHasResponse);
   const answerableQuestionsHaveResponse = answerableQuestions.some(questionHasResponse);
   const activeQuestionGroupHasRequiredResponses = requiredQuestions.every(questionHasResponse);
   const activeQuestionGroupHasAnyResponse = answerableQuestions.some(questionHasResponse);
   const activeQuestionHasResponse = Boolean(activeQuestion && questionHasResponse(activeQuestion));
+  const proxyCredentialIndexesToSubmit = showProxyBallotsTogether
+    ? credentialIndexes.filter((credentialIndex) => !activeQuestionSubmittedForCredential(credentialIndex))
+    : [];
+  const proxyActiveQuestionGroupHasRequiredResponses = showProxyBallotsTogether
+    && proxyCredentialIndexesToSubmit.length > 0
+    && proxyCredentialIndexesToSubmit.every((credentialIndex) => (
+      requiredQuestions.every((question) => questionHasResponseForCredential(question, credentialIndex))
+    ));
+  const proxyActiveQuestionGroupHasAnyResponse = showProxyBallotsTogether
+    && proxyCredentialIndexesToSubmit.some((credentialIndex) => (
+      answerableQuestions.some((question) => questionHasResponseForCredential(question, credentialIndex))
+    ));
+  const proxyActiveQuestionHasResponse = showProxyBallotsTogether
+    && Boolean(activeQuestion)
+    && proxyCredentialIndexesToSubmit.some((credentialIndex) => questionHasResponseForCredential(activeQuestion!, credentialIndex));
   const requiredQuestionsAnsweredForAction = perQuestionMode
-    ? Boolean(activeQuestion && activeQuestionGroupHasRequiredResponses)
+    ? showProxyBallotsTogether
+      ? proxyActiveQuestionGroupHasRequiredResponses
+      : Boolean(activeQuestion && activeQuestionGroupHasRequiredResponses)
     : requiredQuestionsAnswered;
   const answerableQuestionsHaveResponseForAction = perQuestionMode
-    ? activeQuestionGroupHasAnyResponse
+    ? showProxyBallotsTogether
+      ? proxyActiveQuestionGroupHasAnyResponse
+      : activeQuestionGroupHasAnyResponse
     : answerableQuestionsHaveResponse;
   const actionQuestionnaireId = currentQuestionnaireId || electionId.trim();
   const snapshotForAction = snapshot?.electionId === actionQuestionnaireId ? snapshot : null;
@@ -3117,7 +3204,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const canAdvanceQuestionBeforeSubmit = perQuestionMode
     && !responseSubmittedForCurrentQuestionnaire
     && !canSubmitNow
-    && activeQuestionHasResponse
+    && (showProxyBallotsTogether ? proxyActiveQuestionHasResponse : activeQuestionHasResponse)
     && nextQuestionIndexInActiveGroup >= 0;
   const canViewResults = perQuestionMode
     ? allQuestionResponsesSubmitted
@@ -3133,19 +3220,26 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const scopeLabel = activeQuestionScope?.slotIndex
       ? `Ballot ${activeQuestionScope.slotIndex} · ${questionCountLabel}`
       : questionCountLabel;
-    const proxyLabel = credentialCount > 1
-      ? `Vote ${activeCredentialIndex}/${credentialCount} · `
-      : "";
+    const proxyLabel = showProxyBallotsTogether
+      ? `${credentialCount} separate votes · `
+      : credentialCount > 1
+        ? `Vote ${activeCredentialIndex}/${credentialCount} · `
+        : "";
     return responseSubmittedForCurrentQuestionnaire
       ? `${proxyLabel}${scopeLabel} · Complete`
       : `${proxyLabel}${scopeLabel}`;
   })();
+  const combinedProxySubmitLabel = showProxyBallotsTogether && canSubmitNow
+    ? proxyCredentialIndexesToSubmit.length > 1
+      ? `Submit ${proxyCredentialIndexesToSubmit.length} separate votes`
+      : "Submit remaining vote"
+    : "";
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
     || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
     || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
     || loadElectionSummary(actionQuestionnaireId)?.coordinatorNpub?.trim()
     || "";
-  const voteActionButtonText = formatVoteActionButtonText({
+  const voteActionButtonText = combinedProxySubmitLabel || formatVoteActionButtonText({
     snapshot: snapshotForAction,
     requiredQuestionsAnswered: requiredQuestionsAnsweredForAction,
     canSubmitNow,
@@ -3160,6 +3254,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     submitInFlight,
   });
   useEffect(() => {
+    if (showProxyBallotsTogether) {
+      return;
+    }
     if (!responseSubmittedForCurrentQuestionnaire || !snapshot?.draftResponses?.length) {
       return;
     }
@@ -3167,7 +3264,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setAnswers((current) => answerRecordEquals(current, nextAnswers) ? current : nextAnswers);
     const nextEncryptionFlags = encryptionFlagsFromOptionADraft(snapshot.draftResponses);
     setEncryptFreeTextByQuestionId((current) => answerRecordEquals(current, nextEncryptionFlags) ? current : nextEncryptionFlags);
-  }, [responseSubmittedForCurrentQuestionnaire, snapshot?.draftResponses, snapshot?.submission?.submissionId]);
+  }, [responseSubmittedForCurrentQuestionnaire, showProxyBallotsTogether, snapshot?.draftResponses, snapshot?.submission?.submissionId]);
 
   useEffect(() => {
     const owner = globalThis as typeof globalThis & {
@@ -3175,20 +3272,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
     const targetQuestionnaireId = currentQuestionnaireId || electionId.trim();
     const snapshotForTarget = snapshot?.electionId === targetQuestionnaireId ? snapshot : null;
-    const debugSubmitButtonText = formatVoteActionButtonText({
-      snapshot: snapshotForTarget,
-      requiredQuestionsAnswered: requiredQuestionsAnsweredForAction,
-      canSubmitNow,
-      blindSigningKeyReady: autoRequestBlindSigningKeyReady,
-      ballotRequestSent: activeQuestionRequestSent,
-      credentialReady: activeQuestionCredentialReady,
-      coordinatorNpub: (snapshotForTarget?.coordinatorNpub?.trim() ?? "") || actionCoordinatorNpub,
-      responseSubmitted: responseSubmittedForCurrentQuestionnaire,
-      perQuestionMode,
-      allQuestionResponsesSubmitted,
-      canAdvanceQuestionBeforeSubmit,
-      submitInFlight,
-    });
+    const debugSubmitButtonText = voteActionButtonText;
     const questionnaireSeen = questions.length > 0 || Boolean(autoRequestDefinition);
     const submitButtonReasonBlocked = submitInFlight
       ? "submitting"
@@ -3311,6 +3395,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     responseSubmittedForCurrentQuestionnaire,
     submittedQuestionGroupKeys,
     submitInFlight,
+    voteActionButtonText,
   ]);
   const statusQuestionnaireId = currentQuestionnaireId || electionId.trim();
   const coordinatorNpub = (snapshot?.electionId === statusQuestionnaireId ? snapshot.coordinatorNpub?.trim() : "")
@@ -3377,6 +3462,211 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (await tryWriteClipboard(trimmed)) {
       showReceiptCopied(key);
     }
+  }
+  function renderQuestionControls(
+    question: (typeof questions)[number],
+    credentialIndex: number,
+    questionSubmitted: boolean,
+  ) {
+    const key = answerKeyForQuestion(question.questionId, credentialIndex);
+    const value = answers[key];
+    if (question.type === "yes_no") {
+      return (
+        <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
+          <UiButton
+            icon='check'
+            className={`simple-voter-choice simple-voter-choice-yes${value === "yes" ? " is-active" : value === "no" ? " is-dimmed" : ""}`}
+            aria-pressed={value === "yes"}
+            isDisabled={questionSubmitted}
+            onPress={() => {
+              if (questionSubmitted) {
+                return;
+              }
+              setAnswers((current) => ({ ...current, [key]: "yes" }));
+            }}
+          >
+            Yes
+          </UiButton>
+          <UiButton
+            icon='cancel'
+            className={`simple-voter-choice simple-voter-choice-no${value === "no" ? " is-active" : value === "yes" ? " is-dimmed" : ""}`}
+            aria-pressed={value === "no"}
+            isDisabled={questionSubmitted}
+            onPress={() => {
+              if (questionSubmitted) {
+                return;
+              }
+              setAnswers((current) => ({ ...current, [key]: "no" }));
+            }}
+          >
+            No
+          </UiButton>
+        </div>
+      );
+    }
+    if (question.type === "multiple_choice") {
+      return (
+        <div className='simple-questionnaire-choice-list'>
+          {(question.options ?? []).map((option) => {
+            const selected = Array.isArray(value) ? (value as string[]) : [];
+            const checked = selected.includes(option.optionId);
+            return (
+              <label key={option.optionId} className={`simple-questionnaire-choice-row${checked ? " is-selected" : ""}`}>
+                <input
+                  type={question.multiSelect ? "checkbox" : "radio"}
+                  checked={checked}
+                  disabled={questionSubmitted}
+                  onChange={() => {
+                    if (questionSubmitted) {
+                      return;
+                    }
+                    setAnswers((current) => {
+                      const existing = Array.isArray(current[key])
+                        ? (current[key] as string[])
+                        : [];
+                      if (!question.multiSelect) {
+                        return { ...current, [key]: [option.optionId] };
+                      }
+                      return checked
+                        ? { ...current, [key]: existing.filter((entry) => entry !== option.optionId) }
+                        : { ...current, [key]: [...existing, option.optionId] };
+                    });
+                  }}
+                />
+                <span>{option.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      );
+    }
+    if (question.type === "rank") {
+      const ranked = Array.isArray(value) ? (value as string[]) : [];
+      const rankedSet = new Set(ranked);
+      const unrankedOptions = (question.options ?? []).filter((option) => !rankedSet.has(option.optionId));
+      return (
+        <div className='simple-questionnaire-rank-voter-grid'>
+          <div className='simple-questionnaire-choice-list'>
+            {ranked.length > 0 ? ranked.map((optionId, rankedIndex) => {
+              const option = (question.options ?? []).find((entry) => entry.optionId === optionId);
+              if (!option) {
+                return null;
+              }
+              return (
+                <div
+                  key={option.optionId}
+                  className={`simple-questionnaire-rank-row${questionSubmitted ? " is-response-locked" : ""}`}
+                  role='button'
+                  tabIndex={questionSubmitted ? -1 : 0}
+                  aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
+                  aria-disabled={questionSubmitted}
+                  onClick={() => {
+                    if (questionSubmitted) {
+                      return;
+                    }
+                    removeRankedAnswer(question.questionId, option.optionId, credentialIndex);
+                  }}
+                  onKeyDown={(event) => {
+                    if (questionSubmitted) {
+                      return;
+                    }
+                    if (event.key !== "Enter" && event.key !== " ") {
+                      return;
+                    }
+                    event.preventDefault();
+                    removeRankedAnswer(question.questionId, option.optionId, credentialIndex);
+                  }}
+                >
+                  <span className='simple-questionnaire-rank-selected'>
+                    <span className='simple-questionnaire-rank-selected-option'>
+                      <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
+                      <span>{option.label}</span>
+                    </span>
+                    <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
+                  </span>
+                  <div className='simple-questionnaire-rank-actions'>
+                    <UiButton
+                      icon='uploadLine'
+                      iconOnly
+                      className='simple-voter-secondary simple-questionnaire-rank-action'
+                      onPress={(event) => {
+                        event.stopPropagation();
+                        moveRankedAnswer(question.questionId, option.optionId, -1, credentialIndex);
+                      }}
+                      isDisabled={questionSubmitted || rankedIndex === 0}
+                      aria-label='Move up'
+                    />
+                    <UiButton
+                      icon='downloadLine'
+                      iconOnly
+                      className='simple-voter-secondary simple-questionnaire-rank-action'
+                      onPress={(event) => {
+                        event.stopPropagation();
+                        moveRankedAnswer(question.questionId, option.optionId, 1, credentialIndex);
+                      }}
+                      isDisabled={questionSubmitted || rankedIndex === ranked.length - 1}
+                      aria-label='Move down'
+                    />
+                  </div>
+                </div>
+              );
+            }) : null}
+          </div>
+          {unrankedOptions.length > 0 ? (
+            <div className='simple-questionnaire-choice-list'>
+              {unrankedOptions.map((option) => (
+                <UiButton
+                  key={option.optionId}
+                  icon='add'
+                  className='simple-voter-secondary simple-questionnaire-rank-add'
+                  onPress={() => addRankedAnswer(question.questionId, option.optionId, credentialIndex)}
+                  isDisabled={questionSubmitted}
+                >
+                  <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
+                  <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
+                </UiButton>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+    const encryptionRequired = Boolean(question.encryptResponses);
+    const encryptionEnabled = encryptionRequired || Boolean(encryptFreeTextByQuestionId[key]);
+    return (
+      <>
+        <UiTextArea
+          textAreaClassName='simple-voter-input simple-questionnaire-free-text'
+          isDisabled={questionSubmitted}
+          textAreaProps={{
+            rows: 3,
+            maxLength: question.maxLength ?? 500,
+            value: typeof value === "string" ? value : "",
+            onChange: (event) => {
+              if (questionSubmitted) {
+                return;
+              }
+              setAnswers((current) => ({ ...current, [key]: event.target.value }));
+            },
+          }}
+        />
+        <UiSwitch
+          className='simple-questionnaire-choice-row'
+          label={encryptionRequired ? "Encryption required by organiser" : "Encrypt for organiser"}
+          isSelected={encryptionEnabled}
+          isDisabled={encryptionRequired || questionSubmitted}
+          onChange={(checked) => {
+            if (encryptionRequired || questionSubmitted) {
+              return;
+            }
+            setEncryptFreeTextByQuestionId((current) => ({
+              ...current,
+              [key]: checked,
+            }));
+          }}
+        />
+      </>
+    );
   }
   const advancedReceiptRows = [
     { label: "Questionnaire ID", value: submittedQuestionnaireId },
@@ -3704,240 +3994,91 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             </div>
           ) : null}
           {visibleQuestionEntries.map(({ question, index }) => {
-            const ranked = question.type === "rank" && Array.isArray(answers[question.questionId])
-              ? (answers[question.questionId] as string[])
-              : [];
             const questionSubmitted = perQuestionMode
-              ? submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
+              ? showProxyBallotsTogether
+                ? credentialIndexes.every((credentialIndex) => submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex)))
+                : submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
               : responseSubmittedForCurrentQuestionnaire;
             const questionAccepted = perQuestionMode
-              ? acceptedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
+              ? showProxyBallotsTogether
+                ? credentialIndexes.every((credentialIndex) => acceptedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex)))
+                : acceptedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
               : acceptedQuestionIds.has(question.questionId);
-            const rankRequirement = question.type === "rank"
-              ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
-              : null;
-            const requirementLabel = questionAccepted
-              ? null
-              : questionSubmitted
-                ? "Submitted"
-                : rankRequirement?.label ?? (questionHasResponse(question) ? null : (question.required ? "Required" : "Optional"));
-            const requirementClass = rankRequirement?.missing
-              ? " is-needed"
-              : requirementLabel === "Optional"
-                ? " is-optional"
-                : "";
+            const ballotCredentialIndexes = showProxyBallotsTogether ? credentialIndexes : [activeCredentialIndex];
+            const questionRequirement = question.required ? "Required" : "Optional";
             return (
             <article key={question.questionId} className={`simple-questionnaire-voter-card${questionSubmitted ? " is-response-locked" : ""}`}>
               <div className='simple-questionnaire-voter-heading'>
                 <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {question.prompt || "Untitled question"}</h4>
-                {requirementLabel ? (
-                  <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
-                    {requirementLabel}
+                {showProxyBallotsTogether ? (
+                  <p className='simple-questionnaire-voter-requirement'>
+                    {questionSubmitted ? "Submitted" : questionRequirement}
                   </p>
-                ) : null}
+                ) : (() => {
+                  const key = answerKeyForQuestion(question.questionId);
+                  const ranked = question.type === "rank" && Array.isArray(answers[key])
+                    ? (answers[key] as string[])
+                    : [];
+                  const rankRequirement = question.type === "rank"
+                    ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
+                    : null;
+                  const requirementLabel = questionAccepted
+                    ? null
+                    : questionSubmitted
+                      ? "Submitted"
+                      : rankRequirement?.label ?? (questionHasResponse(question) ? null : questionRequirement);
+                  const requirementClass = rankRequirement?.missing
+                    ? " is-needed"
+                    : requirementLabel === "Optional"
+                      ? " is-optional"
+                      : "";
+                  return requirementLabel ? (
+                    <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
+                      {requirementLabel}
+                    </p>
+                  ) : null;
+                })()}
               </div>
-              {question.type === "yes_no" ? (
-                <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
-                  <UiButton
-                    icon='check'
-                    className={`simple-voter-choice simple-voter-choice-yes${answers[question.questionId] === "yes" ? " is-active" : answers[question.questionId] === "no" ? " is-dimmed" : ""}`}
-                    aria-pressed={answers[question.questionId] === "yes"}
-                    isDisabled={questionSubmitted}
-                    onPress={() => {
-                      if (questionSubmitted) {
-                        return;
-                      }
-                      setAnswers((current) => ({ ...current, [question.questionId]: "yes" }));
-                    }}
-                  >
-                    Yes
-                  </UiButton>
-                  <UiButton
-                    icon='cancel'
-                    className={`simple-voter-choice simple-voter-choice-no${answers[question.questionId] === "no" ? " is-active" : answers[question.questionId] === "yes" ? " is-dimmed" : ""}`}
-                    aria-pressed={answers[question.questionId] === "no"}
-                    isDisabled={questionSubmitted}
-                    onPress={() => {
-                      if (questionSubmitted) {
-                        return;
-                      }
-                      setAnswers((current) => ({ ...current, [question.questionId]: "no" }));
-                    }}
-                  >
-                    No
-                  </UiButton>
-                </div>
-              ) : null}
-              {question.type === "multiple_choice" ? (
-                <div className='simple-questionnaire-choice-list'>
-                  {(question.options ?? []).map((option) => {
-                    const selected = Array.isArray(answers[question.questionId])
-                      ? (answers[question.questionId] as string[])
+              {showProxyBallotsTogether ? (
+                <div className='simple-questionnaire-proxy-vote-grid'>
+                  {ballotCredentialIndexes.map((credentialIndex) => {
+                    const ballotSubmitted = submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex));
+                    const ballotAccepted = acceptedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex));
+                    const key = answerKeyForQuestion(question.questionId, credentialIndex);
+                    const ranked = question.type === "rank" && Array.isArray(answers[key])
+                      ? (answers[key] as string[])
                       : [];
-                    const checked = selected.includes(option.optionId);
+                    const rankRequirement = question.type === "rank"
+                      ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
+                      : null;
+                    const requirementLabel = ballotAccepted
+                      ? "Accepted"
+                      : ballotSubmitted
+                        ? "Submitted"
+                        : rankRequirement?.label ?? (questionHasResponseForCredential(question, credentialIndex) ? "Ready" : questionRequirement);
+                    const requirementClass = rankRequirement?.missing
+                      ? " is-needed"
+                      : requirementLabel === "Optional"
+                        ? " is-optional"
+                        : "";
                     return (
-                      <label key={option.optionId} className={`simple-questionnaire-choice-row${checked ? " is-selected" : ""}`}>
-                        <input
-                          type={question.multiSelect ? "checkbox" : "radio"}
-                          checked={checked}
-                          disabled={questionSubmitted}
-                          onChange={() => {
-                            if (questionSubmitted) {
-                              return;
-                            }
-                            setAnswers((current) => {
-                              const existing = Array.isArray(current[question.questionId])
-                                ? (current[question.questionId] as string[])
-                                : [];
-                              if (!question.multiSelect) {
-                                return { ...current, [question.questionId]: [option.optionId] };
-                              }
-                              return checked
-                                ? { ...current, [question.questionId]: existing.filter((entry) => entry !== option.optionId) }
-                                : { ...current, [question.questionId]: [...existing, option.optionId] };
-                            });
-                          }}
-                        />
-                        <span>{option.label}</span>
-                      </label>
+                      <section
+                        key={`${question.questionId}:${credentialIndex}`}
+                        className={`simple-questionnaire-proxy-vote-card${ballotSubmitted ? " is-response-locked" : ""}`}
+                        aria-label={`Separate vote ${credentialIndex} of ${credentialCount}`}
+                      >
+                        <div className='simple-questionnaire-proxy-vote-heading'>
+                          <strong>Separate vote {credentialIndex}</strong>
+                          <span className={`simple-questionnaire-voter-requirement${requirementClass}`}>
+                            {requirementLabel}
+                          </span>
+                        </div>
+                        {renderQuestionControls(question, credentialIndex, ballotSubmitted)}
+                      </section>
                     );
                   })}
                 </div>
-              ) : null}
-              {question.type === "rank" ? (
-                <div className='simple-questionnaire-rank-voter-grid'>
-                  {(() => {
-                    const rankedSet = new Set(ranked);
-                    const unrankedOptions = (question.options ?? []).filter((option) => !rankedSet.has(option.optionId));
-                    return (
-                      <>
-                        <div className='simple-questionnaire-choice-list'>
-                          {ranked.length > 0 ? ranked.map((optionId, rankedIndex) => {
-                            const option = (question.options ?? []).find((entry) => entry.optionId === optionId);
-                            if (!option) {
-                              return null;
-                            }
-                            return (
-                              <div
-                                key={option.optionId}
-                                className={`simple-questionnaire-rank-row${questionSubmitted ? " is-response-locked" : ""}`}
-                                role='button'
-                                tabIndex={questionSubmitted ? -1 : 0}
-                                aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
-                                aria-disabled={questionSubmitted}
-                                onClick={() => {
-                                  if (questionSubmitted) {
-                                    return;
-                                  }
-                                  removeRankedAnswer(question.questionId, option.optionId);
-                                }}
-                                onKeyDown={(event) => {
-                                  if (questionSubmitted) {
-                                    return;
-                                  }
-                                  if (event.key !== "Enter" && event.key !== " ") {
-                                    return;
-                                  }
-                                  event.preventDefault();
-                                  removeRankedAnswer(question.questionId, option.optionId);
-                                }}
-                              >
-                                <span className='simple-questionnaire-rank-selected'>
-                                  <span className='simple-questionnaire-rank-selected-option'>
-                                    <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
-                                    <span>{option.label}</span>
-                                  </span>
-                                  <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
-                                </span>
-                                <div className='simple-questionnaire-rank-actions'>
-                                  <UiButton
-                                    icon='uploadLine'
-                                    iconOnly
-                                    className='simple-voter-secondary simple-questionnaire-rank-action'
-                                    onPress={(event) => {
-                                      event.stopPropagation();
-                                      moveRankedAnswer(question.questionId, option.optionId, -1);
-                                    }}
-                                    isDisabled={questionSubmitted || rankedIndex === 0}
-                                    aria-label='Move up'
-                                  />
-                                  <UiButton
-                                    icon='downloadLine'
-                                    iconOnly
-                                    className='simple-voter-secondary simple-questionnaire-rank-action'
-                                    onPress={(event) => {
-                                      event.stopPropagation();
-                                      moveRankedAnswer(question.questionId, option.optionId, 1);
-                                    }}
-                                    isDisabled={questionSubmitted || rankedIndex === ranked.length - 1}
-                                    aria-label='Move down'
-                                  />
-                                </div>
-                              </div>
-                            );
-                          }) : null}
-                        </div>
-                        {unrankedOptions.length > 0 ? (
-                          <div className='simple-questionnaire-choice-list'>
-                            {unrankedOptions.map((option) => (
-                              <UiButton
-                                key={option.optionId}
-                                icon='add'
-                                className='simple-voter-secondary simple-questionnaire-rank-add'
-                                onPress={() => addRankedAnswer(question.questionId, option.optionId)}
-                                isDisabled={questionSubmitted}
-                              >
-                                <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
-                                <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
-                              </UiButton>
-                            ))}
-                          </div>
-                        ) : null}
-                      </>
-                    );
-                  })()}
-                </div>
-              ) : null}
-              {question.type === "free_text" ? (
-                (() => {
-                  const encryptionRequired = Boolean(question.encryptResponses);
-                  const encryptionEnabled = encryptionRequired || Boolean(encryptFreeTextByQuestionId[question.questionId]);
-                  return (
-                    <>
-                      <UiTextArea
-                        textAreaClassName='simple-voter-input simple-questionnaire-free-text'
-                        isDisabled={questionSubmitted}
-                        textAreaProps={{
-                          rows: 3,
-                          maxLength: question.maxLength ?? 500,
-                          value: typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : "",
-                          onChange: (event) => {
-                            if (questionSubmitted) {
-                              return;
-                            }
-                            setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }));
-                          },
-                        }}
-                      />
-                      <UiSwitch
-                        className='simple-questionnaire-choice-row'
-                        label={encryptionRequired ? "Encryption required by organiser" : "Encrypt for organiser"}
-                        isSelected={encryptionEnabled}
-                        isDisabled={encryptionRequired || questionSubmitted}
-                        onChange={(checked) => {
-                            if (encryptionRequired || questionSubmitted) {
-                              return;
-                            }
-                            setEncryptFreeTextByQuestionId((current) => ({
-                              ...current,
-                              [question.questionId]: checked,
-                            }));
-                        }}
-                      />
-                    </>
-                  );
-                })()
-              ) : null}
+              ) : renderQuestionControls(question, activeCredentialIndex, questionSubmitted)}
             </article>
             );
           })}

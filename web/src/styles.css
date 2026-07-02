@@ -4074,7 +4074,7 @@ code {
 
 .av-ui-data-table {
   width: 100%;
-  min-width: 880px;
+  min-width: 660px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -4104,27 +4104,23 @@ code {
 }
 
 .av-ui-data-table .is-voter-id {
-  width: 9%;
-}
-
-.av-ui-data-table .is-npub {
-  width: 18%;
+  width: 92px;
 }
 
 .av-ui-data-table .is-note {
-  width: 16%;
+  width: 122px;
 }
 
 .av-ui-data-table .is-state {
-  width: 13%;
+  width: 108px;
 }
 
 .av-ui-data-table .is-toggle {
-  width: 104px;
+  width: 84px;
 }
 
 .av-ui-data-table .is-actions {
-  width: 22%;
+  width: 132px;
 }
 
 .av-ui-data-table .is-marker {
@@ -5343,14 +5339,13 @@ code {
   display: grid;
   grid-template-columns:
     36px
-    minmax(74px, 0.38fr)
-    minmax(135px, 0.82fr)
+    minmax(112px, 0.62fr)
     minmax(140px, 0.72fr)
     minmax(110px, 0.58fr)
-    minmax(104px, 0.44fr)
-    minmax(104px, 0.44fr)
-    minmax(180px, 1.1fr);
-  min-width: 880px;
+    minmax(84px, 0.44fr)
+    minmax(84px, 0.44fr)
+    minmax(132px, 0.9fr);
+  min-width: 660px;
   align-items: center;
 }
 
@@ -5407,6 +5402,14 @@ code {
   gap: 6px;
 }
 
+.simple-admitted-voter-id-line {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content) 28px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
 .simple-admitted-voter-actions-cell {
   min-width: 0;
 }
@@ -5423,6 +5426,8 @@ code {
   gap: 8px;
   color: var(--simple-text);
   font-weight: 850;
+  line-height: 1.05;
+  min-width: 0;
 }
 
 .simple-admitted-voter-response-words {
@@ -5435,43 +5440,24 @@ code {
   font-variant-numeric: tabular-nums;
 }
 
-.simple-admitted-voter-npub {
-  color: var(--simple-muted);
-  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.78rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.simple-admitted-voter-npub-line {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.simple-admitted-voter-copy-npub {
-  display: inline-grid;
-  place-items: center;
+.simple-admitted-voter-copy-npub.av-ui-button {
   width: 28px;
   height: 28px;
+  min-height: 28px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--simple-muted);
-  cursor: pointer;
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.38);
+  color: var(--simple-soft);
 }
 
-.simple-admitted-voter-copy-npub:hover,
-.simple-admitted-voter-copy-npub:focus-visible {
+.simple-admitted-voter-copy-npub.av-ui-button:hover,
+.simple-admitted-voter-copy-npub.av-ui-button:focus-visible {
   border-color: var(--simple-border-strong);
+  background: rgba(45, 212, 191, 0.08);
   color: var(--simple-teal);
 }
 
-.simple-admitted-voter-copy-npub .simple-copy-icon {
+.simple-admitted-voter-copy-npub .av-ui-icon {
   width: 14px;
   height: 14px;
 }
@@ -5503,16 +5489,6 @@ code {
   line-height: 1.15;
   text-transform: none;
   white-space: nowrap;
-}
-
-.simple-admitted-voter-status-symbol {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  min-width: 1.1em;
-  font-size: 1.05rem;
-  line-height: 1;
 }
 
 .simple-admitted-voter-status.simple-status-indicator.is-voter-accepted,
@@ -5563,17 +5539,25 @@ code {
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.simple-admitted-voter-actions .simple-voter-secondary {
-  min-height: 34px;
+.simple-admitted-voter-actions .av-ui-button {
+  min-height: 32px;
   padding: 0 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
-.simple-admitted-voter-remove {
-  min-height: 34px;
-  padding: 0 10px;
+.simple-admitted-voter-actions .av-ui-button .av-ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.simple-admitted-voter-actions .av-ui-button-label {
+  line-height: 1.05;
+  white-space: nowrap;
 }
 
 .simple-admitted-voter-note-field {
@@ -7177,6 +7161,53 @@ code {
   border-left-color: rgba(45, 212, 191, 0.78);
   background: transparent;
   color: var(--simple-teal);
+}
+
+.simple-questionnaire-proxy-vote-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.simple-questionnaire-proxy-vote-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 17, 27, 0.58);
+}
+
+.simple-questionnaire-proxy-vote-card.is-response-locked {
+  border-color: rgba(45, 212, 191, 0.32);
+  background: rgba(45, 212, 191, 0.045);
+}
+
+.simple-questionnaire-proxy-vote-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.simple-questionnaire-proxy-vote-heading strong {
+  min-width: 0;
+  color: var(--simple-text);
+  font-size: 0.9rem;
+  line-height: 1.15;
+}
+
+.simple-questionnaire-proxy-vote-heading .simple-questionnaire-voter-requirement {
+  font-size: 0.68rem;
+}
+
+@media (max-width: 760px) {
+  .simple-questionnaire-proxy-vote-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .simple-questionnaire-voter-prompt {
@@ -10537,7 +10568,6 @@ code {
     text-transform: uppercase;
   }
 
-  .av-ui-data-table .is-npub,
   .av-ui-data-table .is-note,
   .av-ui-data-table .is-marker,
   .av-ui-data-table .is-identity,
@@ -10549,7 +10579,6 @@ code {
     width: 100%;
   }
 
-  .av-ui-data-table td.is-npub,
   .av-ui-data-table td.is-note,
   .av-ui-data-table td.is-marker,
   .av-ui-data-table td.is-identity,
@@ -10560,7 +10589,6 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .av-ui-data-table td.is-npub::before,
   .av-ui-data-table td.is-note::before,
   .av-ui-data-table td.is-marker::before,
   .av-ui-data-table td.is-identity::before,
@@ -10572,7 +10600,6 @@ code {
   }
 
   .av-ui-data-table .simple-admitted-voter-note-field,
-  .av-ui-data-table .simple-admitted-voter-npub-line,
   .av-ui-data-table .simple-voter-input {
     width: 100%;
   }

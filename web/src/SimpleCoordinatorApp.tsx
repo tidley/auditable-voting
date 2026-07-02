@@ -1968,36 +1968,21 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         cell: ({ row }) => {
           const participant = row.original;
           const state = rowState(participant);
+          const voterLabel = state.isUnclaimedPrivateInvite
+            ? "Private invite"
+            : state.isResultOnlyParticipant
+              ? "Result only"
+              : deriveActorDisplayId(participant.npub);
+          const fullIdentityLabel = state.isUnclaimedPrivateInvite ? "Unclaimed private link" : participant.npub;
           return (
             <div className='simple-admitted-voter-id-cell'>
-              <span className='simple-admitted-voter-id'>
-                {state.isUnclaimedPrivateInvite
-                  ? "Private invite"
-                  : state.isResultOnlyParticipant
-                    ? "Result only"
-                    : deriveActorDisplayId(participant.npub)}
-              </span>
-              {state.responseIdentityWords ? (
-                <span className='simple-identity-words-badge simple-admitted-voter-response-words'>
-                  {state.responseIdentityWords}
-                </span>
-              ) : null}
-            </div>
-          );
-        },
-      },
-      {
-        id: "npub",
-        header: "Voter npub",
-        meta: { className: "is-npub", label: "Voter npub" },
-        cell: ({ row }) => {
-          const participant = row.original;
-          const state = rowState(participant);
-          return (
-            <div className='simple-admitted-voter-npub-cell'>
-              <div className='simple-admitted-voter-npub-line'>
-                <span className='simple-admitted-voter-npub' title={state.isUnclaimedPrivateInvite ? "Unclaimed private link" : participant.npub}>
-                  {state.isUnclaimedPrivateInvite ? "Unclaimed private link" : participant.npub}
+              <div className='simple-admitted-voter-id-line'>
+                <span
+                  className='simple-admitted-voter-id'
+                  title={fullIdentityLabel}
+                  data-tooltip={fullIdentityLabel}
+                >
+                  {voterLabel}
                 </span>
                 {!state.isUnclaimedPrivateInvite ? (
                   <UiButton
@@ -2011,32 +1996,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   />
                 ) : null}
               </div>
-              {state.privateInviteEntry && state.privateInviteUrl ? (
-                <div className='simple-admitted-private-link-details'>
-                  <div className='simple-private-invite-link-field'>
-                    <label className='simple-private-invite-field-label' htmlFor={state.inviteInputId}>Invite link</label>
-                    <div className={`simple-private-invite-url-control${state.canSharePrivateInvite ? "" : " is-readonly"}`}>
-                      <input
-                        id={state.inviteInputId}
-                        className='simple-private-invite-url-input'
-                        value={state.privateInviteUrl}
-                        readOnly
-                        aria-label='Invite link'
-                      />
-                      {state.canSharePrivateInvite ? (
-                        <UiButton
-                          variant='ghost'
-                          icon='copy'
-                          iconOnly
-                          className='simple-private-invite-copy-icon-button'
-                          onPress={() => void copyPrivateInviteCodeLink(state.privateInviteEntry!.codeHash)}
-                          aria-label='Copy private link'
-                          title='Copy private link'
-                        />
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
+              {state.responseIdentityWords ? (
+                <span className='simple-identity-words-badge simple-admitted-voter-response-words'>
+                  {state.responseIdentityWords}
+                </span>
               ) : null}
             </div>
           );
@@ -2083,7 +2046,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           const state = rowState(row.original);
           return state.statusIndicator ? (
             <span className={`simple-admitted-voter-status ${state.statusIndicator.className}`} aria-label={state.statusLabel ?? state.statusIndicator.label} title={state.statusLabel ?? state.statusIndicator.label}>
-              <span className='simple-admitted-voter-status-symbol' aria-hidden='true'>{state.statusIndicator.icon}</span>
               <span>{state.statusLabel ?? state.statusIndicator.label}</span>
             </span>
           ) : (

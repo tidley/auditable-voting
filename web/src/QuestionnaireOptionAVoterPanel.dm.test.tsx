@@ -2172,6 +2172,171 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(controls().getByRole("button", { name: "Submit response" })).toBeTruthy();
   });
 
+  it("shows proxy voter ballots together and submits them as separate votes", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "x".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    fetchOptionAInviteDmsMock.mockResolvedValue([]);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      questionnaireId: "q_proxy_together",
+      title: "Proxy together",
+      description: "",
+      createdAt: 1781540000,
+      openAt: 1781540000,
+      closeAt: 1781543600,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseMode: "blind_token" as const,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question" as const,
+      credentialsPerVoter: 2 as const,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1" as const,
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no" as const,
+        prompt: "Approve proxy item?",
+        required: true,
+        ballotSlot: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+      }],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_proxy_together",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      loginVerified: true,
+      loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+      inviteMessage: {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_proxy_together",
+        title: "Proxy together",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_proxy_together",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: definition.blindSigningPublicKey,
+        definition,
+        credentialsPerVoter: 2,
+        expiresAt: null,
+      },
+      blindRequest: null,
+      blindRequests: {
+        "slot:1:v1": {
+          type: "blind_ballot_request",
+          schemaVersion: 1,
+          electionId: "q_proxy_together",
+          requestId: "request_proxy_1",
+          invitedNpub: localVoterNpub,
+          blindedMessage: "blinded_proxy_1",
+          clientNonce: "nonce_proxy_1",
+          blindSigningKeyId: "blind_key",
+          ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+          createdAt: "2026-06-15T23:00:00.000Z",
+          lastSentAt: "2026-06-15T23:00:00.000Z",
+        },
+        "slot:1:v1:c2": {
+          type: "blind_ballot_request",
+          schemaVersion: 1,
+          electionId: "q_proxy_together",
+          requestId: "request_proxy_2",
+          invitedNpub: localVoterNpub,
+          blindedMessage: "blinded_proxy_2",
+          clientNonce: "nonce_proxy_2",
+          blindSigningKeyId: "blind_key",
+          ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1, credentialIndex: 2 },
+          createdAt: "2026-06-15T23:00:00.000Z",
+          lastSentAt: "2026-06-15T23:00:00.000Z",
+        },
+      },
+      blindRequestSent: true,
+      blindIssuance: null,
+      blindIssuances: {
+        "slot:1:v1": {
+          type: "blind_ballot_response",
+          schemaVersion: 1,
+          electionId: "q_proxy_together",
+          requestId: "request_proxy_1",
+          issuanceId: "issuance_proxy_1",
+          invitedNpub: localVoterNpub,
+          blindSignature: "sig_proxy_1",
+          blindSigningKeyId: "blind_key",
+          ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+          definition,
+          issuedAt: "2026-06-15T23:00:00.000Z",
+        },
+        "slot:1:v1:c2": {
+          type: "blind_ballot_response",
+          schemaVersion: 1,
+          electionId: "q_proxy_together",
+          requestId: "request_proxy_2",
+          issuanceId: "issuance_proxy_2",
+          invitedNpub: localVoterNpub,
+          blindSignature: "sig_proxy_2",
+          blindSigningKeyId: "blind_key",
+          ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1, credentialIndex: 2 },
+          definition,
+          issuedAt: "2026-06-15T23:00:00.000Z",
+        },
+      },
+      blindTokenSecrets: {},
+      credentialReady: true,
+      draftResponses: [],
+      submissions: {},
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-06-15T23:00:00.000Z",
+    });
+    const draftBatches: unknown[][] = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "updateDraftResponses")
+      .mockImplementation((responses) => {
+        draftBatches.push(responses);
+      });
+    const submitCalls: Array<{
+      requiredQuestionIds: string[];
+      options: Parameters<QuestionnaireOptionAVoterRuntime["submitVote"]>[1];
+    }> = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "submitVote")
+      .mockImplementation(async function mockedSubmitVote(
+        this: QuestionnaireOptionAVoterRuntime,
+        requiredQuestionIds,
+        options,
+      ) {
+        submitCalls.push({ requiredQuestionIds, options });
+        return this.getSnapshot();
+      });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_proxy_together"]} localVoterNpub={localVoterNpub} />);
+
+    expect(await screen.findByText("2 separate votes · Ballot 1 · 1 question")).toBeTruthy();
+    const firstVote = screen.getByRole("region", { name: "Separate vote 1 of 2" });
+    const secondVote = screen.getByRole("region", { name: "Separate vote 2 of 2" });
+    await user.click(within(firstVote).getByRole("button", { name: "Yes" }));
+    await user.click(within(secondVote).getByRole("button", { name: "No" }));
+    await waitFor(() => {
+      expect(within(firstVote).getByRole("button", { name: "Yes" }).getAttribute("aria-pressed")).toBe("true");
+      expect(within(secondVote).getByRole("button", { name: "No" }).getAttribute("aria-pressed")).toBe("true");
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Submit 2 separate votes" }));
+
+    expect(submitCalls.map((call) => call.options?.credentialIndex)).toEqual([1, 2]);
+    expect(submitCalls.map((call) => call.options?.questionIds)).toEqual([["q1"], ["q1"]]);
+    expect(submitCalls.map((call) => call.requiredQuestionIds)).toEqual([["q1"], ["q1"]]);
+    expect(draftBatches).toEqual([
+      [{ questionId: "q1", type: "yes_no", answer: "yes" }],
+      [{ questionId: "q1", type: "yes_no", answer: "no" }],
+    ]);
+  });
+
   it("does not mark a per-question session all answered after only one ballot submission", async () => {
     const localVoterNpub = "npub1" + "p".repeat(58);
     const coordinatorNpub = "npub1" + "b".repeat(58);
