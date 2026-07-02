@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
+import { UiButton } from "./ui/DesignLayer";
 
 type BarcodeDetectorResultLike = {
   rawValue?: string;
@@ -317,9 +318,9 @@ export default function SimpleQrScanner({
     <div className="simple-scanner-shell">
       <div className="simple-scanner-head">
         <p className="simple-voter-question">{prompt}</p>
-        <button type="button" className="simple-voter-secondary" onClick={onClose}>
+        <UiButton icon="cancel" className="simple-voter-secondary" onPress={onClose}>
           Close scanner
-        </button>
+        </UiButton>
       </div>
       <video ref={videoRef} className="simple-scanner-video" muted playsInline autoPlay />
       <canvas ref={canvasRef} className="simple-scanner-canvas" aria-hidden="true" />

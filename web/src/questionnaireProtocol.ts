@@ -28,6 +28,8 @@ export type QuestionnaireBallotSlot = {
   version: number;
 };
 
+export type QuestionnaireCredentialsPerVoter = 1 | 2;
+
 export type QuestionnaireYesNoQuestion = QuestionnaireQuestionBase & {
   type: "yes_no";
 };
@@ -79,6 +81,7 @@ export type QuestionnaireDefinition = {
   eligibilityMode: "open" | "allowlist";
   allowMultipleResponsesPerPubkey: boolean;
   ballotCredentialMode?: QuestionnaireBallotCredentialMode;
+  credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   questionnaireRelays?: string[];
   questions: QuestionnaireQuestion[];
@@ -253,13 +256,23 @@ export function questionnaireUsesPerQuestionCredentials(definition: Pick<Questio
   return definition?.ballotCredentialMode === "per_question";
 }
 
+export function questionnaireCredentialsPerVoter(definition: Pick<QuestionnaireDefinition, "credentialsPerVoter"> | null | undefined): QuestionnaireCredentialsPerVoter {
+  return normaliseQuestionnaireCredentialsPerVoter(definition?.credentialsPerVoter);
+}
+
+export function normaliseQuestionnaireCredentialsPerVoter(value: unknown): QuestionnaireCredentialsPerVoter {
+  return value === 2 ? 2 : 1;
+}
+
 export function normaliseQuestionBallotSlot(question: QuestionnaireQuestion, index: number): QuestionnaireBallotSlot {
   const slot = question.ballotSlot ?? null;
-  const slotIndex = Number.isFinite(slot?.slotIndex)
-    ? Math.max(1, Math.floor(slot.slotIndex))
+  const rawSlotIndex = slot?.slotIndex;
+  const rawVersion = slot?.version;
+  const slotIndex = Number.isFinite(rawSlotIndex)
+    ? Math.max(1, Math.floor(rawSlotIndex as number))
     : index + 1;
-  const version = Number.isFinite(slot?.version)
-    ? Math.max(1, Math.floor(slot.version))
+  const version = Number.isFinite(rawVersion)
+    ? Math.max(1, Math.floor(rawVersion as number))
     : 1;
   const slotId = typeof slot?.slotId === "string" && slot.slotId.trim()
     ? slot.slotId.trim()
@@ -271,9 +284,12 @@ export function normaliseQuestionBallotSlot(question: QuestionnaireQuestion, ind
   };
 }
 
-export function questionBallotScopeKey(question: QuestionnaireQuestion, index: number) {
+export function questionBallotScopeKey(question: QuestionnaireQuestion, index: number, credentialIndex = 1) {
   const slot = normaliseQuestionBallotSlot(question, index);
-  return `slot:${slot.slotIndex}:v${slot.version}`;
+  const credentialSuffix = Number.isFinite(credentialIndex) && Math.floor(credentialIndex) > 1
+    ? `:c${Math.floor(credentialIndex)}`
+    : "";
+  return `slot:${slot.slotIndex}:v${slot.version}${credentialSuffix}`;
 }
 
 export function clampRankMinimum(question: Pick<QuestionnaireRankQuestion, "options" | "minimumRanked">) {
@@ -329,6 +345,13 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
     && input.ballotCredentialMode !== "per_question"
   ) {
     errors.push("ballot_credential_mode_invalid");
+  }
+  if (
+    input.credentialsPerVoter !== undefined
+    && input.credentialsPerVoter !== 1
+    && input.credentialsPerVoter !== 2
+  ) {
+    errors.push("credentials_per_voter_invalid");
   }
   if (
     input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN

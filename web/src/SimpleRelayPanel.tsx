@@ -8,6 +8,7 @@ import {
 import { SIMPLE_MAILBOX_RELAYS } from './simpleMailbox';
 import { SIMPLE_DM_RELAYS } from './simpleShardDm';
 import { SIMPLE_PUBLIC_RELAYS } from './simpleVotingSession';
+import { UiButton, UiSwitch, UiTextField } from './ui/DesignLayer';
 
 type RelayStrength = 'checking' | 'strong' | 'fair' | 'weak' | 'offline';
 
@@ -255,44 +256,38 @@ export default function SimpleRelayPanel({
         <div className='simple-relay-group'>
           <div className='simple-relay-settings-head'>
             <h3 className='simple-relay-heading'>Relays</h3>
-            <label className={`simple-relay-default-toggle${useDefaultQuestionnaireRelays ? " is-on" : ""}`}>
-              <span>Use default</span>
-              <input
-                type='checkbox'
-                role='switch'
-                aria-checked={useDefaultQuestionnaireRelays}
-                checked={useDefaultQuestionnaireRelays}
-                onChange={(event) => {
-                  const useDefaults = event.target.checked;
+            <UiSwitch
+              className={`simple-relay-default-toggle${useDefaultQuestionnaireRelays ? " is-on" : ""}`}
+              label='Use default'
+              isSelected={useDefaultQuestionnaireRelays}
+              onChange={(useDefaults) => {
                   setUseDefaultQuestionnaireRelays(useDefaults);
                   if (useDefaults) {
                     onQuestionnaireRelaysInputChange?.("");
                     setQuestionnaireRelayDraft("");
                   }
-                }}
-              />
-              <span className='simple-questionnaire-switch' aria-hidden='true'>
-                <span className='simple-questionnaire-switch-knob' />
-              </span>
-            </label>
+              }}
+            />
           </div>
           {questionnaireRelayStatus ? <p className='simple-voter-note'>{questionnaireRelayStatus}</p> : null}
           <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-            <input
-              className='simple-voter-input simple-voter-input-inline'
-              value={questionnaireRelayDraft}
-              placeholder='wss://relay.example'
-              disabled={useDefaultQuestionnaireRelays}
-              onChange={(event) => setQuestionnaireRelayDraft(event.target.value)}
+            <UiTextField
+              inputClassName='simple-voter-input simple-voter-input-inline'
+              isDisabled={useDefaultQuestionnaireRelays}
+              inputProps={{
+                value: questionnaireRelayDraft,
+                placeholder: "wss://relay.example",
+                onChange: (event) => setQuestionnaireRelayDraft(event.target.value),
+              }}
             />
-            <button
-              type='button'
+            <UiButton
+              icon='add'
               className='simple-voter-secondary'
-              onClick={addQuestionnaireRelay}
-              disabled={useDefaultQuestionnaireRelays || normalizeQuestionnaireRelays(questionnaireRelayDraft).length === 0}
+              onPress={addQuestionnaireRelay}
+              isDisabled={useDefaultQuestionnaireRelays || normalizeQuestionnaireRelays(questionnaireRelayDraft).length === 0}
             >
               Add relay
-            </button>
+            </UiButton>
           </div>
           <RelayProbeList
             title={useDefaultQuestionnaireRelays ? 'Default questionnaire relays' : 'Custom questionnaire relays'}
@@ -300,13 +295,13 @@ export default function SimpleRelayPanel({
             renderRelayAction={useDefaultQuestionnaireRelays
               ? undefined
               : (relay) => (
-                <button
-                  type='button'
+                <UiButton
+                  icon='delete'
                   className='simple-voter-secondary simple-relay-remove-button'
-                  onClick={() => removeQuestionnaireRelay(relay)}
+                  onPress={() => removeQuestionnaireRelay(relay)}
                 >
                   Remove
-                </button>
+                </UiButton>
               )}
           />
         </div>

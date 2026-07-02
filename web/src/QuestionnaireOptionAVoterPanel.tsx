@@ -27,6 +27,7 @@ import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinition
 import {
   normaliseQuestionBallotSlot,
   questionBallotScopeKey,
+  questionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
 } from "./questionnaireProtocol";
@@ -36,6 +37,7 @@ import { decodeNsec } from "./nostrIdentity";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
 import { tryWriteClipboard } from "./clipboard";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
+import { UiButton, UiSelect, UiSwitch, UiTextArea } from "./ui/DesignLayer";
 import {
   hashQuestionnaireInviteCode,
   hashQuestionnairePrivateInviteClaim,
@@ -554,21 +556,35 @@ function scopedBallotScopeKey(scope: BallotScope | null | undefined) {
   const slotId = scope?.slotId?.trim() ?? "";
   const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
   const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 1;
-  if (!questionId && !slotId && !slotIndex && version === 1) {
+  const credentialIndex = Number.isFinite(scope?.credentialIndex) ? Math.max(1, Math.floor(scope?.credentialIndex as number)) : 1;
+  const credentialSuffix = credentialIndex > 1 ? `:c${credentialIndex}` : "";
+  if (!questionId && !slotId && !slotIndex && version === 1 && credentialIndex <= 1) {
     return "__questionnaire__";
   }
   if (slotIndex > 0) {
-    return `slot:${slotIndex}:v${version}`;
+    return `slot:${slotIndex}:v${version}${credentialSuffix}`;
   }
-  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}`;
+  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}${credentialSuffix}`;
+}
+
+function withCredentialIndex(scope: BallotScope | null, credentialIndex: number): BallotScope | null {
+  const index = Math.max(1, Math.floor(credentialIndex));
+  if (index <= 1) {
+    return scope;
+  }
+  return {
+    ...(scope ?? {}),
+    credentialIndex: index,
+  };
 }
 
 function scopedBallotScopeForQuestion(
   definition: QuestionnaireDefinition | null | undefined,
   questionId: string,
+  credentialIndex = 1,
 ): BallotScope | null {
   if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
-    return null;
+    return withCredentialIndex(null, credentialIndex);
   }
   const index = definition.questions.findIndex((question) => question.questionId === questionId);
   const question = index >= 0 ? definition.questions[index] : null;
@@ -593,12 +609,12 @@ function scopedBallotScopeForQuestion(
   });
   const canonicalQuestion = canonicalIndex >= 0 ? definition.questions[canonicalIndex] : question;
   const canonicalSlot = normaliseQuestionBallotSlot(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index);
-  return {
+  return withCredentialIndex({
     questionId: canonicalQuestion.questionId,
     slotId: canonicalSlot.slotId,
     slotIndex: canonicalSlot.slotIndex,
     version: canonicalSlot.version,
-  };
+  }, credentialIndex);
 }
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
@@ -627,6 +643,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     encryptResponses?: boolean;
   }>>([]);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+  const [activeCredentialIndex, setActiveCredentialIndex] = useState(1);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
   const [submitInFlight, setSubmitInFlight] = useState(false);
@@ -720,75 +737,108 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? (questionnaireDefinition?.questionnaireId === currentQuestionnaireId ? questionnaireDefinition : null)
     ?? (currentQuestionnaireId ? readCachedQuestionnaireDefinition(currentQuestionnaireId) : null);
   const perQuestionMode = questionnaireUsesPerQuestionCredentials(currentDefinition);
-  const submittedQuestionKey = Object.keys(
+  const credentialInvite = (snapshot?.inviteMessage?.electionId === currentQuestionnaireId ? snapshot.inviteMessage : null)
+    ?? (activeInvite?.electionId === currentQuestionnaireId ? activeInvite : null)
+    ?? contextPendingInvites.find((invite) => invite.electionId === currentQuestionnaireId)
+    ?? (inviteContext.invite?.electionId === currentQuestionnaireId ? inviteContext.invite : null);
+  const credentialCount = credentialInvite?.credentialsPerVoter === 2 ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
+  const credentialIndexes = useMemo(
+    () => Array.from({ length: credentialCount }, (_, index) => index + 1),
+    [credentialCount],
+  );
+  const submittedQuestionKey = Object.entries(
     snapshot?.electionId === currentQuestionnaireId ? snapshot.submissions ?? {} : {},
-  ).sort().join("|");
-  const submittedQuestionIds = useMemo(() => new Set(
-    submittedQuestionKey ? submittedQuestionKey.split("|") : [],
-  ), [submittedQuestionKey]);
+  ).map(([key, submission]) => `${key}:${submission.submissionId}`).sort().join("|");
   const acceptedQuestionKey = Object.entries(
     snapshot?.electionId === currentQuestionnaireId ? snapshot.submissionDecisions ?? {} : {},
   )
     .filter(([, decision]) => decision.accepted)
-    .map(([questionId]) => questionId)
+    .map(([key, decision]) => `${key}:${decision.submissionId}`)
     .sort()
     .join("|");
   const acceptedQuestionIds = useMemo(() => new Set(
-    acceptedQuestionKey ? acceptedQuestionKey.split("|") : [],
+    acceptedQuestionKey
+      ? acceptedQuestionKey.split("|").map((entry) => entry.split(":")[0]).filter(Boolean)
+      : [],
   ), [acceptedQuestionKey]);
   const activeQuestion = perQuestionMode ? questions[activeQuestionIndex] ?? null : null;
   const activeQuestionScope = perQuestionMode && activeQuestion
-    ? scopedBallotScopeForQuestion(currentDefinition, activeQuestion.questionId)
+    ? scopedBallotScopeForQuestion(currentDefinition, activeQuestion.questionId, activeCredentialIndex)
     : null;
   const activeQuestionScopeKey = perQuestionMode && activeQuestion
     ? scopedBallotScopeKey(activeQuestionScope)
     : "";
+  const groupKeyForQuestionId = (questionId: string, credentialIndex = activeCredentialIndex) => (
+    scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, questionId, credentialIndex))
+  );
   const activeQuestionGroupEntries = useMemo(() => (
     perQuestionMode && activeQuestion && activeQuestionScopeKey
       ? questions
         .map((question, index) => ({ question, index }))
         .filter(({ question }) => (
-          scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, question.questionId)) === activeQuestionScopeKey
+          scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, question.questionId, activeCredentialIndex)) === activeQuestionScopeKey
         ))
       : activeQuestion
         ? [{ question: activeQuestion, index: activeQuestionIndex }]
         : []
-  ), [activeQuestion, activeQuestionIndex, activeQuestionScopeKey, currentDefinition, perQuestionMode, questions]);
+  ), [activeCredentialIndex, activeQuestion, activeQuestionIndex, activeQuestionScopeKey, currentDefinition, perQuestionMode, questions]);
   const activeQuestionIds = useMemo(
     () => activeQuestionGroupEntries.map(({ question }) => question.questionId),
     [activeQuestionGroupEntries],
-  );
-  const groupKeyForQuestionId = (questionId: string) => (
-    scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, questionId))
   );
   const submittedQuestionGroupKeys = useMemo(() => {
     const keys = new Set<string>();
     if (!perQuestionMode) {
       return keys;
     }
-    for (const question of questions) {
-      if (submittedQuestionIds.has(question.questionId)) {
-        keys.add(groupKeyForQuestionId(question.questionId));
+    const addSubmission = (submission: NonNullable<VoterElectionLocalState["submission"]>) => {
+      const proofs = Array.isArray(submission.credentialBundle) ? submission.credentialBundle : [];
+      if (proofs.length > 0) {
+        for (const proof of proofs) {
+          keys.add(scopedBallotScopeKey(proof.ballotScope));
+        }
+        return;
       }
+      for (const response of submission.payload.responses ?? []) {
+        keys.add(groupKeyForQuestionId(response.questionId, 1));
+      }
+    };
+    for (const [key, submission] of Object.entries(snapshot?.electionId === currentQuestionnaireId ? snapshot.submissions ?? {} : {})) {
+      if (key === "__questionnaire__" || key.startsWith("slot:") || key.includes(":c")) {
+        keys.add(key);
+      }
+      addSubmission(submission);
     }
     return keys;
-  }, [currentDefinition, perQuestionMode, questions, submittedQuestionIds]);
+  }, [currentDefinition, currentQuestionnaireId, perQuestionMode, snapshot?.electionId, snapshot?.submissions, submittedQuestionKey]);
   const acceptedQuestionGroupKeys = useMemo(() => {
     const keys = new Set<string>();
     if (!perQuestionMode) {
       return keys;
     }
-    for (const question of questions) {
-      if (acceptedQuestionIds.has(question.questionId)) {
-        keys.add(groupKeyForQuestionId(question.questionId));
+    const submissions = snapshot?.electionId === currentQuestionnaireId ? snapshot.submissions ?? {} : {};
+    for (const [key, decision] of Object.entries(snapshot?.electionId === currentQuestionnaireId ? snapshot.submissionDecisions ?? {} : {})) {
+      if (!decision.accepted) {
+        continue;
+      }
+      if (key === "__questionnaire__" || key.startsWith("slot:") || key.includes(":c")) {
+        keys.add(key);
+      } else {
+        keys.add(groupKeyForQuestionId(key, 1));
+      }
+      const matchingSubmission = Object.values(submissions).find((submission) => submission.submissionId === decision.submissionId) ?? null;
+      for (const proof of matchingSubmission?.credentialBundle ?? []) {
+        keys.add(scopedBallotScopeKey(proof.ballotScope));
       }
     }
     return keys;
-  }, [acceptedQuestionIds, currentDefinition, perQuestionMode, questions]);
+  }, [acceptedQuestionKey, currentDefinition, currentQuestionnaireId, perQuestionMode, snapshot?.electionId, snapshot?.submissionDecisions, snapshot?.submissions]);
   const activeQuestionSubmitted = Boolean(activeQuestionScopeKey && submittedQuestionGroupKeys.has(activeQuestionScopeKey));
   const allQuestionResponsesSubmitted = perQuestionMode
     && questions.length > 0
-    && questions.every((question) => submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId)));
+    && credentialIndexes.every((credentialIndex) => (
+      questions.every((question) => submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex)))
+    ));
   const responseSubmittedForCurrentQuestionnaire = perQuestionMode
     ? activeQuestionSubmitted
     : Boolean(snapshot?.submission && snapshot.electionId === currentQuestionnaireId);
@@ -799,7 +849,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ? snapshot?.blindIssuances?.[activeQuestionScopeKey] ?? null
     : snapshot?.blindIssuance ?? null;
   const activeQuestionSubmission = perQuestionMode
-    ? activeQuestionIds.map((questionId) => snapshot?.submissions?.[questionId] ?? null).find(Boolean) ?? null
+    ? snapshot?.submissions?.[activeQuestionScopeKey] ?? activeQuestionIds.map((questionId) => snapshot?.submissions?.[questionId] ?? null).find((submission) => {
+      if (!submission) {
+        return false;
+      }
+      const proofs = Array.isArray(submission.credentialBundle) ? submission.credentialBundle : [];
+      if (proofs.length > 0) {
+        return proofs.some((proof) => scopedBallotScopeKey(proof.ballotScope) === activeQuestionScopeKey);
+      }
+      return submission.payload.responses.some((response) => activeQuestionIds.includes(response.questionId));
+    }) ?? null
     : snapshot?.submission ?? null;
   const activeQuestionCredentialReady = perQuestionMode
     ? Boolean(activeQuestionIssuance)
@@ -931,6 +990,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setAnswers({});
     setEncryptFreeTextByQuestionId({});
     setActiveQuestionIndex(0);
+    setActiveCredentialIndex(1);
   }, [electionId]);
 
   useEffect(() => {
@@ -944,7 +1004,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
       return Math.min(Math.max(current, 0), questions.length - 1);
     });
-  }, [perQuestionMode, questions.length]);
+    setActiveCredentialIndex((current) => Math.min(Math.max(current, 1), credentialCount));
+  }, [credentialCount, perQuestionMode, questions.length]);
 
   useEffect(() => {
     if (!perQuestionMode || questions.length === 0) {
@@ -952,16 +1013,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     setActiveQuestionIndex((current) => {
       const currentQuestion = questions[current] ?? null;
-      if (currentQuestion && !submittedQuestionIds.has(currentQuestion.questionId)) {
+      if (currentQuestion && !submittedQuestionGroupKeys.has(groupKeyForQuestionId(currentQuestion.questionId, activeCredentialIndex))) {
         return current;
       }
-      const firstUnsubmittedIndex = questions.findIndex((question) => !submittedQuestionIds.has(question.questionId));
+      const firstUnsubmittedIndex = questions.findIndex((question) => (
+        !submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, activeCredentialIndex))
+      ));
       if (firstUnsubmittedIndex >= 0) {
         return firstUnsubmittedIndex;
       }
       return Math.min(Math.max(current, 0), questions.length - 1);
     });
-  }, [perQuestionMode, questions, submittedQuestionIds, submittedQuestionKey]);
+  }, [activeCredentialIndex, perQuestionMode, questions, submittedQuestionGroupKeys, submittedQuestionKey]);
 
   useEffect(() => {
     setPrivateInviteBlock(null);
@@ -2264,15 +2327,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return index;
   }
 
-  function findNextUnsubmittedQuestionIndex(fromIndex: number, justSubmittedQuestionIds: string[] = []) {
+  function findNextUnsubmittedQuestionIndex(fromIndex: number, credentialIndex = activeCredentialIndex, justSubmittedQuestionIds: string[] = []) {
     if (!perQuestionMode || questions.length === 0) {
       return -1;
     }
     const justSubmittedGroupKeys = new Set(
-      justSubmittedQuestionIds.map((questionId) => groupKeyForQuestionId(questionId)),
+      justSubmittedQuestionIds.map((questionId) => groupKeyForQuestionId(questionId, credentialIndex)),
     );
     const isSubmitted = (questionId: string) => {
-      const groupKey = groupKeyForQuestionId(questionId);
+      const groupKey = groupKeyForQuestionId(questionId, credentialIndex);
       return submittedQuestionGroupKeys.has(groupKey) || justSubmittedGroupKeys.has(groupKey);
     };
     for (let offset = 1; offset <= questions.length; offset += 1) {
@@ -2296,6 +2359,32 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return -1;
   }
 
+  function moveToNextProxyCredentialIfNeeded(justSubmittedQuestionIds: string[]) {
+    if (!perQuestionMode || activeCredentialIndex >= credentialCount) {
+      return false;
+    }
+    const justSubmittedGroupKeys = new Set(
+      justSubmittedQuestionIds.map((questionId) => groupKeyForQuestionId(questionId, activeCredentialIndex)),
+    );
+    const currentCredentialComplete = questions.every((question) => {
+      const groupKey = groupKeyForQuestionId(question.questionId, activeCredentialIndex);
+      return submittedQuestionGroupKeys.has(groupKey) || justSubmittedGroupKeys.has(groupKey);
+    });
+    if (!currentCredentialComplete) {
+      return false;
+    }
+    const nextCredentialIndex = activeCredentialIndex + 1;
+    const firstUnsubmittedIndex = questions.findIndex((question) => (
+      !submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, nextCredentialIndex))
+    ));
+    setActiveCredentialIndex(nextCredentialIndex);
+    setActiveQuestionIndex(firstUnsubmittedIndex >= 0 ? firstUnsubmittedIndex : 0);
+    setAnswers({});
+    setEncryptFreeTextByQuestionId({});
+    setStatus(null);
+    return true;
+  }
+
   async function submit() {
     if (!runtime || submitInFlight) {
       return;
@@ -2308,9 +2397,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const submitRequiredQuestionIds = submitQuestionIdSet.size > 0
         ? requiredQuestionIds.filter((questionId) => submitQuestionIdSet.has(questionId))
         : requiredQuestionIds;
-      await runtime.submitVote(submitRequiredQuestionIds, submitQuestionIds.length > 0 ? { questionIds: submitQuestionIds } : undefined);
+      await runtime.submitVote(
+        submitRequiredQuestionIds,
+        submitQuestionIds.length > 0
+          ? { questionIds: submitQuestionIds, credentialIndex: activeCredentialIndex }
+          : undefined,
+      );
       if (perQuestionMode) {
-        const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex, submitQuestionIds);
+        if (moveToNextProxyCredentialIfNeeded(submitQuestionIds)) {
+          setRefreshNonce((value) => value + 1);
+          return;
+        }
+        const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex, activeCredentialIndex, submitQuestionIds);
         if (nextQuestionIndex >= 0) {
           setActiveQuestionIndex(nextQuestionIndex);
           setStatus(null);
@@ -3033,9 +3131,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const scopeLabel = activeQuestionScope?.slotIndex
       ? `Ballot ${activeQuestionScope.slotIndex} · ${questionCountLabel}`
       : questionCountLabel;
+    const proxyLabel = credentialCount > 1
+      ? `Vote ${activeCredentialIndex}/${credentialCount} · `
+      : "";
     return responseSubmittedForCurrentQuestionnaire
-      ? `${scopeLabel} · Complete`
-      : scopeLabel;
+      ? `${proxyLabel}${scopeLabel} · Complete`
+      : `${proxyLabel}${scopeLabel}`;
   })();
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
     || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
@@ -3135,8 +3236,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       activeQuestionIndex,
       activeQuestionId: activeQuestion?.questionId ?? null,
       activeQuestionIds,
-      submittedQuestionIds: [...submittedQuestionIds],
-      acceptedQuestionIds: [...acceptedQuestionIds],
+      submittedQuestionIds: [...submittedQuestionGroupKeys],
+      acceptedQuestionIds: [...acceptedQuestionGroupKeys],
       submitButtonReasonBlocked,
       status,
       signedInNpub: signedInNpub || null,
@@ -3182,7 +3283,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     actionCoordinatorNpub,
     answerableQuestionsHaveResponse,
     answerableQuestionsHaveResponseForAction,
-    acceptedQuestionIds,
+    acceptedQuestionGroupKeys,
     allQuestionResponsesSubmitted,
     autoRequestBlindSigningKeyReady,
     autoRequestDefinition,
@@ -3206,7 +3307,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     status,
     perQuestionMode,
     responseSubmittedForCurrentQuestionnaire,
-    submittedQuestionIds,
+    submittedQuestionGroupKeys,
     submitInFlight,
   ]);
   const statusQuestionnaireId = currentQuestionnaireId || electionId.trim();
@@ -3349,11 +3450,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       <h4 className='simple-voter-section-title'>Ballot status</h4>
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
         {!waitingForCredential || manualResendRequestVisible ? (
-          <button type='button' className='simple-voter-secondary' disabled={!canRequestOrResendBallot} onClick={requestBallot}>
+          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!canRequestOrResendBallot} onPress={requestBallot}>
             {waitingForCredential ? "Resend request" : "Request ballot"}
-          </button>
+          </UiButton>
         ) : null}
-        <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
+        <UiButton icon='refresh' className='simple-voter-secondary' onPress={refreshStatus}>Refresh status</UiButton>
       </div>
       <p className='simple-voter-note'>Organiser: {coordinatorLabel}</p>
       {credentialIssuerIsProxy ? (
@@ -3414,40 +3515,40 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       <h4 className='simple-voter-section-title'>
         {privateInviteBlock.reason === "redeemed" ? "Private invite already used" : "Private invite unavailable"}
       </h4>
-      <p className='simple-voter-note'>
-        {privateInviteBlock.reason === "redeemed"
-          ? "This private invite can only be used once. Ask the organiser for a new invite, or use the general questionnaire link if you were meant to join publicly."
-          : "This private invite is no longer available. Ask the organiser for a new invite, or use the general questionnaire link if you were meant to join publicly."}
-      </p>
+      {privateInviteBlock.reason === "redeemed" ? null : (
+        <p className='simple-voter-note'>
+          This private invite is no longer available. Ask the organiser for a new invite, or use the general questionnaire link if you were meant to join publicly.
+        </p>
+      )}
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
         {privateInviteBlock.coordinatorNpub && props.onMessageOrganiser ? (
-          <button type='button' className='simple-voter-secondary' onClick={props.onMessageOrganiser}>
+          <UiButton icon='message' className='simple-voter-secondary' onPress={props.onMessageOrganiser}>
             Message organiser
-          </button>
+          </UiButton>
         ) : null}
         {privateInviteBlock.generalInviteUrl ? (
-          <button
-            type='button'
+          <UiButton
+            icon='external'
             className='simple-voter-secondary'
-            onClick={() => {
+            onPress={() => {
               if (privateInviteBlock.generalInviteUrl && typeof window !== "undefined") {
                 window.location.assign(privateInviteBlock.generalInviteUrl);
               }
             }}
           >
             Open general invite
-          </button>
+          </UiButton>
         ) : null}
-        <button
-          type='button'
+        <UiButton
+          icon='back'
           className='simple-voter-secondary'
-          onClick={() => {
+          onPress={() => {
             setPrivateInviteBlock(null);
             props.onBackToJoin?.();
           }}
         >
           Back to Join
-        </button>
+        </UiButton>
       </div>
     </section>
   ) : null;
@@ -3475,16 +3576,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       {props.showLoginAction !== false && !snapshot?.loginVerified ? (
         <div className='simple-questionnaire-header'>
           <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-            <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>
+            <UiButton icon='login' className='simple-voter-secondary' onPress={() => void login()}>Login</UiButton>
           </div>
         </div>
       ) : null}
 
       {inviteDropdownOptions.length > 1 ? (
         <div className='simple-questionnaire-invite-switcher'>
-          <select
+          <UiSelect
             id='questionnaire-invite-select'
-            className='simple-voter-input'
+            selectClassName='simple-voter-input'
             aria-label='Questionnaire'
             value={selectedInviteKey}
             onChange={(event) => {
@@ -3510,7 +3611,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 </option>
               );
             })}
-          </select>
+          </UiSelect>
         </div>
       ) : null}
       {visiblePendingInvites.length > 0 ? (
@@ -3521,22 +3622,22 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               <li key={`${invite.electionId}:${invite.coordinatorNpub}`}>
                 <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
                 {invite.title || invite.electionId}
-                <button
-                  type='button'
+                <UiButton
+                  icon='external'
                   className='simple-voter-secondary'
                   style={{ marginLeft: 8 }}
-                  onClick={() => void openInvite(invite)}
+                  onPress={() => void openInvite(invite)}
                 >
                   Open
-                </button>
-                <button
-                  type='button'
+                </UiButton>
+                <UiButton
+                  icon='key'
                   className='simple-voter-secondary'
                   style={{ marginLeft: 8 }}
-                  onClick={() => void openInvite(invite, true)}
+                  onPress={() => void openInvite(invite, true)}
                 >
                   Open + request ballot
-                </button>
+                </UiButton>
               </li>
             ))}
           </ul>
@@ -3567,37 +3668,36 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           {perQuestionMode ? (
             <div className={`simple-questionnaire-question-stepper${hasAdjacentQuestion ? "" : " is-single-group"}`} aria-label='Question progress'>
               {hasAdjacentQuestion ? (
-                <button
-                  type='button'
+                <UiButton
+                  icon='chevronLeft'
                   className='simple-voter-secondary simple-questionnaire-stepper-button'
-                  disabled={previousQuestionIndex < 0}
-                  onClick={() => {
+                  isDisabled={previousQuestionIndex < 0}
+                  onPress={() => {
                     if (previousQuestionIndex >= 0) {
                       setActiveQuestionIndex(previousQuestionIndex);
                     }
                   }}
                 >
-                  <span className='simple-questionnaire-stepper-arrow is-left' aria-hidden='true' />
                   <span>Previous</span>
-                </button>
+                </UiButton>
               ) : null}
               <p className='simple-questionnaire-question-progress'>
                 {activeQuestionProgressLabel}
               </p>
               {hasAdjacentQuestion ? (
-                <button
-                  type='button'
-                  className='simple-voter-secondary simple-questionnaire-stepper-button'
-                  disabled={nextQuestionIndex < 0}
-                  onClick={() => {
+                  <UiButton
+                    icon='chevronRight'
+                    iconPosition='end'
+                    className='simple-voter-secondary simple-questionnaire-stepper-button'
+                  isDisabled={nextQuestionIndex < 0}
+                  onPress={() => {
                     if (nextQuestionIndex >= 0) {
                       setActiveQuestionIndex(nextQuestionIndex);
                     }
                   }}
                 >
                   <span>Next</span>
-                  <span className='simple-questionnaire-stepper-arrow is-right' aria-hidden='true' />
-                </button>
+                </UiButton>
               ) : null}
             </div>
           ) : null}
@@ -3636,12 +3736,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               </div>
               {question.type === "yes_no" ? (
                 <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
-                  <button
-                    type='button'
+                  <UiButton
+                    icon='check'
                     className={`simple-voter-choice simple-voter-choice-yes${answers[question.questionId] === "yes" ? " is-active" : answers[question.questionId] === "no" ? " is-dimmed" : ""}`}
                     aria-pressed={answers[question.questionId] === "yes"}
-                    disabled={questionSubmitted}
-                    onClick={() => {
+                    isDisabled={questionSubmitted}
+                    onPress={() => {
                       if (questionSubmitted) {
                         return;
                       }
@@ -3649,13 +3749,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     }}
                   >
                     Yes
-                  </button>
-                  <button
-                    type='button'
+                  </UiButton>
+                  <UiButton
+                    icon='cancel'
                     className={`simple-voter-choice simple-voter-choice-no${answers[question.questionId] === "no" ? " is-active" : answers[question.questionId] === "yes" ? " is-dimmed" : ""}`}
                     aria-pressed={answers[question.questionId] === "no"}
-                    disabled={questionSubmitted}
-                    onClick={() => {
+                    isDisabled={questionSubmitted}
+                    onPress={() => {
                       if (questionSubmitted) {
                         return;
                       }
@@ -3663,7 +3763,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     }}
                   >
                     No
-                  </button>
+                  </UiButton>
                 </div>
               ) : null}
               {question.type === "multiple_choice" ? (
@@ -3748,28 +3848,28 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                   <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
                                 </span>
                                 <div className='simple-questionnaire-rank-actions'>
-                                  <button
-                                    type='button'
+                                  <UiButton
+                                    icon='uploadLine'
+                                    iconOnly
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
-                                    onClick={(event) => {
+                                    onPress={(event) => {
                                       event.stopPropagation();
                                       moveRankedAnswer(question.questionId, option.optionId, -1);
                                     }}
-                                    disabled={questionSubmitted || rankedIndex === 0}
-                                  >
-                                    Up
-                                  </button>
-                                  <button
-                                    type='button'
+                                    isDisabled={questionSubmitted || rankedIndex === 0}
+                                    aria-label='Move up'
+                                  />
+                                  <UiButton
+                                    icon='downloadLine'
+                                    iconOnly
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
-                                    onClick={(event) => {
+                                    onPress={(event) => {
                                       event.stopPropagation();
                                       moveRankedAnswer(question.questionId, option.optionId, 1);
                                     }}
-                                    disabled={questionSubmitted || rankedIndex === ranked.length - 1}
-                                  >
-                                    Down
-                                  </button>
+                                    isDisabled={questionSubmitted || rankedIndex === ranked.length - 1}
+                                    aria-label='Move down'
+                                  />
                                 </div>
                               </div>
                             );
@@ -3778,16 +3878,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         {unrankedOptions.length > 0 ? (
                           <div className='simple-questionnaire-choice-list'>
                             {unrankedOptions.map((option) => (
-                              <button
+                              <UiButton
                                 key={option.optionId}
-                                type='button'
+                                icon='add'
                                 className='simple-voter-secondary simple-questionnaire-rank-add'
-                                onClick={() => addRankedAnswer(question.questionId, option.optionId)}
-                                disabled={questionSubmitted}
+                                onPress={() => addRankedAnswer(question.questionId, option.optionId)}
+                                isDisabled={questionSubmitted}
                               >
                                 <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
                                 <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
-                              </button>
+                              </UiButton>
                             ))}
                           </div>
                         ) : null}
@@ -3802,37 +3902,36 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   const encryptionEnabled = encryptionRequired || Boolean(encryptFreeTextByQuestionId[question.questionId]);
                   return (
                     <>
-                      <textarea
-                        className='simple-voter-input simple-questionnaire-free-text'
-                        rows={3}
-                        maxLength={question.maxLength ?? 500}
-                        value={typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : ""}
-                        readOnly={questionSubmitted}
-                        onChange={(event) => {
-                          if (questionSubmitted) {
-                            return;
-                          }
-                          setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }));
+                      <UiTextArea
+                        textAreaClassName='simple-voter-input simple-questionnaire-free-text'
+                        isDisabled={questionSubmitted}
+                        textAreaProps={{
+                          rows: 3,
+                          maxLength: question.maxLength ?? 500,
+                          value: typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : "",
+                          onChange: (event) => {
+                            if (questionSubmitted) {
+                              return;
+                            }
+                            setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }));
+                          },
                         }}
                       />
-                      <label className='simple-questionnaire-choice-row'>
-                        <input
-                          type='checkbox'
-                          checked={encryptionEnabled}
-                          disabled={encryptionRequired || questionSubmitted}
-                          onChange={(event) => {
+                      <UiSwitch
+                        className='simple-questionnaire-choice-row'
+                        label={encryptionRequired ? "Encryption required by organiser" : "Encrypt for organiser"}
+                        isSelected={encryptionEnabled}
+                        isDisabled={encryptionRequired || questionSubmitted}
+                        onChange={(checked) => {
                             if (encryptionRequired || questionSubmitted) {
                               return;
                             }
-                            const checked = event.target.checked;
                             setEncryptFreeTextByQuestionId((current) => ({
                               ...current,
                               [question.questionId]: checked,
                             }));
-                          }}
-                        />
-                        <span>{encryptionRequired ? "Encryption required by organiser" : "Encrypt for organiser"}</span>
-                      </label>
+                        }}
+                      />
                     </>
                   );
                 })()
@@ -3844,11 +3943,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       )}
 
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
-        <button
-          type='button'
+        <UiButton
+          icon={submitInFlight ? "spinner" : canViewResults ? "view" : canAdvanceQuestion || canAdvanceQuestionBeforeSubmit ? "chevronRight" : "send"}
+          iconPosition={canAdvanceQuestion || canAdvanceQuestionBeforeSubmit ? "end" : "start"}
           className='simple-voter-primary'
-          disabled={submitInFlight || !(canSubmitNow || canAdvanceQuestionBeforeSubmit || canAdvanceQuestion || canViewResults)}
-          onClick={() => {
+          isDisabled={submitInFlight || !(canSubmitNow || canAdvanceQuestionBeforeSubmit || canAdvanceQuestion || canViewResults)}
+          onPress={() => {
             if (submitInFlight) {
               return;
             }
@@ -3859,9 +3959,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               return;
             }
             if (canAdvanceQuestion) {
-              const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex);
+              const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex, activeCredentialIndex);
               if (nextQuestionIndex >= 0) {
                 setActiveQuestionIndex(nextQuestionIndex);
+              } else {
+                void moveToNextProxyCredentialIfNeeded([]);
               }
               return;
             }
@@ -3873,13 +3975,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           }}
         >
           {voteActionButtonText}
-        </button>
+        </UiButton>
         {showAnswerNextButton ? (
-          <button
-            type='button'
+          <UiButton
+            icon='chevronRight'
+            iconPosition='end'
             className='simple-voter-primary simple-questionnaire-answer-next'
-            disabled={answerNextDisabled}
-            onClick={() => {
+            isDisabled={answerNextDisabled}
+            onPress={() => {
               if (nextInviteDropdownOption && !answerNextDisabled) {
                 const key = inviteMessageKey(nextInviteDropdownOption);
                 setAnswerNextPendingKey(key);
@@ -3891,12 +3994,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             }}
           >
             {answerNextButtonText}
-          </button>
+          </UiButton>
         ) : null}
         {manualResendRequestVisible && !privateInviteBlock ? (
-          <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
+          <UiButton icon='key' className='simple-voter-secondary' onPress={requestBallot}>
             Resend request
-          </button>
+          </UiButton>
         ) : null}
       </div>
       {displaySubmission ? (
@@ -3916,17 +4019,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 <div className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-identity'>
                   <strong>{submittedMarkerLabel}</strong>
                   {submittedMarkerNpub ? (
-                    <button
-                      type='button'
+                    <UiButton
+                      icon={isReceiptCopyActive("receipt-anonymous-identity") ? "check" : "copy"}
+                      iconOnly
                       className='simple-vote-receipt-copy-button'
-                      onClick={() => void copyReceiptValue(submittedMarkerNpub, "receipt-anonymous-identity")}
+                      onPress={() => void copyReceiptValue(submittedMarkerNpub, "receipt-anonymous-identity")}
                       aria-label={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied anonymous voting identity" : "Copy anonymous voting identity"}
                       title={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied" : "Copy anonymous voting identity"}
                       data-copied={isReceiptCopyActive("receipt-anonymous-identity") ? "true" : undefined}
-                    >
-                      <span className='simple-copy-icon' aria-hidden='true' />
-                      <span className='simple-vote-receipt-copy-feedback'>Copied</span>
-                    </button>
+                    />
                   ) : null}
                 </div>
               </div>
@@ -3958,17 +4059,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                       <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-words'>
                         <span className='simple-identity-words-badge'>{row.value}</span>
                         {row.value !== "Not available" ? (
-                          <button
-                            type='button'
+                          <UiButton
+                            icon={isReceiptCopyActive("receipt-identity-words") ? "check" : "copy"}
+                            iconOnly
                             className='simple-vote-receipt-copy-button'
-                            onClick={() => void copyReceiptValue(row.value, "receipt-identity-words")}
+                            onPress={() => void copyReceiptValue(row.value, "receipt-identity-words")}
                             aria-label={isReceiptCopyActive("receipt-identity-words") ? "Copied vote finder words" : "Copy vote finder words"}
                             title={isReceiptCopyActive("receipt-identity-words") ? "Copied" : "Copy vote finder words"}
                             data-copied={isReceiptCopyActive("receipt-identity-words") ? "true" : undefined}
-                          >
-                            <span className='simple-copy-icon' aria-hidden='true' />
-                            <span className='simple-vote-receipt-copy-feedback'>Copied</span>
-                          </button>
+                          />
                         ) : null}
                       </span>
                     ) : row.value}

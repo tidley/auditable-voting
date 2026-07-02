@@ -7,8 +7,15 @@ const DEFAULT_WORKER_RELAYS: &[&str] = &[
     "wss://relay.nostr.net",
     "wss://nos.lol",
     "wss://relay.nostr.info",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net",
 ];
-const DEFAULT_WORKER_DM_RELAYS: &[&str] = &["wss://relay.nostr.net", "wss://nos.lol"];
+const DEFAULT_WORKER_DM_RELAYS: &[&str] = &[
+    "wss://relay.nostr.net",
+    "wss://nos.lol",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net",
+];
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {

@@ -11,6 +11,7 @@ import {
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
 } from "./questionnaireProtocolConstants";
 import { deriveActorDisplayId } from "./actorDisplay";
+import { UiButton, UiTextArea, UiTextField } from "./ui/DesignLayer";
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
@@ -192,28 +193,45 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
           <p className='simple-voter-note'>Blind credential flow</p>
         </div>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-          <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>
-          <button type='button' className='simple-voter-secondary' onClick={createNewId}>New identity</button>
+          <UiButton icon='login' className='simple-voter-secondary' onPress={() => void login()}>Login</UiButton>
+          <UiButton icon='add' className='simple-voter-secondary' onPress={createNewId}>New identity</UiButton>
         </div>
       </div>
 
       {signedInNpub ? <p className='simple-voter-note'>Signed in as {signedInNpub}</p> : null}
       <p className='simple-voter-note'>Questionnaire ID: {electionId}</p>
 
-      <label className='simple-voter-label' htmlFor='optiona-title'>Name</label>
-      <input id='optiona-title' className='simple-voter-input' value={title} onChange={(event) => setTitle(event.target.value)} />
-      <label className='simple-voter-label' htmlFor='optiona-description'>Description</label>
-      <textarea id='optiona-description' className='simple-voter-input' value={description} rows={2} onChange={(event) => setDescription(event.target.value)} />
+      <UiTextField
+        label='Name'
+        inputClassName='simple-voter-input'
+        inputProps={{
+          id: 'optiona-title',
+          value: title,
+          onChange: (event) => setTitle(event.target.value),
+        }}
+      />
+      <UiTextArea
+        label='Description'
+        textAreaClassName='simple-voter-input'
+        textAreaProps={{
+          id: 'optiona-description',
+          value: description,
+          rows: 2,
+          onChange: (event) => setDescription(event.target.value),
+        }}
+      />
 
       <h4 className='simple-voter-section-title'>Voters</h4>
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
-        <input
-          className='simple-voter-input simple-voter-input-inline'
-          value={whitelistInput}
-          placeholder='npub1...'
-          onChange={(event) => setWhitelistInput(event.target.value)}
+        <UiTextField
+          inputClassName='simple-voter-input simple-voter-input-inline'
+          inputProps={{
+            value: whitelistInput,
+            placeholder: 'npub1...',
+            onChange: (event) => setWhitelistInput(event.target.value),
+          }}
         />
-        <button type='button' className='simple-voter-secondary' disabled={!signedInNpub.trim()} onClick={addWhitelist}>Add</button>
+        <UiButton icon='add' className='simple-voter-secondary' isDisabled={!signedInNpub.trim()} onPress={addWhitelist}>Add</UiButton>
       </div>
 
       {whitelistRows.length === 0 ? <p className='simple-voter-note'>No voters yet.</p> : (
@@ -222,27 +240,27 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
             <li key={entry.invitedNpub}>
               <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
               {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
-              <button
-                type='button'
+              <UiButton
+                icon='send'
                 className='simple-voter-secondary'
                 style={{ marginLeft: 8 }}
-                disabled={!flags.canSendInvites}
-                onClick={() => sendInvite(entry.invitedNpub)}
+                isDisabled={!flags.canSendInvites}
+                onPress={() => sendInvite(entry.invitedNpub)}
               >
                 Send invite
-              </button>
+              </UiButton>
             </li>
           ))}
         </ul>
       )}
 
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
-        <button type='button' className='simple-voter-secondary' disabled={!flags.canIssueBlindResponses} onClick={processRequests}>
+        <UiButton icon='key' className='simple-voter-secondary' isDisabled={!flags.canIssueBlindResponses} onPress={processRequests}>
           Issue pending ballots
-        </button>
-        <button type='button' className='simple-voter-secondary' disabled={!flags.canAcceptVotes} onClick={processSubmissions}>
+        </UiButton>
+        <UiButton icon='check' className='simple-voter-secondary' isDisabled={!flags.canAcceptVotes} onPress={processSubmissions}>
           Accept pending votes
-        </button>
+        </UiButton>
       </div>
 
       <p className='simple-voter-note'>Accepted responses: {runtime.getAcceptedUniqueCount()}</p>

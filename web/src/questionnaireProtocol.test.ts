@@ -64,6 +64,21 @@ describe("questionnaireProtocol", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it("allows one or two credentials per voter", () => {
+    expect(validateQuestionnaireDefinition({
+      ...buildDefinition(),
+      credentialsPerVoter: 2,
+    }).valid).toBe(true);
+
+    const invalid = validateQuestionnaireDefinition({
+      ...buildDefinition(),
+      credentialsPerVoter: 3,
+    } as QuestionnaireDefinition);
+
+    expect(invalid.valid).toBe(false);
+    expect(invalid.errors).toContain("credentials_per_voter_invalid");
+  });
+
   it("accepts organiser-required free-text encryption", () => {
     const definition: QuestionnaireDefinition = {
       ...buildDefinition(),

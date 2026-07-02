@@ -317,8 +317,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
 
     const quickStart = await screen.findByLabelText("Quick start command") as HTMLTextAreaElement;
-    expect(quickStart.value).toContain("WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info");
-    expect(quickStart.value).toContain("WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol");
+    expect(quickStart.value).toContain("WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net");
+    expect(quickStart.value).toContain("WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.damus.io,wss://relay.primal.net");
     expect(quickStart.value).not.toContain("WORKER_DM_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info");
   });
 
@@ -390,6 +390,49 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.queryByText("Publish a questionnaire to inspect results.")).toBeNull();
   });
 
+  it("asks for in-app confirmation before closing and publishing results", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId: "q_publish_confirm",
+      title: "Publish confirm",
+      coordinatorNpub,
+    }));
+    upsertElectionSummary({
+      electionId: "q_publish_confirm",
+      title: "Publish confirm",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-02T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    try {
+      render(
+        <QuestionnaireCoordinatorPanel
+          view='responses'
+          coordinatorNpub={coordinatorNpub}
+          coordinatorNsec={coordinatorNsec}
+          knownVoterCount={2}
+          optionAAcceptedCount={1}
+        />,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: "Close + publish results" }));
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(questionnaireNostrMocks.publishQuestionnaireState).not.toHaveBeenCalled();
+      expect(await screen.findByRole("dialog", { name: "Close and publish?" })).toBeTruthy();
+      expect(screen.getByText(/Only 1 of 2 expected responses have been received/i)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Confirm and publish" })).toBeTruthy();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
   it("prefers the published summary title over a cached draft title in the live status selector", async () => {
     const coordinatorNpub = "npub1organiser";
     storeCachedQuestionnaireDefinition(makeDefinition({
@@ -455,7 +498,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
   });
 
-  it("shows only the active draft in the build page selector", async () => {
+  it("shows previous organiser sessions in the build page selector", async () => {
     const coordinatorNpub = "npub1organiser";
     window.localStorage.setItem(
       buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
@@ -499,7 +542,11 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(sharedNostrPoolMocks.querySync).toHaveBeenCalled();
     });
 
-    expect([...selector.options].map((option) => option.value)).toEqual(["q_current_draft"]);
+    expect([...selector.options].map((option) => option.value)).toEqual([
+      "q_previous_one",
+      "q_previous_two",
+      "q_current_draft",
+    ]);
   });
 
   it("uses live build draft values for the selected questionnaire label", async () => {
@@ -750,8 +797,41 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(generateIdButton.matches(":disabled")).toBe(false);
     await waitFor(() => expect(onReadinessChange).toHaveBeenCalled());
     const latestReadiness = onReadinessChange.mock.calls.at(-1)?.[0] ?? [];
+    expect(latestReadiness.find((item: { id: string }) => item.id === "question")).toBeUndefined();
+    expect(latestReadiness.find((item: { id: string }) => item.id === "title")).toBeUndefined();
+    expect(latestReadiness.find((item: { id: string }) => item.id === "description")).toBeUndefined();
+    expect(latestReadiness.find((item: { id: string }) => item.id === "basics")).toMatchObject({
+      label: "Title & Description",
+      group: "questionnaire",
+      action: "setup_basics",
+      stageLabel: "1",
+      complete: false,
+    });
+    expect(latestReadiness.find((item: { id: string }) => item.id === "answers")).toMatchObject({
+      label: "Questions complete",
+      group: "questionnaire",
+      action: "setup_questions",
+      stageLabel: "2",
+      complete: true,
+    });
     expect(latestReadiness.find((item: { id: string }) => item.id === "publish")).toMatchObject({
       label: "Published",
+      group: "session",
+      stageLabel: "3",
+      complete: false,
+    });
+    expect(latestReadiness.find((item: { id: string }) => item.id === "proxy")).toMatchObject({
+      label: "Set up proxy",
+      group: "session",
+      optional: true,
+      stageLabel: "3a",
+      complete: false,
+    });
+    expect(latestReadiness.find((item: { id: string }) => item.id === "invite")).toMatchObject({
+      label: "Invite voters",
+      group: "session",
+      action: "invite_voters",
+      stageLabel: "4",
       complete: false,
     });
   });

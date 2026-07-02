@@ -42,6 +42,7 @@ import {
 } from "./questionnaireNostr";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { deriveActorDisplayId } from "./actorDisplay";
+import { UiButton, UiSelect, UiTextField } from "./ui/DesignLayer";
 
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
@@ -836,33 +837,31 @@ export default function SimpleAuditorApp() {
         <section className='simple-voter-section simple-auditor-panel' data-refresh-status={questionnaireRefreshStatus ?? ""}>
           <div className='simple-voter-header-row'>
             <h2 className='simple-voter-section-title'>Find Published Questionnaires</h2>
-            <button
-              type='button'
+            <UiButton
+              icon={refreshInFlight ? "spinner" : "refresh"}
               className='simple-voter-secondary'
-              onClick={() => void refreshNow()}
-              disabled={refreshInFlight}
+              onPress={() => void refreshNow()}
+              isDisabled={refreshInFlight}
             >
               {refreshInFlight ? "Busy..." : "Refresh"}
-            </button>
+            </UiButton>
           </div>
           {questionnaires.length > 0 ? (
             <>
-              <label className='simple-voter-label' htmlFor='simple-auditor-search'>
-                Search
-              </label>
-              <input
-                id='simple-auditor-search'
-                className='simple-voter-input'
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder='Filter by questionnaire, organiser, Submission ID, or Submittor identity...'
+              <UiTextField
+                label='Search'
+                inputClassName='simple-voter-input'
+                inputProps={{
+                  id: 'simple-auditor-search',
+                  value: searchQuery,
+                  onChange: (event) => setSearchQuery(event.target.value),
+                  placeholder: 'Filter by questionnaire, organiser, Submission ID, or Submittor identity...',
+                }}
               />
-              <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
-                Questionnaire organiser identity
-              </label>
-              <select
+              <UiSelect
+                label='Questionnaire organiser identity'
                 id='simple-auditor-coordinator-npub'
-                className='simple-voter-input'
+                selectClassName='simple-voter-input'
                 value={selectedCoordinatorNpub}
                 onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
               >
@@ -872,15 +871,13 @@ export default function SimpleAuditorApp() {
                     {coordinatorNpub}
                   </option>
                 ))}
-              </select>
+              </UiSelect>
               {filteredQuestionnaires.length > 0 ? (
                 <>
-                  <label className='simple-voter-label' htmlFor='simple-auditor-round'>
-                    Round
-                  </label>
-                  <select
+                  <UiSelect
+                    label='Round'
                     id='simple-auditor-round'
-                    className='simple-voter-input'
+                    selectClassName='simple-voter-input'
                     value={selectedQuestionnaire?.questionnaireId ?? ''}
                     onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
                   >
@@ -889,7 +886,7 @@ export default function SimpleAuditorApp() {
                         {formatRoundOptionLabel(entry)}
                       </option>
                     ))}
-                  </select>
+                  </UiSelect>
                 </>
               ) : (
                 <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
@@ -932,16 +929,18 @@ export default function SimpleAuditorApp() {
           onExportResults={exportResults}
           responseDecryptControls={(
             <div className='simple-auditor-decrypt-control'>
-              <label className='simple-voter-label' htmlFor='simple-auditor-decrypt-nsec'>Decrypt answer details</label>
-              <input
-                id='simple-auditor-decrypt-nsec'
-                className='simple-voter-input'
-                type='password'
-                value={observerDecryptNsec}
-                onChange={(event) => setObserverDecryptNsec(event.target.value)}
-                placeholder='Organiser nsec...'
-                autoComplete='off'
-                spellCheck={false}
+              <UiTextField
+                label='Decrypt answer details'
+                inputClassName='simple-voter-input'
+                inputProps={{
+                  id: 'simple-auditor-decrypt-nsec',
+                  type: 'password',
+                  value: observerDecryptNsec,
+                  onChange: (event) => setObserverDecryptNsec(event.target.value),
+                  placeholder: 'Organiser nsec...',
+                  autoComplete: 'off',
+                  spellCheck: false,
+                }}
               />
               {decryptedResponseResult.statusText ? (
                 <p className='simple-voter-note'>{decryptedResponseResult.statusText}</p>

@@ -6,6 +6,7 @@ import {
   tokenPatternDetail,
   tokenQrPayload,
 } from "./tokenIdentity";
+import { UiButton } from "./ui/DesignLayer";
 
 export default function TokenFingerprint({
   tokenId,
@@ -128,17 +129,17 @@ export default function TokenFingerprint({
             ))}
           </div>
           {showQr && (
-            <button
-              type='button'
+            <UiButton
+              icon={false}
               className='token-fingerprint-qr-shell token-fingerprint-qr-button'
-              onClick={() => {
+              onPress={() => {
                 if (qrSrc) {
                   setExpandedPanel("qr");
                 }
               }}
               aria-label={`Expand QR for token ${tokenIdLabel(tokenId)}`}
               data-tooltip={qrTitle || undefined}
-              disabled={!qrSrc}
+              isDisabled={!qrSrc}
             >
               {qrSrc ? (
                 <img
@@ -152,7 +153,7 @@ export default function TokenFingerprint({
                   aria-hidden='true'
                 />
               )}
-            </button>
+            </UiButton>
           )}
         </div>
       </div>
@@ -166,14 +167,14 @@ export default function TokenFingerprint({
             : `Expanded Colour ID for token ${tokenIdLabel(tokenId)}`}
           onClick={() => setExpandedPanel(null)}
         >
-          <button
-            type='button'
+          <UiButton
+            icon='cancel'
             className='token-fingerprint-overlay-close'
-            onClick={() => setExpandedPanel(null)}
+            onPress={() => setExpandedPanel(null)}
             aria-label={expandedPanel === "qr" ? "Close QR preview" : "Close Colour ID preview"}
           >
             Close
-          </button>
+          </UiButton>
           <div
             className='token-fingerprint-overlay-card'
             onClick={(event) => event.stopPropagation()}

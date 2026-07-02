@@ -841,7 +841,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     );
 
     expect(await screen.findByText("Private invite already used")).toBeTruthy();
-    expect(screen.getByText(/This private invite can only be used once/i)).toBeTruthy();
+    expect(screen.queryByText(/This private invite can only be used once/i)).toBeNull();
     expect(screen.getByRole("button", { name: "Open general invite" })).toBeTruthy();
     expect(screen.queryByText("Used private questionnaire")).toBeNull();
     expect(screen.queryByText("Private description")).toBeNull();

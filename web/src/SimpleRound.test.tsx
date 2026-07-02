@@ -142,6 +142,17 @@ let shareAssignmentSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+
+async function openInviteVotersFromReadiness(
+  user: ReturnType<typeof userEvent.setup>,
+  ui: ReturnType<typeof within>,
+) {
+  const inviteButton = ui.getAllByRole("button", { name: /^Invite voters:/i })[0];
+  if (!inviteButton) {
+    throw new Error("Invite voters readiness button not found");
+  }
+  await user.click(inviteButton);
+}
 let shardRequestSubscribers: Array<{
   coordinatorNpub: string;
   onRequests: (requests: Array<{
@@ -1705,11 +1716,13 @@ describe("Simple round flow", () => {
     const coordinator = render(<SimpleCoordinatorApp />);
     const coordinatorUi = within(coordinator.container);
 
-    await userEvent.setup().click(coordinatorUi.getByRole("tab", { name: /^Session$/i }));
+    await openInviteVotersFromReadiness(userEvent.setup(), coordinatorUi);
 
     await waitFor(() => {
-      expect(coordinatorUi.getByRole("tab", { name: /^Questionnaire$/i })).toBeTruthy();
-      expect(coordinatorUi.getByRole("tab", { name: /^Session$/i })).toBeTruthy();
+      expect(coordinatorUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
+      expect(coordinatorUi.getAllByRole("button", { name: /^Title & Description:/i }).length).toBeGreaterThan(0);
+      expect(coordinatorUi.queryByRole("tab", { name: /^Session$/i })).toBeNull();
+      expect(coordinatorUi.getByRole("tab", { name: /^Audit proxy$/i })).toBeTruthy();
       expect(coordinatorUi.queryByText(/Live prompt: Legacy cached prompt/i)).toBeNull();
     });
   });
@@ -1824,10 +1837,10 @@ describe("Simple round flow", () => {
     const coordinator = render(<SimpleCoordinatorApp />);
     const coordinatorUi = within(coordinator.container);
 
-    await user.click(coordinatorUi.getByRole("tab", { name: /^Session$/i }));
+    await openInviteVotersFromReadiness(user, coordinatorUi);
 
     await waitFor(() => {
-      expect(coordinatorUi.getByRole("tab", { name: /^Session$/i })).toBeTruthy();
+      expect(coordinatorUi.queryByRole("tab", { name: /^Session$/i })).toBeNull();
     });
 
     expect(
@@ -1897,8 +1910,8 @@ describe("Simple round flow", () => {
     expect(leadNpub.startsWith("npub1")).toBe(true);
     expect(subNpub.startsWith("npub1")).toBe(true);
 
-    await user.click(leadUi.getByRole("tab", { name: /^Session$/i }));
-    await user.click(subUi.getByRole("tab", { name: /^Session$/i }));
+    await openInviteVotersFromReadiness(user, leadUi);
+    await openInviteVotersFromReadiness(user, subUi);
 
     expect(lead.container.querySelector("#simple-question-prompt")).toBeNull();
     expect(leadUi.queryByRole("button", { name: /Broadcast live vote|Vote broadcast/i })).toBeNull();
@@ -1947,13 +1960,17 @@ describe("Simple round flow", () => {
     expect(coordinatorTwoNpub.startsWith("npub1")).toBe(true);
     expect(coordinatorOneNpub).not.toBe(coordinatorTwoNpub);
 
-    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Session$/i }));
-    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Session$/i }));
+    await openInviteVotersFromReadiness(user, coordinatorOneUi);
+    await openInviteVotersFromReadiness(user, coordinatorTwoUi);
     await user.click(voterOneUi.getByRole("tab", { name: /^Join$/i }));
     await user.click(voterTwoUi.getByRole("tab", { name: /^Join$/i }));
 
-    expect(coordinatorOneUi.getByRole("tab", { name: /^Questionnaire$/i })).toBeTruthy();
-    expect(coordinatorTwoUi.getByRole("tab", { name: /^Questionnaire$/i })).toBeTruthy();
+    expect(coordinatorOneUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
+    expect(coordinatorTwoUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
+    expect(coordinatorOneUi.getAllByRole("button", { name: /^Title & Description:/i }).length).toBeGreaterThan(0);
+    expect(coordinatorTwoUi.getAllByRole("button", { name: /^Title & Description:/i }).length).toBeGreaterThan(0);
+    expect(coordinatorOneUi.getByRole("tab", { name: /^Audit proxy$/i })).toBeTruthy();
+    expect(coordinatorTwoUi.getByRole("tab", { name: /^Audit proxy$/i })).toBeTruthy();
     expect(voterOneUi.getByRole("tab", { name: /^Vote$/i })).toBeTruthy();
     expect(voterTwoUi.getByRole("tab", { name: /^Vote$/i })).toBeTruthy();
     expect(coordinatorOneUi.queryByRole("button", { name: /Broadcast live vote|Vote broadcast/i })).toBeNull();
@@ -1989,8 +2006,8 @@ describe("Simple round flow", () => {
       expect(voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
     });
 
-    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Session$/i }));
-    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Session$/i }));
+    await openInviteVotersFromReadiness(user, coordinatorOneUi);
+    await openInviteVotersFromReadiness(user, coordinatorTwoUi);
     await user.click(voterUi.getByRole("tab", { name: /^Vote$/i }));
 
     expect(coordinatorOneUi.queryByText(/Follow request received\./i)).toBeNull();
@@ -2026,8 +2043,8 @@ describe("Simple round flow", () => {
       expect(voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
     });
 
-    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Session$/i }));
-    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Session$/i }));
+    await openInviteVotersFromReadiness(user, coordinatorOneUi);
+    await openInviteVotersFromReadiness(user, coordinatorTwoUi);
     await user.click(voterUi.getByRole("tab", { name: /^Join$/i }));
 
     expect(coordinatorTwoUi.queryByLabelText(/^Lead coordinator npub$/i)).toBeNull();
@@ -2063,7 +2080,7 @@ describe("Simple round flow", () => {
     suppressedShardResponseNotifications = new Set([voterNpub]);
 
     await user.click(voterUi.getByRole("tab", { name: /^Join$/i }));
-    await user.click(coordinatorUi.getByRole("tab", { name: /^Session$/i }));
+    await openInviteVotersFromReadiness(user, coordinatorUi);
     await user.click(voterUi.getByRole("tab", { name: /^Vote$/i }));
 
     expect(coordinatorUi.queryByText(/Follow request received\./i)).toBeNull();

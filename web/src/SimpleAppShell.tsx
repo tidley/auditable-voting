@@ -8,12 +8,18 @@ import SimpleUiApp, { type VoterTab } from "./SimpleUiApp";
 import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
 import { createAmberConnectBundle, createSignerService, SignerServiceError } from "./services/signerService";
 import { deriveNpubFromNsec } from "./nostrIdentity";
-import { loadSimpleActorState, saveSimpleActorState, type SimpleActorRole } from "./simpleLocalState";
+import {
+  downloadSimpleActorBackup,
+  loadSimpleActorState,
+  saveSimpleActorState,
+  type SimpleActorRole,
+} from "./simpleLocalState";
 import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
+import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
@@ -23,13 +29,41 @@ const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
   { role: "coordinator", label: "Organiser" },
   { role: "voter", label: "Voter" },
 ];
+const ACCOUNT_MENU_ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
+  { role: "voter", label: "Voter" },
+  { role: "coordinator", label: "Organiser" },
+  { role: "auditor", label: "Observer" },
+];
 const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string; icon: string }> = [
-  { tab: "configure", label: "Join", icon: "join" },
+  { tab: "configure", label: "Find organiser", icon: "join" },
   { tab: "vote", label: "Vote", icon: "vote" },
   { tab: "messages", label: "Messages", icon: "messages" },
   { tab: "settings", label: "Settings", icon: "settings" },
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
+
+function voterTabIconName(icon: string): UiIconName {
+  if (icon === "messages") {
+    return "message";
+  }
+  if (icon === "settings") {
+    return "settings";
+  }
+  if (icon === "vote") {
+    return "clipboard";
+  }
+  return "search";
+}
+
+function roleIconName(role: SimpleRole): UiIconName {
+  if (role === "coordinator") {
+    return "users";
+  }
+  if (role === "voter") {
+    return "clipboard";
+  }
+  return "view";
+}
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
@@ -204,6 +238,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState<"qr" | null>(null);
   const [accountIdentityQrSrc, setAccountIdentityQrSrc] = useState<string | null>(null);
   const [newIdentityConfirmRole, setNewIdentityConfirmRole] = useState<SimpleActorRole | null>(null);
+  const [newIdentityBackupStatus, setNewIdentityBackupStatus] = useState<string | null>(null);
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
   const [gatewayRole, setGatewayRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [gatewayNsec, setGatewayNsec] = useState("");
@@ -240,6 +275,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       setAccountIdentityNpub("");
       setAccountIdentityDialogOpen(null);
       setNewIdentityConfirmRole(null);
+      setNewIdentityBackupStatus(null);
       return;
     }
 
@@ -313,6 +349,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   useEffect(() => {
     if (!newIdentityConfirmRole) {
+      setNewIdentityBackupStatus(null);
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -420,6 +457,25 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     setNewIdentityConfirmRole(null);
     setAccountMenuOpen(false);
     window.dispatchEvent(new Event(`auditable-voting:${targetRole}-new`));
+  }
+
+  async function downloadIdentityBackupBeforeReset() {
+    if (!newIdentityConfirmRole) {
+      return false;
+    }
+    try {
+      const state = await loadSimpleActorState(newIdentityConfirmRole);
+      if (!state?.keypair?.nsec?.trim()) {
+        setNewIdentityBackupStatus("No local profile backup is available for this identity.");
+        return false;
+      }
+      await downloadSimpleActorBackup(newIdentityConfirmRole, state.keypair, state.cache);
+      setNewIdentityBackupStatus("Backup downloaded.");
+      return true;
+    } catch {
+      setNewIdentityBackupStatus("Could not download backup. Restore or unlock this profile first.");
+      return false;
+    }
   }
 
   async function loginWithSigner() {
@@ -578,80 +634,81 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           <label className='simple-voter-label simple-login-role-label'>Select role</label>
           <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
             {ROLE_OPTIONS.map((option) => (
-              <button
+              <UiButton
                 key={option.role}
-                type='button'
+                icon={roleIconName(option.role)}
                 role='tab'
                 aria-selected={gatewayRole === option.role}
                 className={`simple-role-switch-button${gatewayRole === option.role ? " is-active" : ""}`}
-                onClick={() => setGatewayRole(option.role)}
+                onPress={() => setGatewayRole(option.role)}
               >
-                <MenuIcon name={option.role} />
                 <span>{option.label}</span>
-              </button>
+              </UiButton>
             ))}
           </div>
 
           <div className='simple-login-actions'>
-            <button type='button' className='simple-voter-primary' onClick={() => void continueFromGateway()}>
+            <UiButton icon='login' className='simple-voter-primary' onPress={() => void continueFromGateway()}>
               {gatewayContinueLabel}
-            </button>
+            </UiButton>
           </div>
 
           <div className='simple-login-existing'>
             <p className='simple-login-existing-title'>Or login using existing profile:</p>
             <div className='simple-login-actions simple-login-existing-actions'>
-              <button
-                type='button'
+              <UiButton
+                icon='login'
                 className='simple-voter-secondary'
-                onClick={() => void runSignerLogin({ continueAfterLogin: true })}
+                onPress={() => void runSignerLogin({ continueAfterLogin: true })}
               >
                 {preferredSignerLabel}
-              </button>
-              <button
-                type='button'
+              </UiButton>
+              <UiButton
+                icon='key'
                 className='simple-voter-secondary'
                 aria-expanded={gatewayNsecOpen}
                 aria-controls='gateway-nsec-panel'
-                onClick={() => {
+                onPress={() => {
                   setGatewayNsecOpen((current) => !current);
                   setGatewayAdvancedOpen(false);
                 }}
               >
                 Enter nsec
-              </button>
-              <button
-                type='button'
+              </UiButton>
+              <UiButton
+                icon='settings'
                 className='simple-voter-secondary'
                 aria-expanded={gatewayAdvancedOpen}
                 aria-controls='gateway-advanced-panel'
-                onClick={() => {
+                onPress={() => {
                   setGatewayAdvancedOpen((current) => !current);
                   setGatewayNsecOpen(false);
                 }}
               >
                 Advanced
-              </button>
+              </UiButton>
             </div>
           </div>
 
           {gatewayNsecOpen ? (
             <section id='gateway-nsec-panel' className='simple-login-panel' aria-label='nsec login'>
-              <label className='simple-voter-label' htmlFor='gateway-nsec'>Enter nsec</label>
-              <input
-                id='gateway-nsec'
-                className='simple-voter-input'
-                value={gatewayNsec}
-                onChange={(event) => setGatewayNsec(event.target.value)}
-                placeholder='nsec1...'
-                spellCheck={false}
-                autoCapitalize='off'
-                autoCorrect='off'
+              <UiTextField
+                label='Enter nsec'
+                inputClassName='simple-voter-input'
+                inputProps={{
+                  id: 'gateway-nsec',
+                  value: gatewayNsec,
+                  onChange: (event) => setGatewayNsec(event.target.value),
+                  placeholder: 'nsec1...',
+                  spellCheck: false,
+                  autoCapitalize: 'off',
+                  autoCorrect: 'off',
+                }}
               />
               <div className='simple-login-actions'>
-                <button type='button' className='simple-voter-primary' onClick={() => void continueFromGateway()}>
+                <UiButton icon='login' className='simple-voter-primary' onPress={() => void continueFromGateway()}>
                   Continue with nsec
-                </button>
+                </UiButton>
               </div>
             </section>
           ) : null}
@@ -659,27 +716,27 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           {gatewayAdvancedOpen ? (
             <section id='gateway-advanced-panel' className='simple-login-panel' aria-label='Advanced signer options'>
               <div className='simple-login-actions simple-login-advanced-actions'>
-                <button
-                  type='button'
+                <UiButton
+                  icon={isCopyLabelActive("gateway-nostr-connect") ? "check" : "copy"}
                   className='simple-voter-secondary'
-                  onClick={() => void copyPreparedGatewayValue("nostr-connect")}
+                  onPress={() => void copyPreparedGatewayValue("nostr-connect")}
                 >
                   {isCopyLabelActive("gateway-nostr-connect") ? "Copied" : "Copy nostr-connect URL"}
-                </button>
-                <button
-                  type='button'
+                </UiButton>
+                <UiButton
+                  icon={isCopyLabelActive("gateway-nsec-bunker") ? "check" : "copy"}
                   className='simple-voter-secondary'
-                  onClick={() => void copyPreparedGatewayValue("nsec-bunker")}
+                  onPress={() => void copyPreparedGatewayValue("nsec-bunker")}
                 >
                   {isCopyLabelActive("gateway-nsec-bunker") ? "Copied" : "Copy nsec-bunker URL"}
-                </button>
-                <button
-                  type='button'
+                </UiButton>
+                <UiButton
+                  icon='qr'
                   className='simple-voter-secondary'
-                  onClick={() => void prepareAmberConnectLinks()}
+                  onPress={() => void prepareAmberConnectLinks()}
                 >
                   Show nostr-connect QR
-                </button>
+                </UiButton>
               </div>
               {gatewaySignerNpub ? <p className='simple-voter-note'>Signer: {gatewaySignerNpub}</p> : null}
               {gatewayShowConnectQr && gatewayNostrConnectUri.trim() ? (
@@ -705,10 +762,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   const accountMenuControl = (
     <div className='simple-account-menu-wrap' ref={roleSwitchWrapRef}>
-      <button
-        type='button'
+      <UiButton
+        icon='menu'
         className={`simple-role-switch-toggle simple-account-menu-toggle${role === "coordinator" ? " simple-account-profile-toggle" : ""}${role === "voter" && voterMessagesUnread ? " has-unread-message is-breathing" : ""}`}
-        onClick={() => {
+        onPress={() => {
           setAccountMenuOpen((current) => !current);
         }}
         aria-haspopup='menu'
@@ -725,23 +782,16 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 {accountIdentityNpub || "Identity loading"}
               </span>
             </span>
-            <span className='simple-account-profile-menu-icon' aria-hidden='true'>
-              <span />
-              <span />
-              <span />
-            </span>
           </>
         ) : role === "voter" ? (
           <>
-            <span className='simple-account-menu-trigger-icon' aria-hidden='true'>
-              <MenuIcon name='menu' />
-            </span>
+            <span className='simple-account-menu-trigger-icon is-compat-hidden' aria-hidden='true' />
             <span className='simple-account-menu-trigger-text'>{`Voter ${accountIdentityLabel}`}</span>
           </>
         ) : (
           "Menu"
         )}
-      </button>
+      </UiButton>
       {accountMenuOpen ? (
         <>
           <div
@@ -755,54 +805,34 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             role='menu'
             aria-label='App menu'
           >
-          <button
-            type='button'
+          <UiButton
+            icon='cancel'
+            iconOnly
             className='simple-account-menu-close'
             aria-label='Close menu'
-            onClick={() => setAccountMenuOpen(false)}
+            onPress={() => setAccountMenuOpen(false)}
+          />
+          <p
+            className='simple-account-menu-title'
+            data-tooltip={accountIdentityNpub ? `Full identity: ${accountIdentityNpub}` : undefined}
           >
-            <span aria-hidden='true'>x</span>
-          </button>
-          <div className='simple-account-menu-section' role='none'>
-            <p className='simple-account-menu-kicker'>Switch</p>
-            <div
-              className='simple-role-switch simple-role-switch-menu-inline'
-              role='tablist'
-              aria-label='Simple role switch'
-            >
-              {ROLE_OPTIONS.map((option) => (
-                <button
-                  key={option.role}
-                  type='button'
-                  role='tab'
-                  aria-selected={role === option.role}
-                  className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
-                  onClick={() => {
-                    void handleRoleSelect(option.role);
-                  }}
-                >
-                  <MenuIcon name={option.role} />
-                  <span>{option.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+            {isSimpleActorRole(role) ? accountIdentityLabel : roleLabel(role)}
+          </p>
           {role === "voter" ? (
             <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
-              <p className='simple-account-menu-kicker'>Voter</p>
               <div
                 className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch'
                 role='tablist'
-                aria-label='Voter sections'
+                aria-label='Main actions'
               >
                 {VOTER_SECTION_OPTIONS.map((option) => (
-                  <button
+                  <UiButton
                     key={option.tab}
-                    type='button'
+                    icon={voterTabIconName(option.icon)}
                     role='tab'
                     aria-selected={voterTab === option.tab}
                     className={`simple-role-switch-button${voterTab === option.tab ? ' is-active' : ''}${option.tab === "messages" && voterMessagesUnread ? ' has-unread-message' : ''}`}
-                    onClick={() => {
+                    onPress={() => {
                       setVoterTab(option.tab);
                       if (option.tab === "messages") {
                         setVoterMessagesUnread(false);
@@ -810,98 +840,79 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       setAccountMenuOpen(false);
                     }}
                   >
-                    <span className={`simple-menu-tab-icon simple-menu-tab-icon-${option.icon}`} aria-hidden='true'>
-                      {option.tab === "messages" && voterMessagesUnread ? <span className='simple-message-unread-dot' /> : null}
-                    </span>
+                    {option.tab === "messages" && voterMessagesUnread ? <span className='simple-message-unread-dot' /> : null}
                     <span>{option.label}</span>
-                  </button>
+                  </UiButton>
                 ))}
               </div>
             </div>
           ) : null}
+          <div className='simple-account-menu-section' role='none'>
+            <p className='simple-account-menu-kicker'>Change View</p>
+            <div
+              className='simple-role-switch simple-role-switch-menu-inline'
+              role='tablist'
+              aria-label='Simple role switch'
+            >
+              {ACCOUNT_MENU_ROLE_OPTIONS.map((option) => (
+                <UiButton
+                  key={option.role}
+                  icon={roleIconName(option.role)}
+                  role='tab'
+                  aria-selected={role === option.role}
+                  className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
+                  onPress={() => {
+                    void handleRoleSelect(option.role);
+                  }}
+                >
+                  <span>{option.label}</span>
+                </UiButton>
+              ))}
+            </div>
+          </div>
           {isSimpleActorRole(role) ? (
             <>
               <div className='simple-account-menu-section simple-account-menu-identity' role='none'>
                 <p className='simple-account-menu-kicker'>Identity</p>
-                <p
-                  className='simple-account-menu-title'
-                  data-tooltip={accountIdentityNpub ? `Full identity: ${accountIdentityNpub}` : undefined}
-                >
-                  {accountIdentityLabel}
-                </p>
                 {accountIdentityNpub ? (
                   <div className='simple-account-menu-identity-grid' role='none'>
-                    <button
-                      type='button'
+                    <UiButton
+                      icon='qr'
                       className='simple-account-menu-button simple-account-menu-tile simple-account-menu-visual-tile'
                       role='menuitem'
-                      onClick={() => {
+                      onPress={() => {
                         setAccountMenuOpen(false);
                         setAccountIdentityDialogOpen("qr");
                       }}
                     >
-                      {accountIdentityQrSrc ? (
-                        <img
-                          className='simple-account-menu-qr-preview'
-                          src={accountIdentityQrSrc}
-                          alt=''
-                        />
-                      ) : (
-                        <span className='simple-account-menu-qr-preview simple-account-menu-qr-preview-fallback' aria-hidden='true' />
-                      )}
                       <span>QR code</span>
-                    </button>
-                    <button
-                      type='button'
+                    </UiButton>
+                    <UiButton
+                      icon={isCopyLabelActive("account-identity") ? "check" : "copy"}
                       className='simple-account-menu-button simple-account-menu-tile'
                       role='menuitem'
-                      onClick={() => {
+                      onPress={() => {
                         void copyValueWithFeedback(accountIdentityNpub, "account-identity");
                       }}
                     >
-                      <MenuIcon name='copy' />
                       <span>{isCopyLabelActive("account-identity") ? "Copied" : "Copy identity"}</span>
-                    </button>
-                    <button
-                      type='button'
+                    </UiButton>
+                    <UiButton
+                      icon='add'
                       className='simple-account-menu-button simple-account-menu-tile'
                       role='menuitem'
-                      onClick={() => {
+                      onPress={() => {
                         setAccountMenuOpen(false);
                         setNewIdentityConfirmRole(role);
                       }}
                     >
-                      <MenuIcon name='new' />
                       <span>New identity</span>
-                    </button>
+                    </UiButton>
                   </div>
                 ) : null}
                 {!accountIdentityNpub ? (
                   <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
                 ) : null}
-              </div>
-              <div className='simple-account-menu-signout-section' role='none'>
-                <button
-                  type='button'
-                  className='simple-account-menu-button simple-account-menu-action simple-account-menu-signout-button'
-                  role='menuitem'
-                  onClick={() => {
-                    if (
-                      typeof window !== "undefined"
-                      && !window.confirm("Sign out and return to the landing page?")
-                    ) {
-                      return;
-                    }
-                    setAccountMenuOpen(false);
-                    if (typeof window !== "undefined") {
-                      window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
-                      returnToLandingPage();
-                    }
-                  }}
-                >
-                  <MenuIcon name='signout' />
-                  <span>Sign out</span>
-                </button>
               </div>
             </>
           ) : null}
@@ -933,6 +944,30 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
             </div>
           </div>
+          {isSimpleActorRole(role) ? (
+            <div className='simple-account-menu-signout-section' role='none'>
+              <UiButton
+                icon='logout'
+                className='simple-account-menu-button simple-account-menu-action simple-account-menu-signout-button'
+                role='menuitem'
+                onPress={() => {
+                  if (
+                    typeof window !== "undefined"
+                    && !window.confirm("Sign out and return to the landing page?")
+                  ) {
+                    return;
+                  }
+                  setAccountMenuOpen(false);
+                  if (typeof window !== "undefined") {
+                    window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
+                    returnToLandingPage();
+                  }
+                }}
+              >
+                <span>Sign out</span>
+              </UiButton>
+            </div>
+          ) : null}
           </div>
         </>
       ) : null}
@@ -946,15 +981,15 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           <div className='simple-role-switch-topbar'>
             {accountMenuControl}
             {role === "voter" ? null : isSimpleActorRole(role) && accountIdentityNpub ? (
-              <button
-                type='button'
+              <UiButton
+                icon='qr'
                 className='simple-role-switch-toggle simple-current-role-summary simple-current-role-button'
-                onClick={() => setAccountIdentityDialogOpen("qr")}
+                onPress={() => setAccountIdentityDialogOpen("qr")}
                 aria-haspopup='dialog'
                 aria-label={`Show full ${roleLabel(role).toLowerCase()} npub QR`}
               >
                 {currentRoleSummary}
-              </button>
+              </UiButton>
             ) : (
               <p className='simple-current-role-summary'>{currentRoleSummary}</p>
             )}
@@ -984,14 +1019,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           aria-label={`${roleLabel(role)} npub QR code`}
           onClick={() => setAccountIdentityDialogOpen(null)}
         >
-          <button
-            type='button'
+          <UiButton
+            icon='cancel'
             className='simple-identity-qr-overlay-close'
-            onClick={() => setAccountIdentityDialogOpen(null)}
+            onPress={() => setAccountIdentityDialogOpen(null)}
             aria-label='Close npub QR preview'
           >
             Close
-          </button>
+          </UiButton>
           <div
             className='simple-identity-qr-overlay-card simple-account-identity-overlay-card'
             onClick={(event) => event.stopPropagation()}
@@ -1027,14 +1062,13 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           aria-describedby='new-identity-confirm-description'
           onClick={() => setNewIdentityConfirmRole(null)}
         >
-          <button
-            type='button'
+          <UiButton
+            icon='cancel'
+            iconOnly
             className='simple-identity-qr-overlay-close simple-new-identity-confirm-close'
-            onClick={() => setNewIdentityConfirmRole(null)}
+            onPress={() => setNewIdentityConfirmRole(null)}
             aria-label='Cancel new identity'
-          >
-            <span aria-hidden='true'>×</span>
-          </button>
+          />
           <div
             className='simple-identity-qr-overlay-card simple-new-identity-confirm-card'
             onClick={(event) => event.stopPropagation()}
@@ -1062,21 +1096,40 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               </div>
             </div>
             <div className='simple-new-identity-confirm-actions'>
-              <button
-                type='button'
+              <UiButton
+                icon='cancel'
+                variant='secondary'
                 className='simple-voter-secondary'
-                onClick={() => setNewIdentityConfirmRole(null)}
+                onPress={() => setNewIdentityConfirmRole(null)}
               >
                 Cancel
-              </button>
-              <button
-                type='button'
+              </UiButton>
+              <UiButton
+                icon={isCopyLabelActive("new-identity-backup") ? "check" : "download"}
+                variant='secondary'
+                className='simple-voter-secondary simple-new-identity-confirm-backup'
+                onPress={() => {
+                  void downloadIdentityBackupBeforeReset().then((downloaded) => {
+                    if (downloaded) {
+                      showCopyLabel("new-identity-backup");
+                    }
+                  });
+                }}
+              >
+                {isCopyLabelActive("new-identity-backup") ? "Downloaded" : "Download backup"}
+              </UiButton>
+              <UiButton
+                icon='key'
+                variant='primary'
                 className='simple-voter-primary simple-new-identity-confirm-primary'
-                onClick={confirmNewIdentity}
+                onPress={confirmNewIdentity}
               >
                 Create new identity
-              </button>
+              </UiButton>
             </div>
+            {newIdentityBackupStatus ? (
+              <p className='simple-new-identity-confirm-status' role='status'>{newIdentityBackupStatus}</p>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -1,7 +1,7 @@
 {
   "name": "auditable-voting-web",
   "private": true,
-  "version": "0.1.106",
+  "version": "0.1.107",
   "type": "module",
   "scripts": {
     "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator",
@@ -37,11 +37,14 @@
     "@cloudflare/blindrsa-ts": "^0.4.5",
     "@noble/hashes": "^2.0.1",
     "@scure/bip39": "^2.0.1",
+    "@tanstack/react-table": "^8.21.3",
     "fflate": "^0.8.3",
     "jsqr": "^1.4.0",
+    "lucide-react": "^1.23.0",
     "nostr-tools": "^2.7.0",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
+    "react-aria-components": "^1.19.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {

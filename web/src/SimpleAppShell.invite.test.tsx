@@ -163,8 +163,7 @@ describe("SimpleAppShell invite-link login", () => {
 
     const menu = screen.getByRole("menu", { name: "App menu" });
     expect([...menu.querySelectorAll(".simple-account-menu-kicker")].map((node) => node.textContent)).toEqual([
-      "Switch",
-      "Voter",
+      "Change View",
       "Identity",
       "About",
     ]);
@@ -222,6 +221,46 @@ describe("SimpleAppShell invite-link login", () => {
     }
   });
 
+  it("downloads a profile backup from the new identity confirmation", async () => {
+    const user = userEvent.setup();
+    const voterNpub = "npub1" + "e".repeat(58);
+    const voterNsec = "nsec1" + "f".repeat(58);
+    const downloadBackup = vi.fn(async () => undefined);
+    vi.doMock("./simpleLocalState", () => ({
+      loadSimpleActorState: vi.fn(async (role: string) => (role === "voter"
+        ? {
+            role: "voter",
+            keypair: { npub: voterNpub, nsec: voterNsec },
+            updatedAt: "2026-07-01T00:00:00.000Z",
+            cache: { selectedVotingId: "q_test" },
+          }
+        : null)),
+      saveSimpleActorState: vi.fn(async () => undefined),
+      downloadSimpleActorBackup: downloadBackup,
+    }));
+    window.history.pushState(null, "", "/?role=voter");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    try {
+      render(<SimpleAppShell />);
+
+      await user.click(await screen.findByRole("button", { name: /voter profile menu/i }));
+      await user.click(screen.getByRole("menuitem", { name: "New identity" }));
+      await user.click(await screen.findByRole("button", { name: "Download backup" }));
+
+      await waitFor(() => {
+        expect(downloadBackup).toHaveBeenCalledWith(
+          "voter",
+          { npub: voterNpub, nsec: voterNsec },
+          { selectedVotingId: "q_test" },
+        );
+      });
+      expect(await screen.findByText("Backup downloaded.")).toBeTruthy();
+    } finally {
+      vi.doUnmock("./simpleLocalState");
+    }
+  });
+
   it("keeps voter section navigation in the top menu", async () => {
     const user = userEvent.setup();
     window.history.pushState(null, "", "/?role=voter");
@@ -238,13 +277,15 @@ describe("SimpleAppShell invite-link login", () => {
       expect(screen.getByTestId("simple-voter-app").textContent).toContain("configure");
       expect(screen.getByText("Voter pending")).toBeTruthy();
       expect(screen.queryByText(/Voter \//)).toBeNull();
-      expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
+      expect(screen.queryByRole("tablist", { name: "Main actions" })).toBeNull();
       expect(screen.queryByRole("menuitem", { name: "How it works" })).toBeNull();
       expect(screen.queryByText("vtest")).toBeNull();
 
       await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
-      const voterSections = screen.getByRole("tablist", { name: "Voter sections" });
+      const voterSections = screen.getByRole("tablist", { name: "Main actions" });
       expect(voterSections).toBeTruthy();
+      expect(screen.queryByRole("tab", { name: "Join" })).toBeNull();
+      expect(screen.getByRole("tab", { name: "Find organiser" })).toBeTruthy();
       expect(screen.getByText("vtest")).toBeTruthy();
       const howItWorksLink = screen.getByRole("menuitem", { name: "How it works" });
       expect(howItWorksLink.getAttribute("href")).toBe("project-explainer.html");
@@ -260,7 +301,7 @@ describe("SimpleAppShell invite-link login", () => {
       await user.click(screen.getByRole("tab", { name: "Settings" }));
 
       expect(screen.getByTestId("simple-voter-app").textContent).toContain("settings");
-      expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
+      expect(screen.queryByRole("tablist", { name: "Main actions" })).toBeNull();
 
       await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
       expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { deriveIdentityWords } from "./identityWords";
+import { UiButton, UiDataTable, UiSwitch, UiTextField } from "./ui/DesignLayer";
 import type {
   QuestionnaireQuestion,
   QuestionnaireResponseAnswer,
@@ -321,6 +323,81 @@ export default function QuestionnaireResultsDashboard({
     ) : null;
   };
 
+  const sessionResponseColumns: ColumnDef<QuestionnaireResultsDashboardResponseDetail>[] = [
+    {
+      id: "marker",
+      header: "Identity marker",
+      meta: { className: "is-marker", label: "Identity marker" },
+      cell: ({ row }) => {
+        const entry = row.original;
+        return (
+          <div className='simple-session-response-marker-cell'>
+            <span className='simple-response-short-id'>{deriveActorDisplayId(entry.response.authorPubkey)}</span>
+            <TokenFingerprint
+              tokenId={entry.response.authorPubkey}
+              compact
+              hideMetadata
+              fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
+            />
+          </div>
+        );
+      },
+    },
+    {
+      id: "identity",
+      header: "Submitter identity",
+      meta: { className: "is-identity", label: "Submitter identity" },
+      cell: ({ row }) => (
+        <div className='simple-response-identity-cell' title={row.original.response.authorPubkey}>
+          {renderResponseIdentityWords(row.original.response.authorPubkey)}
+        </div>
+      ),
+    },
+    {
+      id: "submitted",
+      header: "Submission time",
+      meta: { className: "is-time", label: "Submission time" },
+      cell: ({ row }) => formatQuestionnaireTime(row.original.response.submittedAt ?? row.original.event.created_at ?? 0),
+    },
+    {
+      id: "responseId",
+      header: "Response ID",
+      meta: { className: "is-response-id", label: "Response ID" },
+      cell: ({ row }) => <span className='simple-session-response-id'>{row.original.response.responseId}</span>,
+    },
+    {
+      id: "answers",
+      header: "Answers",
+      meta: { className: "is-answers", label: "Answers" },
+      cell: ({ row }) => renderResponseDisclosure(row.original),
+    },
+    {
+      id: "status",
+      header: "Status",
+      meta: { className: "is-status", label: "Status" },
+      cell: ({ row }) => {
+        const entry = row.original;
+        return (
+          <>
+            <span className={`simple-auditor-status-chip${entry.accepted ? " simple-auditor-status-chip-accepted" : " simple-auditor-status-chip-invalid"}`}>
+              {entry.accepted ? "Accepted" : "Invalid"}
+            </span>
+            {!entry.accepted ? (
+              <p className='simple-auditor-invalid-reason'>
+                Invalid reason: {formatInvalidReason(entry.rejectionReason)}
+              </p>
+            ) : null}
+          </>
+        );
+      },
+    },
+  ];
+  const sessionResponseTable = useReactTable({
+    data: visibleResponseDetails,
+    columns: sessionResponseColumns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <>
       <section className={`simple-voter-section simple-auditor-panel simple-auditor-results-dashboard${isSessionVariant ? " simple-session-results-dashboard" : ""}`}>
@@ -356,13 +433,13 @@ export default function QuestionnaireResultsDashboard({
                 <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
               </div>
               {actions ?? (canExportResults && onExportResults ? (
-                <button
-                  type='button'
+                <UiButton
+                  icon='export'
                   className='simple-voter-secondary simple-auditor-export-button'
-                  onClick={onExportResults}
+                  onPress={onExportResults}
                 >
                   Export results
-                </button>
+                </UiButton>
               ) : null)}
               </div>
             ) : null}
@@ -461,13 +538,13 @@ export default function QuestionnaireResultsDashboard({
                           />
                         ) : (
                           <div className='simple-auditor-free-text-cardlet'>
-                            <button
-                              type='button'
+                            <UiButton
+                              icon='view'
                               className='simple-voter-secondary simple-auditor-text-button'
-                              onClick={() => setFreeTextViewerQuestionId(summary.questionId)}
+                              onPress={() => setFreeTextViewerQuestionId(summary.questionId)}
                             >
                               View answers
-                            </button>
+                            </UiButton>
                           </div>
                         )}
                       </article>
@@ -503,24 +580,23 @@ export default function QuestionnaireResultsDashboard({
                 </div>
                 ) : null}
                 <div className='simple-auditor-submitted-filter'>
-                  <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter submitted votes</label>
-                  <input
-                    id='simple-auditor-submitted-search'
-                    className='simple-voter-input'
-                    value={voterSearchQuery}
-                    onChange={(event) => setVoterSearchQuery(event.target.value)}
-                    placeholder='Search by Submission ID, identity words, full identity, or token...'
+                  <UiTextField
+                    label='Filter submitted votes'
+                    inputClassName='simple-voter-input'
+                    inputProps={{
+                      id: "simple-auditor-submitted-search",
+                      value: voterSearchQuery,
+                      onChange: (event) => setVoterSearchQuery(event.target.value),
+                      placeholder: "Search by Submission ID, identity words, full identity, or token...",
+                    }}
                   />
                   {hasInvalidResponses ? (
-                    <label className='simple-voter-note simple-auditor-invalid-toggle'>
-                      <input
-                        type='checkbox'
-                        checked={showInvalidVotes}
-                        onChange={(event) => setShowInvalidVotes(event.target.checked)}
-                      />
-                      {" "}
-                      Show {invalidResponseCount} invalid {invalidResponseCount === 1 ? "vote" : "votes"} only
-                    </label>
+                    <UiSwitch
+                      className='simple-voter-note simple-auditor-invalid-toggle'
+                      isSelected={showInvalidVotes}
+                      onChange={setShowInvalidVotes}
+                      label={`Show ${invalidResponseCount} invalid ${invalidResponseCount === 1 ? "vote" : "votes"} only`}
+                    />
                   ) : null}
                 </div>
                 {responseDecryptControls ? (
@@ -538,77 +614,33 @@ export default function QuestionnaireResultsDashboard({
                   </p>
                   {shouldShowSubmittedPager ? (
                     <div className='simple-auditor-submitted-pager-actions'>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => setSubmittedPageIndex((previous) => Math.max(0, previous - 1))}
-                        disabled={clampedSubmittedPageIndex <= 0}
+                      <UiButton
+                        icon='chevronLeft'
+                        onPress={() => setSubmittedPageIndex((previous) => Math.max(0, previous - 1))}
+                        isDisabled={clampedSubmittedPageIndex <= 0}
                         aria-label='Previous submitted votes'
                       >
                         Previous
-                      </button>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => setSubmittedPageIndex((previous) => Math.min(submittedPageCount - 1, previous + 1))}
-                        disabled={clampedSubmittedPageIndex >= submittedPageCount - 1}
+                      </UiButton>
+                      <UiButton
+                        icon='chevronRight'
+                        iconPosition='end'
+                        onPress={() => setSubmittedPageIndex((previous) => Math.min(submittedPageCount - 1, previous + 1))}
+                        isDisabled={clampedSubmittedPageIndex >= submittedPageCount - 1}
                         aria-label='Next submitted votes'
                       >
                         Next
-                      </button>
+                      </UiButton>
                     </div>
                   ) : null}
                 </div>
               ) : null}
               {isSessionVariant ? (
-                <div className='simple-session-table-wrap'>
-                  <table className='simple-session-submissions-table'>
-                    <thead>
-                      <tr>
-                        <th>Identity marker</th>
-                        <th>Submittor identity</th>
-                        <th>Submission time</th>
-                        <th>Response ID</th>
-                        <th>Answers</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleResponseDetails.map((entry) => (
-                        <tr key={entry.event.id}>
-                          <td>
-                            <div className='simple-session-response-marker-cell'>
-                              <span className='simple-response-short-id'>{deriveActorDisplayId(entry.response.authorPubkey)}</span>
-                              <TokenFingerprint
-                                tokenId={entry.response.authorPubkey}
-                                compact
-                                hideMetadata
-                                fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
-                              />
-                            </div>
-                          </td>
-                          <td title={entry.response.authorPubkey}>
-                            <div className='simple-response-identity-cell'>
-                              {renderResponseIdentityWords(entry.response.authorPubkey)}
-                            </div>
-                          </td>
-                          <td>{formatQuestionnaireTime(entry.response.submittedAt ?? entry.event.created_at ?? 0)}</td>
-                          <td className='simple-session-response-id'>{entry.response.responseId}</td>
-                          <td>{renderResponseDisclosure(entry)}</td>
-                          <td>
-                            <span className={`simple-auditor-status-chip${entry.accepted ? " simple-auditor-status-chip-accepted" : " simple-auditor-status-chip-invalid"}`}>
-                              {entry.accepted ? "Accepted" : "Invalid"}
-                            </span>
-                            {!entry.accepted ? (
-                              <p className='simple-auditor-invalid-reason'>
-                                Invalid reason: {formatInvalidReason(entry.rejectionReason)}
-                              </p>
-                            ) : null}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className='simple-session-table-wrap simple-session-submissions-table'>
+                  <UiDataTable
+                    table={sessionResponseTable}
+                    ariaLabel='Submitted votes'
+                  />
                 </div>
               ) : (
                 <ul className='simple-voter-list simple-auditor-result-list'>
@@ -681,7 +713,13 @@ export default function QuestionnaireResultsDashboard({
           aria-label='Free-text responses'
           onClick={() => setFreeTextViewerQuestionId(null)}
         >
-          <button type='button' className='token-fingerprint-overlay-close' onClick={() => setFreeTextViewerQuestionId(null)}>Close</button>
+          <UiButton
+            icon='cancel'
+            className='token-fingerprint-overlay-close'
+            onPress={() => setFreeTextViewerQuestionId(null)}
+          >
+            Close
+          </UiButton>
           <div className='token-fingerprint-overlay-card simple-auditor-full-results-card' onClick={(event) => event.stopPropagation()}>
             <h3 className='simple-voter-question'>
               {selectedQuestionById.get(freeTextViewerQuestionId)?.prompt || freeTextViewerQuestionId}

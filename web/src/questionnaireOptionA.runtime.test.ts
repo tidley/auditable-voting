@@ -978,6 +978,152 @@ describe("questionnaireOptionARuntime", () => {
     expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(2);
   }, 15000);
 
+  it("issues and accepts two independent proxy credentials for the same question", async () => {
+    const proxyElectionId = `${electionId}_proxy_credentials`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), proxyElectionId);
+    await coordinator.loginWithSigner({
+      title: "Proxy AGM",
+      description: "Proxy vote",
+      state: "open",
+      flowMode: "public_submission_v1",
+      responseMode: "blind_token",
+    });
+    coordinator.addWhitelistNpub(voterNpub, { credentialsPerVoter: 2 });
+    const blindSigningPublicKey = coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null;
+    const now = Math.floor(Date.now() / 1000);
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId: proxyElectionId, coordinatorNpub, title: "Proxy AGM" }),
+      ballotCredentialMode: "per_question",
+      blindSigningPublicKey,
+      createdAt: now,
+      openAt: now - 30,
+      closeAt: now + 3600,
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no",
+          prompt: "Elect Alice?",
+          required: true,
+          ballotSlot: { slotId: "director-alice", slotIndex: 1, version: 1 },
+        },
+      ],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    upsertElectionSummary({
+      electionId: proxyElectionId,
+      title: definition.title,
+      description: definition.description ?? "",
+      state: "open",
+      openedAt: new Date(definition.openAt * 1000).toISOString(),
+      closedAt: new Date(definition.closeAt * 1000).toISOString(),
+      coordinatorNpub,
+      blindSigningPublicKey,
+      protocolVersion: definition.protocolVersion,
+      flowMode: definition.flowMode,
+      responseMode: definition.responseMode,
+    });
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Proxy AGM",
+      description: "Proxy vote",
+      voteUrl: "https://example.org/vote",
+    });
+    expect(sentInvite.invite.credentialsPerVoter).toBe(2);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), proxyElectionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    const blindRequests = Object.entries(voter.getSnapshot()?.blindRequests ?? {});
+    expect(blindRequests).toHaveLength(2);
+    expect(blindRequests.map(([key]) => key).sort()).toEqual(["slot:1:v1", "slot:1:v1:c2"]);
+
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    expect(Object.entries(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(2);
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+
+    await voter.submitVote(["q1"], { questionId: "q1", credentialIndex: 1 });
+    const firstSubmission = voter.getSnapshot()?.submissions?.["slot:1:v1"];
+    expect(firstSubmission?.payload.responses[0]?.answer).toBe("yes");
+    expect(firstSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBeUndefined();
+
+    await coordinator.processPendingSubmissions(["q1"]);
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1"]?.accepted).toBe(true);
+
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "no" }]);
+    await voter.submitVote(["q1"], { questionId: "q1", credentialIndex: 2 });
+    const secondSubmission = voter.getSnapshot()?.submissions?.["slot:1:v1:c2"];
+    expect(secondSubmission?.payload.responses[0]?.answer).toBe("no");
+    expect(secondSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBe(2);
+    expect(secondSubmission?.credentialBundle?.[0]?.nullifier).not.toBe(firstSubmission?.credentialBundle?.[0]?.nullifier);
+
+    await coordinator.processPendingSubmissions(["q1"]);
+    voter.refreshIssuanceAndAcceptance();
+
+    const publicResponses = publicBlindResponseStore.entries.filter((entry) => (
+      entry.response.questionnaireId === proxyElectionId
+    )).map((entry) => entry.response);
+    expect(publicResponses).toHaveLength(2);
+    expect(publicResponses.map((response) => (
+      (response.answers[0] as QuestionnaireResponseAnswer | undefined)?.answerType === "yes_no"
+        && (response.answers[0] as QuestionnaireResponseAnswer & { value?: boolean }).value
+        ? "yes"
+        : "no"
+    )).sort()).toEqual(["no", "yes"]);
+    expect(new Set(publicResponses.map((response) => response.tokenNullifier)).size).toBe(2);
+    expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1"]?.accepted).toBe(true);
+    expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1:c2"]?.accepted).toBe(true);
+    expect(coordinator.getAcceptedUniqueCount()).toBe(2);
+  }, 15000);
+
+  it("keeps proxy credentials off for normal admitted voters", async () => {
+    const normalElectionId = `${electionId}_normal_credentials`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), normalElectionId);
+    await coordinator.loginWithSigner({
+      title: "Normal AGM",
+      description: "One vote",
+      state: "open",
+      flowMode: "public_submission_v1",
+      responseMode: "blind_token",
+    });
+    coordinator.addWhitelistNpub(voterNpub);
+    const blindSigningPublicKey = coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null;
+    const now = Math.floor(Date.now() / 1000);
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId: normalElectionId, coordinatorNpub, title: "Normal AGM" }),
+      ballotCredentialMode: "per_question",
+      blindSigningPublicKey,
+      createdAt: now,
+      openAt: now - 30,
+      closeAt: now + 3600,
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no",
+          prompt: "Elect Alice?",
+          required: true,
+          ballotSlot: { slotId: "director-alice", slotIndex: 1, version: 1 },
+        },
+      ],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Normal AGM",
+      description: "One vote",
+      voteUrl: "https://example.org/vote",
+    });
+    expect(sentInvite.invite.credentialsPerVoter).toBeUndefined();
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), normalElectionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    expect(Object.keys(voter.getSnapshot()?.blindRequests ?? {})).toEqual(["slot:1:v1"]);
+  }, 15000);
+
   it("uses one scoped credential for questions grouped under the same ballot index", async () => {
     const groupedElectionId = `${electionId}_credential_group`;
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), groupedElectionId);

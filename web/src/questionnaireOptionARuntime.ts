@@ -143,8 +143,11 @@ import {
   fetchQuestionnaireSubmissionDecisions,
 } from "./questionnaireTransport";
 import {
+  normaliseQuestionnaireCredentialsPerVoter,
   normaliseQuestionBallotSlot,
+  questionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
+  type QuestionnaireCredentialsPerVoter,
   type QuestionnaireDefinition,
   type QuestionnaireResponseAnswer,
   type QuestionnaireSubmissionDecision,
@@ -528,45 +531,81 @@ function ballotScopeKey(scope: BallotScope | null | undefined) {
   const slotId = scope?.slotId?.trim() ?? "";
   const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
   const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 1;
-  if (!questionId && !slotId && !slotIndex && version === 1) {
+  const credentialIndex = Number.isFinite(scope?.credentialIndex) ? Math.max(1, Math.floor(scope?.credentialIndex as number)) : 1;
+  const credentialSuffix = credentialIndex > 1 ? `:c${credentialIndex}` : "";
+  if (!questionId && !slotId && !slotIndex && version === 1 && credentialIndex <= 1) {
     return "__questionnaire__";
   }
   if (slotIndex > 0) {
-    return `slot:${slotIndex}:v${version}`;
+    return `slot:${slotIndex}:v${version}${credentialSuffix}`;
   }
-  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}`;
+  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}${credentialSuffix}`;
 }
 
 function sameBallotScope(left: BallotScope | null | undefined, right: BallotScope | null | undefined) {
   return ballotScopeKey(left) === ballotScopeKey(right);
 }
 
-function buildQuestionnaireCredentialScopes(definition: QuestionnaireDefinition | null | undefined): Array<BallotScope | null> {
+function withCredentialIndex(scope: BallotScope | null, credentialIndex: number): BallotScope | null {
+  const index = Math.max(1, Math.floor(credentialIndex));
+  if (index <= 1) {
+    return scope;
+  }
+  return {
+    ...(scope ?? {}),
+    credentialIndex: index,
+  };
+}
+
+function ballotScopeCredentialIndex(scope: BallotScope | null | undefined) {
+  return Number.isFinite(scope?.credentialIndex)
+    ? Math.max(1, Math.floor(scope?.credentialIndex as number))
+    : 1;
+}
+
+function voterCredentialsPerVoter(input: {
+  invite?: Pick<ElectionInviteMessage, "credentialsPerVoter"> | null;
+  definition?: Pick<QuestionnaireDefinition, "credentialsPerVoter"> | null;
+}): QuestionnaireCredentialsPerVoter {
+  return input.invite?.credentialsPerVoter === 2
+    ? 2
+    : questionnaireCredentialsPerVoter(input.definition);
+}
+
+function buildQuestionnaireCredentialScopes(
+  definition: QuestionnaireDefinition | null | undefined,
+  credentialsPerVoter = questionnaireCredentialsPerVoter(definition),
+): Array<BallotScope | null> {
+  const credentialCount = normaliseQuestionnaireCredentialsPerVoter(credentialsPerVoter);
   if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
-    return [null];
+    return Array.from({ length: credentialCount }, (_, index) => withCredentialIndex(null, index + 1));
   }
   const scopes: BallotScope[] = [];
   const seen = new Set<string>();
-  definition.questions.forEach((question, index) => {
-    const slot = normaliseQuestionBallotSlot(question, index);
-    const scope = {
-      questionId: question.questionId,
-      slotId: slot.slotId,
-      slotIndex: slot.slotIndex,
-      version: slot.version,
-    };
-    const key = ballotScopeKey(scope);
-    if (!seen.has(key)) {
-      seen.add(key);
-      scopes.push(scope);
-    }
-  });
+  for (let credentialIndex = 1; credentialIndex <= credentialCount; credentialIndex += 1) {
+    definition.questions.forEach((question, index) => {
+      const slot = normaliseQuestionBallotSlot(question, index);
+      const scope = withCredentialIndex({
+        questionId: question.questionId,
+        slotId: slot.slotId,
+        slotIndex: slot.slotIndex,
+        version: slot.version,
+      }, credentialIndex);
+      const key = ballotScopeKey(scope);
+      if (!seen.has(key)) {
+        seen.add(key);
+        if (scope) {
+          scopes.push(scope);
+        }
+      }
+    });
+  }
   return scopes;
 }
 
-function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined, questionId: string): BallotScope | null {
+function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined, questionId: string, credentialIndex = 1): BallotScope | null {
   if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
-    return null;
+    return withCredentialIndex(null, credentialIndex);
   }
   const index = definition.questions.findIndex((question) => question.questionId === questionId);
   const question = index >= 0 ? definition.questions[index] : null;
@@ -591,12 +630,12 @@ function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined
   });
   const canonicalQuestion = canonicalIndex >= 0 ? definition.questions[canonicalIndex] : question;
   const canonicalSlot = normaliseQuestionBallotSlot(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index);
-  return {
+  return withCredentialIndex({
     questionId: canonicalQuestion.questionId,
     slotId: canonicalSlot.slotId,
     slotIndex: canonicalSlot.slotIndex,
     version: canonicalSlot.version,
-  };
+  }, credentialIndex);
 }
 
 function submissionCredentialBundle(submission: BallotSubmission): BallotCredentialProof[] {
@@ -644,6 +683,7 @@ function scopedRequiredQuestionIdsForSubmission(submission: BallotSubmission, re
 type SubmitVoteOptions = {
   questionId?: string;
   questionIds?: string[];
+  credentialIndex?: number;
 };
 
 function inferRejectReason(error?: string): BallotRejectReason {
@@ -1414,7 +1454,13 @@ export class QuestionnaireOptionAVoterRuntime {
     const definition = issuance.definition ?? readCachedQuestionnaireDefinition(issuance.electionId);
     let nextState = received.state;
     if (questionnaireUsesPerQuestionCredentials(definition)) {
-      const scopes = buildQuestionnaireCredentialScopes(definition);
+      const scopes = buildQuestionnaireCredentialScopes(
+        definition,
+        voterCredentialsPerVoter({
+          invite: nextState.inviteMessage ?? null,
+          definition,
+        }),
+      );
       nextState = {
         ...nextState,
         credentialReady: scopes.every((scope) => Boolean(nextState.blindIssuances?.[ballotScopeKey(scope)])),
@@ -1978,7 +2024,13 @@ export class QuestionnaireOptionAVoterRuntime {
       return this.state;
     }
     if (usesPerQuestionCredentials) {
-      const scopes = buildQuestionnaireCredentialScopes(cachedDefinition);
+      const scopes = buildQuestionnaireCredentialScopes(
+        cachedDefinition,
+        voterCredentialsPerVoter({
+          invite: this.state.inviteMessage ?? null,
+          definition: cachedDefinition,
+        }),
+      );
       const allIssued = scopes.every((scope) => Boolean(this.state?.blindIssuances?.[ballotScopeKey(scope)]));
       if (allIssued) {
         this.state = { ...this.state, credentialReady: true };
@@ -2180,7 +2232,13 @@ export class QuestionnaireOptionAVoterRuntime {
       throw new OptionARuntimeError("issuance_failed", "Organiser blind-signing key is not available yet.");
     }
 
-    const scopes = buildQuestionnaireCredentialScopes(input.cachedDefinition);
+    const scopes = buildQuestionnaireCredentialScopes(
+      input.cachedDefinition,
+      voterCredentialsPerVoter({
+        invite: this.state.inviteMessage ?? null,
+        definition: input.cachedDefinition,
+      }),
+    );
     let next: VoterElectionLocalState = {
       ...this.state,
       blindRequests: { ...(this.state.blindRequests ?? {}) },
@@ -2689,7 +2747,13 @@ export class QuestionnaireOptionAVoterRuntime {
       }
     }
     if (questionnaireUsesPerQuestionCredentials(activeDefinition)) {
-      const scopes = buildQuestionnaireCredentialScopes(activeDefinition);
+      const scopes = buildQuestionnaireCredentialScopes(
+        activeDefinition,
+        voterCredentialsPerVoter({
+          invite: next.inviteMessage ?? null,
+          definition: activeDefinition,
+        }),
+      );
       next = {
         ...next,
         credentialReady: scopes.every((scope) => Boolean(next.blindIssuances?.[ballotScopeKey(scope)])),
@@ -2765,6 +2829,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private async buildSubmissionCredentialBundle(
     definition: QuestionnaireDefinition | null,
     responses = this.state?.draftResponses ?? [],
+    options?: { credentialIndex?: number },
   ): Promise<BallotCredentialProof[]> {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
@@ -2809,8 +2874,9 @@ export class QuestionnaireOptionAVoterRuntime {
 
     const proofs: BallotCredentialProof[] = [];
     const proofByScopeKey = new Set<string>();
+    const credentialIndex = Math.max(1, Math.floor(options?.credentialIndex ?? 1));
     for (const answer of responses) {
-      const scope = scopeForQuestion(definition, answer.questionId);
+      const scope = scopeForQuestion(definition, answer.questionId, credentialIndex);
       const scopeKey = ballotScopeKey(scope);
       if (proofByScopeKey.has(scopeKey)) {
         continue;
@@ -2875,14 +2941,22 @@ export class QuestionnaireOptionAVoterRuntime {
     const submissionResponses = targetQuestionIdSet.size > 0
       ? this.state.draftResponses.filter((answer) => targetQuestionIdSet.has(answer.questionId))
       : this.state.draftResponses;
+    const credentialIndex = options?.credentialIndex ?? 1;
+    const targetSubmissionKeys = definition && targetQuestionIds.length > 0
+      ? [...new Set(targetQuestionIds.map((questionId) => ballotScopeKey(scopeForQuestion(definition, questionId, credentialIndex))))]
+      : targetQuestionIds;
     const existingQuestionSubmissions = targetQuestionIds
-      .map((questionId) => this.state?.submissions?.[questionId] ?? null)
+      .map((questionId) => {
+        const scopedKey = definition ? ballotScopeKey(scopeForQuestion(definition, questionId, credentialIndex)) : questionId;
+        return this.state?.submissions?.[scopedKey]
+          ?? (credentialIndex === 1 ? this.state?.submissions?.[questionId] ?? null : null);
+      })
       .filter(Boolean);
 
-    if (targetQuestionIds.length > 0 && existingQuestionSubmissions.length === targetQuestionIds.length) {
+    if (targetSubmissionKeys.length > 0 && existingQuestionSubmissions.length >= targetSubmissionKeys.length) {
       optionAFlowLog("voter", "submit_vote_question_already_submitted", {
         electionId: this.state.electionId,
-        questionId: targetQuestionIds.join(","),
+        questionId: targetSubmissionKeys.join(","),
         submissionId: existingQuestionSubmissions[0]?.submissionId ?? "",
       });
       return this.state;
@@ -2969,7 +3043,9 @@ export class QuestionnaireOptionAVoterRuntime {
       return this.state;
     }
 
-    const credentialBundle = await this.buildSubmissionCredentialBundle(definition, submissionResponses);
+    const credentialBundle = await this.buildSubmissionCredentialBundle(definition, submissionResponses, {
+      credentialIndex: options?.credentialIndex,
+    });
     const primaryCredential = credentialBundle[0];
     if (!primaryCredential) {
       throw new OptionARuntimeError("invalid_submission", "No answers are ready to submit.");
@@ -3843,7 +3919,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return privateKey;
   }
 
-  addWhitelistNpub(invitedNpub: string) {
+  addWhitelistNpub(invitedNpub: string, options?: { credentialsPerVoter?: QuestionnaireCredentialsPerVoter }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
@@ -3851,13 +3927,30 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!normalizedInvitedNpub) {
       throw new OptionARuntimeError("invalid_submission", "Invite target npub is invalid.");
     }
-    if (this.state.whitelist[normalizedInvitedNpub]) {
+    const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(options?.credentialsPerVoter);
+    const existing = this.state.whitelist[normalizedInvitedNpub];
+    if (existing) {
+      if (options?.credentialsPerVoter !== undefined && (existing.credentialsPerVoter ?? 1) !== credentialsPerVoter) {
+        this.state = {
+          ...this.state,
+          whitelist: {
+            ...this.state.whitelist,
+            [normalizedInvitedNpub]: {
+              ...existing,
+              credentialsPerVoter,
+            },
+          },
+          lastUpdatedAt: nowIso(),
+        };
+        this.persistCoordinatorState("whitelist_credentials_updated", { force: true });
+      }
       return this.state;
     }
     const entry: WhitelistEntry = {
       electionId: this.electionId,
       invitedNpub: normalizedInvitedNpub,
       addedAt: nowIso(),
+      credentialsPerVoter,
       claimState: "whitelisted",
     };
     const reduced = reduceCoordinatorEvent(this.state, {
@@ -3872,7 +3965,35 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return this.state;
   }
 
-  addWhitelistNpubs(invitedNpubs: string[]) {
+  setWhitelistCredentialsPerVoter(invitedNpub: string, credentialsPerVoter: QuestionnaireCredentialsPerVoter) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const normalizedInvitedNpub = toNpub(invitedNpub);
+    const existing = normalizedInvitedNpub ? this.state.whitelist[normalizedInvitedNpub] : null;
+    if (!normalizedInvitedNpub || !existing) {
+      return this.state;
+    }
+    const nextCredentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(credentialsPerVoter);
+    if ((existing.credentialsPerVoter ?? 1) === nextCredentialsPerVoter) {
+      return this.state;
+    }
+    this.state = {
+      ...this.state,
+      whitelist: {
+        ...this.state.whitelist,
+        [normalizedInvitedNpub]: {
+          ...existing,
+          credentialsPerVoter: nextCredentialsPerVoter,
+        },
+      },
+      lastUpdatedAt: nowIso(),
+    };
+    this.persistCoordinatorState("whitelist_credentials_updated", { force: true });
+    return this.state;
+  }
+
+  addWhitelistNpubs(invitedNpubs: string[], options?: { credentialsByNpub?: Record<string, QuestionnaireCredentialsPerVoter> }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
@@ -3885,20 +4006,42 @@ export class QuestionnaireOptionACoordinatorRuntime {
       return {
         state: this.state,
         addedCount: 0,
+        changed: false,
       };
     }
 
     let nextState = this.state;
     let addedCount = 0;
+    let changed = false;
     const addedAt = nowIso();
     for (const normalizedInvitedNpub of uniqueNpubs) {
       if (nextState.whitelist[normalizedInvitedNpub]) {
+        const existing = nextState.whitelist[normalizedInvitedNpub];
+        const explicitCredentials = options?.credentialsByNpub && Object.prototype.hasOwnProperty.call(options.credentialsByNpub, normalizedInvitedNpub)
+          ? normaliseQuestionnaireCredentialsPerVoter(options.credentialsByNpub[normalizedInvitedNpub])
+          : null;
+        if (explicitCredentials && (existing.credentialsPerVoter ?? 1) !== explicitCredentials) {
+          nextState = {
+            ...nextState,
+            whitelist: {
+              ...nextState.whitelist,
+              [normalizedInvitedNpub]: {
+                ...existing,
+                credentialsPerVoter: explicitCredentials,
+              },
+            },
+            lastUpdatedAt: nowIso(),
+          };
+          changed = true;
+        }
         continue;
       }
+      const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(options?.credentialsByNpub?.[normalizedInvitedNpub]);
       const entry: WhitelistEntry = {
         electionId: this.electionId,
         invitedNpub: normalizedInvitedNpub,
         addedAt,
+        credentialsPerVoter,
         claimState: "whitelisted",
       };
       const reduced = reduceCoordinatorEvent(nextState, {
@@ -3910,14 +4053,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
       }
       nextState = reduced.state;
       addedCount += 1;
+      changed = true;
     }
-    if (addedCount > 0) {
+    if (changed) {
       this.state = nextState;
       this.persistCoordinatorState("whitelist_added_batch", { force: true });
     }
     return {
       state: this.state,
       addedCount,
+      changed,
     };
   }
 
@@ -4176,10 +4321,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return null;
   }
 
-  async authorizeRequester(invitedNpub: string) {
+  async authorizeRequester(invitedNpub: string, options?: { credentialsPerVoter?: QuestionnaireCredentialsPerVoter }) {
     const normalizedInvitedNpub = toNpub(invitedNpub);
     optionAFlowLog("coordinator", "authorize_requester", { electionId: this.electionId, invitedNpub: normalizedInvitedNpub || invitedNpub });
-    this.addWhitelistNpub(normalizedInvitedNpub || invitedNpub);
+    this.addWhitelistNpub(normalizedInvitedNpub || invitedNpub, options?.credentialsPerVoter !== undefined
+      ? { credentialsPerVoter: options.credentialsPerVoter }
+      : undefined);
     const pendingForVoter = [...(this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub] ?? [])];
     for (const request of pendingForVoter) {
       enqueueBlindRequest(request);
@@ -4214,6 +4361,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state.whitelist[normalizedInvitedNpub]) {
       throw new OptionARuntimeError("not_whitelisted", "Invite target is not whitelisted.");
     }
+    const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(this.state.whitelist[normalizedInvitedNpub]?.credentialsPerVoter);
     const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
     const definitionReference = cachedDefinition
       ? buildQuestionnaireDefinitionReference({
@@ -4257,6 +4405,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       voteUrl: meta.voteUrl,
       invitedNpub: normalizedInvitedNpub,
       coordinatorNpub: this.coordinatorNpub,
+      ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
       definitionReference,
       issueBlindTokensWorker,
       expiresAt: null,
@@ -4740,6 +4889,20 @@ export class QuestionnaireOptionACoordinatorRuntime {
       });
       if (claimed.ok) {
         next = claimed.state;
+      }
+      const whitelistEntry = next.whitelist[request.invitedNpub] ?? null;
+      if (
+        whitelistEntry
+        && ballotScopeCredentialIndex(request.ballotScope) > normaliseQuestionnaireCredentialsPerVoter(whitelistEntry.credentialsPerVoter)
+      ) {
+        optionAFlowLog("coordinator", "blind_request_rejected_proxy_not_enabled", {
+          electionId: this.electionId,
+          requestId: request.requestId,
+          invitedNpub: request.invitedNpub,
+          scope: ballotScopeKey(request.ballotScope),
+        });
+        dequeueBlindRequest(request.requestId);
+        continue;
       }
       const received = reduceCoordinatorEvent(next, {
         type: "BLIND_REQUEST_RECEIVED",

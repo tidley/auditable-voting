@@ -132,6 +132,7 @@ export type AdmittedVoterRecord = {
   source?: "manual" | "contact" | "private_invite" | "import" | null;
   note?: string | null;
   autoApply?: boolean;
+  proxyVoter?: boolean;
   lastUpdatedAt: string;
 };
 
@@ -151,6 +152,7 @@ function normaliseAdmittedVoterRecord(record: AdmittedVoterRecord): AdmittedVote
     source: record.source ?? null,
     note: typeof record.note === "string" ? record.note : null,
     autoApply: record.autoApply !== false,
+    proxyVoter: record.proxyVoter === true,
     lastUpdatedAt: record.lastUpdatedAt?.trim() || record.admittedAt?.trim() || now,
   };
 }
@@ -249,6 +251,7 @@ export function upsertAdmittedVoters(input: {
       source: existing?.source ?? input.source ?? null,
       note: existing?.note ?? null,
       autoApply: existing?.autoApply !== false,
+      proxyVoter: existing?.proxyVoter === true,
       lastUpdatedAt: now,
     };
   }
@@ -262,7 +265,7 @@ export function upsertAdmittedVoters(input: {
 export function updateAdmittedVoter(input: {
   coordinatorNpub: Npub;
   npub: Npub;
-  patch: Pick<Partial<AdmittedVoterRecord>, "note" | "autoApply">;
+  patch: Pick<Partial<AdmittedVoterRecord>, "note" | "autoApply" | "proxyVoter">;
 }) {
   const current = loadAdmittedVoters({ coordinatorNpub: input.coordinatorNpub });
   const npub = input.npub.trim();
@@ -276,6 +279,7 @@ export function updateAdmittedVoter(input: {
       ...existing,
       note: typeof input.patch.note === "string" ? input.patch.note : existing.note ?? null,
       autoApply: typeof input.patch.autoApply === "boolean" ? input.patch.autoApply : existing.autoApply !== false,
+      proxyVoter: typeof input.patch.proxyVoter === "boolean" ? input.patch.proxyVoter : existing.proxyVoter === true,
       lastUpdatedAt: new Date().toISOString(),
     },
   };
