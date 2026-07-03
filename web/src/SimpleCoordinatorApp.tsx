@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, nip44 } from "nostr-tools";
 import QRCode from "qrcode";
@@ -182,41 +182,91 @@ function ParticipantNoteField({
   id,
   value,
   draftValue,
+  restoreFocus,
+  restoreSelectionStart,
+  restoreSelectionEnd,
   onDraftChange,
   onCommit,
+  onFocusStateChange,
 }: {
   id: string;
   value: string;
   draftValue?: string;
+  restoreFocus?: boolean;
+  restoreSelectionStart?: number | null;
+  restoreSelectionEnd?: number | null;
   onDraftChange: (note: string) => void;
   onCommit: (note: string) => void;
+  onFocusStateChange: (state: { id: string; selectionStart: number | null; selectionEnd: number | null } | null) => void;
 }) {
-  const visibleValue = draftValue ?? value;
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const focusedRef = useRef(false);
+  const [localValue, setLocalValue] = useState(draftValue ?? value);
 
   useEffect(() => {
-    const input = document.getElementById(id);
-    if (!(input instanceof HTMLInputElement) || document.activeElement === input) {
+    if (focusedRef.current) {
       return;
     }
-    if (input.value !== visibleValue) {
-      input.value = visibleValue;
+    setLocalValue(draftValue ?? value);
+  }, [draftValue, value]);
+
+  useLayoutEffect(() => {
+    if (!restoreFocus) {
+      return;
     }
-  }, [id, visibleValue]);
+    const input = inputRef.current;
+    if (!input || document.activeElement === input) {
+      return;
+    }
+    input.focus({ preventScroll: true });
+    const start = restoreSelectionStart ?? input.value.length;
+    const end = restoreSelectionEnd ?? start;
+    try {
+      input.setSelectionRange(
+        Math.min(start, input.value.length),
+        Math.min(end, input.value.length),
+      );
+    } catch {
+      // Some input modes do not support selection ranges.
+    }
+  }, [restoreFocus, restoreSelectionEnd, restoreSelectionStart]);
+
+  const rememberSelection = (input: HTMLInputElement) => {
+    onFocusStateChange({
+      id,
+      selectionStart: input.selectionStart,
+      selectionEnd: input.selectionEnd,
+    });
+  };
 
   return (
     <UiTextField
-      defaultValue={visibleValue}
       fieldClassName='simple-admitted-voter-note-field'
       inputClassName='simple-voter-input simple-voter-input-inline'
+      inputRef={inputRef}
       inputProps={{
         id,
+        value: localValue,
         "aria-label": "Note",
+        onFocus: (event) => {
+          focusedRef.current = true;
+          rememberSelection(event.currentTarget);
+        },
         onChange: (event) => {
-          onDraftChange(event.currentTarget.value);
+          const note = event.currentTarget.value;
+          setLocalValue(note);
+          onDraftChange(note);
+          rememberSelection(event.currentTarget);
+        },
+        onSelect: (event) => {
+          rememberSelection(event.currentTarget);
         },
         onBlur: (event) => {
+          focusedRef.current = false;
           const note = event.currentTarget.value;
+          setLocalValue(note);
           onDraftChange(note);
+          onFocusStateChange(null);
           if (note !== value) {
             onCommit(note);
           }
@@ -242,6 +292,25 @@ function questionnaireReadinessStatusLabel(item: QuestionnaireReadinessItem) {
   return item.complete ? "Complete" : "Pending";
 }
 
+function questionnaireReadinessSubtitle(item: QuestionnaireReadinessItem) {
+  if (item.id === "basics") {
+    return "Edit the basic information";
+  }
+  if (item.id === "answers") {
+    return item.complete ? "All questions added" : "Add questions";
+  }
+  if (item.id === "publish") {
+    return item.complete ? "Questionnaire is published" : "Publish questionnaire";
+  }
+  if (item.id === "proxy") {
+    return item.complete ? "Proxy is configured" : "Configure proxy";
+  }
+  if (item.id === "invite") {
+    return item.complete ? "Voters have access" : "Invite voters";
+  }
+  return questionnaireReadinessStatusLabel(item);
+}
+
 function QuestionnaireReadinessIcon({
   item,
   index,
@@ -255,9 +324,19 @@ function QuestionnaireReadinessIcon({
       data-stage={item.id}
       aria-hidden='true'
     >
-      {item.complete ? "✓" : item.stageLabel ?? index + 1}
+      {item.complete ? <UiIcon name='check' /> : item.stageLabel ?? index + 1}
     </span>
   );
+}
+
+function questionnaireReadinessGroupIcon(group: QuestionnaireReadinessItem["group"] | "profile"): UiIconName {
+  if (group === "session") {
+    return "users";
+  }
+  if (group === "profile") {
+    return "user";
+  }
+  return "edit";
 }
 
 function questionnaireReadinessEntryIcon(item: QuestionnaireReadinessItem): UiIconName {
@@ -1379,6 +1458,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [participantSearchQuery, setParticipantSearchQuery] = useState("");
   const [coordinatorParticipantResponseDetails, setCoordinatorParticipantResponseDetails] = useState<QuestionnaireResultsDashboardResponseDetail[]>([]);
   const participantNoteDraftsRef = useRef<Record<string, string>>({});
+  const participantNoteFocusRef = useRef<{ id: string; selectionStart: number | null; selectionEnd: number | null } | null>(null);
   const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const [selectedImportedKnownVoterNpubs, setSelectedImportedKnownVoterNpubs] = useState<string[]>([]);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
@@ -1435,6 +1515,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   }, [questionnaireRosterAnnouncement.questionnaireId]);
   useEffect(() => {
     participantNoteDraftsRef.current = {};
+    participantNoteFocusRef.current = null;
   }, [activeCoordinatorNpub, optionAElectionId]);
   const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
   const optionACoordinatorRuntime = useMemo(() => (
@@ -1485,6 +1566,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const admittedVoterNpubKey = useMemo(
     () => admittedVoterNpubs.join("|"),
     [admittedVoterNpubs],
+  );
+  const admittedVoterWorkerConfigKey = useMemo(
+    () => admittedVoterEntries
+      .map((entry) => `${entry.npub.trim()}:${entry.autoApply === false ? "manual" : "auto"}:${entry.proxyVoter === true ? "proxy" : "single"}`)
+      .filter((entry) => entry.length > 0)
+      .sort()
+      .join("|"),
+    [admittedVoterEntries],
   );
   const optionAKnownVoters = useMemo(() => {
     const runtimeWhitelist = Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {});
@@ -1570,8 +1659,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       .map((entry) => `${entry.codeHash}:${entry.state}:${entry.redeemedNpub ?? ""}:${entry.autoRequestBallot !== false}`)
       .sort()
       .join("|");
-    return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}`;
-  }, [optionAElectionId, privateInviteCodeEntries, visibleOptionAKnownVoters]);
+    return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}:${admittedVoterWorkerConfigKey}`;
+  }, [admittedVoterWorkerConfigKey, optionAElectionId, privateInviteCodeEntries, visibleOptionAKnownVoters]);
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec?.trim() ?? "";
     const coordinatorNpub = activeCoordinatorNpub.trim();
@@ -2064,11 +2153,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         cell: ({ row }) => {
           const participant = row.original;
           const state = rowState(participant);
+          const noteFocusState = participantNoteFocusRef.current;
           return participant.admittedEntry || state.privateInviteEntry ? (
             <ParticipantNoteField
               id={state.noteInputId}
               value={state.noteValue}
               draftValue={participantNoteDraftsRef.current[state.noteInputId]}
+              restoreFocus={noteFocusState?.id === state.noteInputId}
+              restoreSelectionStart={noteFocusState?.selectionStart ?? null}
+              restoreSelectionEnd={noteFocusState?.selectionEnd ?? null}
               onDraftChange={(note) => {
                 participantNoteDraftsRef.current[state.noteInputId] = note;
               }}
@@ -2080,6 +2173,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 if (state.privateInviteEntry) {
                   updatePrivateInviteCodeNote(state.privateInviteEntry.codeHash, note);
                 }
+              }}
+              onFocusStateChange={(focusState) => {
+                participantNoteFocusRef.current = focusState;
               }}
             />
           ) : (
@@ -5173,15 +5269,17 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   }, [activeQuestionnaireWorkerConfigKey, optionAElectionId]);
 
   useEffect(() => {
-    if (!currentQuestionnaireBlindRequestKey || !activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
+    const electionId = optionAElectionId.trim();
+    if (!currentQuestionnaireBlindRequestKey || !activeCoordinatorNpub.trim() || !electionId) {
       return;
     }
+    void syncActiveWorkerElectionConfig(electionId).catch(() => false);
     void runOptionABackgroundProcessing().catch(() => {
       // Keep automatic issuance recovery best-effort; manual refresh/background processing still retries.
     });
   }, [activeCoordinatorNpub, currentQuestionnaireBlindRequestKey, optionAElectionId]);
 
-  async function createPrivateInviteCodeLink() {
+  async function createPrivateInviteCodeLink(options?: { credentialsPerVoter?: 1 | 2 }) {
     const electionId = optionAElectionId.trim();
     if (!optionACoordinatorRuntime || !electionId) {
       setAdmittedVoterStatus("Publish or open a vote first.");
@@ -5189,9 +5287,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     try {
       await optionACoordinatorRuntime.ensureBlindSigningPublicKey();
+      const credentialsPerVoter = options?.credentialsPerVoter === 2 ? 2 : 1;
       const inviteCode = generateQuestionnaireInviteCode();
       const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
-      optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash);
+      optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash, { credentialsPerVoter });
       const inviteUrl = buildQuestionnaireInviteUrl({
         electionId,
         coordinatorNpub: activeCoordinatorNpub.trim() || undefined,
@@ -5201,6 +5300,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           ?? null,
         login: false,
         autoRequestBallot: true,
+        credentialsPerVoter: credentialsPerVoter === 2 ? 2 : undefined,
       });
       setPrivateInviteLinksByHash((current) => ({
         ...current,
@@ -5212,7 +5312,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       if (copied) {
         showPrivateInviteCreateCopied();
       }
-      setAdmittedVoterStatus("Private link copied.");
+      setAdmittedVoterStatus(credentialsPerVoter === 2 ? "Proxy private link copied." : "Private link copied.");
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not create private link.");
     }
@@ -7760,10 +7860,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           <span className='simple-sidebar-readiness-entry-icon' aria-hidden='true'>
             <UiIcon name={questionnaireReadinessEntryIcon(item)} />
           </span>
-          <span className='simple-sidebar-readiness-label'>{item.label}</span>
+          <span className='simple-sidebar-readiness-copy'>
+            <span className='simple-sidebar-readiness-label'>{item.label}</span>
+            <span className='simple-sidebar-readiness-description'>{questionnaireReadinessSubtitle(item)}</span>
+          </span>
         </span>
         <span className='simple-sidebar-readiness-status'>
           <QuestionnaireReadinessIcon item={item} index={index} />
+          <UiIcon name='chevronRight' className='simple-sidebar-readiness-chevron' />
         </span>
       </>
     );
@@ -7879,12 +7983,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             </div>
             <div className='simple-sidebar-readiness-list'>
               <div className='simple-sidebar-readiness-group'>
-                <span className='simple-sidebar-readiness-group-label'>Edit Questionnaire</span>
+                <span className='simple-sidebar-readiness-group-label'>
+                  <UiIcon name={questionnaireReadinessGroupIcon("questionnaire")} />
+                  <span>Edit Questionnaire</span>
+                </span>
                 {questionnaireSetupReadinessItems.map((item) => renderReadinessRow(item, questionnaireReadinessItems.indexOf(item)))}
               </div>
               <div className='simple-sidebar-readiness-divider' aria-hidden='true' />
               <div className='simple-sidebar-readiness-group'>
-                <span className='simple-sidebar-readiness-group-label'>Manage Questionnaire</span>
+                <span className='simple-sidebar-readiness-group-label'>
+                  <UiIcon name={questionnaireReadinessGroupIcon("session")} />
+                  <span>Manage Questionnaire</span>
+                </span>
                 {sessionReadinessItems.map((item) => renderReadinessRow(item, questionnaireReadinessItems.indexOf(item)))}
               </div>
             </div>
@@ -7895,31 +8005,57 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         </section>
         <div className='simple-coordinator-sidebar-nav'>
           <div className='simple-sidebar-readiness-group simple-sidebar-profile-group'>
-            <span className='simple-sidebar-readiness-group-label'>Profile</span>
+            <span className='simple-sidebar-readiness-group-label'>
+              <UiIcon name={questionnaireReadinessGroupIcon("profile")} />
+              <span>Profile</span>
+            </span>
             <div
               className='simple-coordinator-sidebar-tabs'
               role='tablist'
               aria-label='Profile sections'
             >
               <UiButton
-                icon='message'
+                icon={false}
                 role='tab'
                 aria-selected={activeTab === 'messages'}
                 aria-label={hasUnreadMessages ? "Messages, new message" : "Messages"}
                 className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}${hasUnreadMessages ? ' has-unread-message' : ''}`}
                 onPress={() => selectTab('messages')}
               >
-                {hasUnreadMessages ? <span className='simple-message-unread-dot' aria-hidden='true' /> : null}
-                <span className='simple-coordinator-nav-label'>Messages</span>
+                <span className='simple-sidebar-readiness-entry-main'>
+                  <span className='simple-sidebar-readiness-entry-icon' aria-hidden='true'>
+                    <UiIcon name='message' />
+                  </span>
+                  <span className='simple-sidebar-readiness-copy'>
+                    <span className='simple-coordinator-nav-label'>Messages</span>
+                    <span className='simple-sidebar-readiness-description'>View your messages</span>
+                  </span>
+                </span>
+                <span className='simple-sidebar-readiness-status simple-coordinator-nav-status'>
+                  {hasUnreadMessages ? <span className='simple-message-unread-dot' aria-hidden='true' /> : null}
+                  <UiIcon name='chevronRight' className='simple-sidebar-readiness-chevron' />
+                </span>
               </UiButton>
               <UiButton
-                icon='settings'
+                icon={false}
                 role='tab'
                 aria-selected={activeTab === 'settings'}
+                aria-label='Settings'
                 className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
                 onPress={() => selectTab('settings')}
               >
-                <span className='simple-coordinator-nav-label'>Settings</span>
+                <span className='simple-sidebar-readiness-entry-main'>
+                  <span className='simple-sidebar-readiness-entry-icon' aria-hidden='true'>
+                    <UiIcon name='settings' />
+                  </span>
+                  <span className='simple-sidebar-readiness-copy'>
+                    <span className='simple-coordinator-nav-label'>Settings</span>
+                    <span className='simple-sidebar-readiness-description'>Manage your preferences</span>
+                  </span>
+                </span>
+                <span className='simple-sidebar-readiness-status simple-coordinator-nav-status'>
+                  <UiIcon name='chevronRight' className='simple-sidebar-readiness-chevron' />
+                </span>
               </UiButton>
             </div>
           </div>
@@ -8196,15 +8332,23 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                          >
 	                            <span>{isCopyLabelActive("public-questionnaire-invite") ? "Copied" : "Copy link"}</span>
 	                          </UiButton>
-	                          <UiButton
-	                            icon={privateInviteCreateCopied ? "check" : "key"}
-	                            className='simple-voter-secondary'
-	                            onPress={() => void createPrivateInviteCodeLink()}
-	                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
-	                          >
-	                            <span>{privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}</span>
-	                          </UiButton>
-	                        </div>
+		                          <UiButton
+		                            icon={privateInviteCreateCopied ? "check" : "key"}
+		                            className='simple-voter-secondary'
+		                            onPress={() => void createPrivateInviteCodeLink()}
+		                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
+		                          >
+		                            <span>{privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}</span>
+		                          </UiButton>
+		                          <UiButton
+		                            icon={privateInviteCreateCopied ? "check" : "key"}
+		                            className='simple-voter-secondary'
+		                            onPress={() => void createPrivateInviteCodeLink({ credentialsPerVoter: 2 })}
+		                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
+		                          >
+		                            <span>{privateInviteCreateCopied ? "Copied" : "Create proxy invite link"}</span>
+		                          </UiButton>
+		                        </div>
 	                      </div>
 	                    ) : null}
 	                  </div>

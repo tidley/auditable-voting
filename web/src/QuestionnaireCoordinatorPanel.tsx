@@ -29,16 +29,19 @@ import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition }
 import { buildQuestionnaireDefinitionReference, selectNewestMatchingQuestionnaireDefinition } from "./questionnaireDefinitionReference";
 import { tryWriteClipboard } from "./clipboard";
 import { uploadQuestionnaireResultPack } from "./questionnaireResultPack";
-import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
+import { fetchQuestionnaireBlindResponses, fetchQuestionnaireProvisionalResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions, verifyQuestionnaireBlindResponseProofs } from "./questionnaireTransport";
 import {
   decryptQuestionnaireBlindResponseAnswers,
   parseQuestionnaireBlindResponseEvent,
+  parseQuestionnaireProvisionalResponseEvent,
   parseQuestionnaireSubmissionDecisionEvent,
   publishQuestionnaireBlindResponsePublicByCoordinator,
   QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND,
   QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
   type QuestionnaireBlindResponseEvent,
+  type QuestionnaireProvisionalResponseEvent,
   type QuestionnaireSubmissionDecisionEvent,
 } from "./questionnaireResponsePublish";
 import { decodeNsec } from "./nostrIdentity";
@@ -175,6 +178,11 @@ export type QuestionnaireSetupFocusTarget = "basics" | "questions";
 type QuestionnaireBlindResponseEntry = {
   event: NostrEvent;
   response: QuestionnaireBlindResponseEvent;
+};
+
+type QuestionnaireProvisionalResponseEntry = {
+  event: NostrEvent;
+  response: QuestionnaireProvisionalResponseEvent;
 };
 
 type QuestionnaireSubmissionDecisionEntry = {
@@ -1314,6 +1322,36 @@ function publicBlindResponseToAcceptedResponse(input: {
   };
 }
 
+function provisionalEntriesToDashboardDetails(
+  entries: QuestionnaireProvisionalResponseEntry[],
+): QuestionnaireResultsDashboardResponseDetail[] {
+  const byKey = new Map<string, QuestionnaireResultsDashboardResponseDetail>();
+  for (const entry of entries) {
+    const questionIds = [...new Set(entry.response.questionIds.map((questionId) => questionId.trim()).filter(Boolean))]
+      .sort()
+      .join(",");
+    const detail: QuestionnaireResultsDashboardResponseDetail = {
+      event: entry.event,
+      accepted: true,
+      rejectionReason: null,
+      includedInLatestPublish: false,
+      decryptedAnswerQuestionIds: entry.response.questionIds,
+      response: {
+        responseId: entry.response.responseId,
+        authorPubkey: entry.response.authorPubkey,
+        submittedAt: entry.response.submittedAt,
+        answers: entry.response.answers,
+      },
+    };
+    const key = `${entry.response.authorPubkey}:${questionIds || entry.response.responseId}`;
+    const existing = byKey.get(key);
+    if (!existing || Number(detail.event.created_at ?? detail.response.submittedAt ?? 0) >= Number(existing.event.created_at ?? existing.response.submittedAt ?? 0)) {
+      byKey.set(key, detail);
+    }
+  }
+  return [...byKey.values()].sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+}
+
 function publishedResponseRefToAcceptedResponse(input: {
   questionnaireId: string;
   ref: QuestionnairePublishedResponseRef;
@@ -1535,6 +1573,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [latestAcceptedCount, setLatestAcceptedCount] = useState(0);
   const [latestRejectedCount, setLatestRejectedCount] = useState(0);
   const [latestAcceptedResponses, setLatestAcceptedResponses] = useState<QuestionnaireAcceptedResponse[]>([]);
+  const [latestProvisionalResponses, setLatestProvisionalResponses] = useState<QuestionnaireResultsDashboardResponseDetail[]>([]);
   const [lastResponseSeenEventId, setLastResponseSeenEventId] = useState<string | null>(null);
   const [lastResponseRejectReason, setLastResponseRejectReason] = useState<string | null>(null);
   const [latestResultAcceptedCount, setLatestResultAcceptedCount] = useState<number | null>(null);
@@ -1881,6 +1920,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (!workerNpub) {
       return;
     }
+    setDelegationMode("delegated_worker");
     setDelegatedWorkerNpub(workerNpub);
     if (Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0) {
       setDelegatedWorkerControlRelays(snapshot.advertisedRelays.join(", "));
@@ -1929,6 +1969,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     stateEvents: NostrEvent[];
     responseEvents: NostrEvent[];
     publicResponseEntries?: QuestionnaireBlindResponseEntry[];
+    provisionalResponseEntries?: QuestionnaireProvisionalResponseEntry[];
     publicDecisionEntries?: QuestionnaireSubmissionDecisionEntry[];
     verifiedResponseIds?: Iterable<string>;
     resultEvents: NostrEvent[];
@@ -1978,15 +2019,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const resultSummary = selectLatestQuestionnaireResultSummary(resultEvents);
     const publicResponseEntries = (input.publicResponseEntries ?? [])
       .filter((entry) => entry.response.questionnaireId === activeQuestionnaireId);
+    const provisionalResponseEntries = (input.provisionalResponseEntries ?? [])
+      .filter((entry) => entry.response.questionnaireId === activeQuestionnaireId);
     const publicDecisionEntries = (input.publicDecisionEntries ?? [])
       .filter((entry) => entry.decision.questionnaireId === activeQuestionnaireId);
     setDefinitionEventCount(definitionEvents.length);
     setStateEventCount(stateEvents.length);
-    setResponseEventCount(input.responseEvents.length + publicResponseEntries.length);
+    setResponseEventCount(input.responseEvents.length + publicResponseEntries.length + provisionalResponseEntries.length);
     setResultEventCount(resultEvents.length);
     const latestResponseEvent = [
       ...input.responseEvents,
       ...publicResponseEntries.map((entry) => entry.event),
+      ...provisionalResponseEntries.map((entry) => entry.event),
     ]
       .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
     setLastResponseSeenEventId(latestResponseEvent?.id ?? null);
@@ -2000,6 +2044,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setLatestStateCreatedAt(state?.createdAt ?? null);
     setLatestState(effectiveState);
     setLatestResultAcceptedCount(resultSummary?.acceptedResponseCount ?? null);
+    setLatestProvisionalResponses(provisionalEntriesToDashboardDetails(provisionalResponseEntries));
     const summaryState = electionSummaryStateFromQuestionnaireState(effectiveState);
     if (definition && summaryState) {
       const existingSummary = loadElectionSummary(definition.questionnaireId);
@@ -2069,6 +2114,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setLatestAcceptedCount(0);
       setLatestRejectedCount(0);
       setLatestAcceptedResponses([]);
+      setLatestProvisionalResponses([]);
       setLastResponseRejectReason(null);
     }
   }, [coordinatorNpub, coordinatorNsec, questionnaireId]);
@@ -2081,7 +2127,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
     try {
       const responseFetchLimit = calculateCoordinatorResponseFetchLimit();
-      const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
+      const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, provisionalResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_DEFINITION_KIND,
@@ -2107,6 +2153,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           readRelayLimit: 8,
         }),
         fetchQuestionnaireBlindResponses({
+          questionnaireId: id,
+          limit: responseFetchLimit,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
+          relays: questionnaireRelayPublishHints,
+        }).catch(() => []),
+        fetchQuestionnaireProvisionalResponses({
           questionnaireId: id,
           limit: responseFetchLimit,
           readRelayLimit: 8,
@@ -2152,6 +2207,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         stateEvents: stateFetch.events,
         responseEvents: responseFetch.events,
         publicResponseEntries: publicResponseFetch,
+        provisionalResponseEntries: provisionalResponseFetch,
         publicDecisionEntries: publicDecisionFetch,
         verifiedResponseIds,
         resultEvents: resultFetch.events,
@@ -2360,6 +2416,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const stateById = new Map<string, NostrEvent>();
     const responseById = new Map<string, NostrEvent>();
     const publicResponseById = new Map<string, QuestionnaireBlindResponseEntry>();
+    const provisionalResponseById = new Map<string, QuestionnaireProvisionalResponseEntry>();
     const publicDecisionById = new Map<string, QuestionnaireSubmissionDecisionEntry>();
     const resultById = new Map<string, NostrEvent>();
     const applyFromMaps = () => {
@@ -2371,6 +2428,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         stateEvents: [...stateById.values()],
         responseEvents: [...responseById.values()],
         publicResponseEntries: [...publicResponseById.values()],
+        provisionalResponseEntries: [...provisionalResponseById.values()],
         publicDecisionEntries: [...publicDecisionById.values()],
         resultEvents: [...resultById.values()],
       });
@@ -2378,7 +2436,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
     const loadInitialBackfill = async () => {
       const responseFetchLimit = calculateCoordinatorResponseFetchLimit();
-      const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
+      const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, provisionalResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_DEFINITION_KIND,
@@ -2404,6 +2462,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           readRelayLimit: 8,
         }),
         fetchQuestionnaireBlindResponses({
+          questionnaireId: id,
+          limit: responseFetchLimit,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
+          relays: questionnaireRelayPublishHints,
+        }).catch(() => []),
+        fetchQuestionnaireProvisionalResponses({
           questionnaireId: id,
           limit: responseFetchLimit,
           readRelayLimit: 8,
@@ -2442,6 +2509,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       stateById.clear();
       responseById.clear();
       publicResponseById.clear();
+      provisionalResponseById.clear();
       publicDecisionById.clear();
       resultById.clear();
       for (const event of definitionFetch.events) {
@@ -2455,6 +2523,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       }
       for (const entry of publicResponseFetch) {
         publicResponseById.set(entry.event.id, entry);
+      }
+      for (const entry of provisionalResponseFetch) {
+        provisionalResponseById.set(entry.event.id, entry);
       }
       for (const entry of publicDecisionFetch) {
         publicDecisionById.set(entry.event.id, entry);
@@ -2476,6 +2547,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         stateEvents: stateFetch.events,
         responseEvents: responseFetch.events,
         publicResponseEntries: publicResponseFetch,
+        provisionalResponseEntries: provisionalResponseFetch,
         publicDecisionEntries: publicDecisionFetch,
         verifiedResponseIds,
         resultEvents: resultFetch.events,
@@ -2501,6 +2573,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         QUESTIONNAIRE_STATE_KIND,
         QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
         QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+        QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND,
         QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
         QUESTIONNAIRE_RESULT_SUMMARY_KIND,
       ],
@@ -2516,6 +2589,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         }
         if (event.kind === QUESTIONNAIRE_RESPONSE_BLIND_KIND) {
           return parseQuestionnaireBlindResponseEvent(event.content)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND) {
+          return parseQuestionnaireProvisionalResponseEvent(event.content)?.questionnaireId ?? null;
         }
         if (event.kind === QUESTIONNAIRE_SUBMISSION_DECISION_KIND) {
           return parseQuestionnaireSubmissionDecisionEvent(event.content)?.questionnaireId ?? null;
@@ -2553,6 +2629,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           const response = parseQuestionnaireBlindResponseEvent(event.content);
           if (response) {
             publicResponseById.set(event.id, { event, response });
+            applyFromMaps();
+          }
+          return;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND) {
+          const response = parseQuestionnaireProvisionalResponseEvent(event.content);
+          if (response) {
+            provisionalResponseById.set(event.id, { event, response });
             applyFromMaps();
           }
           return;
@@ -3633,18 +3717,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         });
         setDefinitionPublishSucceededAt(new Date().toISOString());
         setStatus(`Vote published (${result.successes}/${result.relayResults.length} relays).`);
-        await publishParticipantCountSnapshot({ silent: true });
-        await publishState("open");
-        const shouldConfigureWorker = delegationMode === "delegated_worker"
-          && Boolean(normaliseWorkerNpub(delegatedWorkerNpub));
-        if (shouldConfigureWorker) {
-          setStatus("Vote published. Configuring audit proxy...");
-          await delegateToWorker({
-            statusPrefix: "Vote published.",
-            definitionOverride: definitionToPublish,
-            definitionEventIdOverride: result.eventId,
-          });
-        }
         let admissionsApplied = true;
         try {
           await props.onAfterPublishQuestionnaire?.(definitionToPublish.questionnaireId);
@@ -3658,6 +3730,18 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         }
         if (!admissionsApplied) {
           return;
+        }
+        await publishParticipantCountSnapshot({ silent: true });
+        await publishState("open");
+        const shouldConfigureWorker = delegationMode === "delegated_worker"
+          && Boolean(normaliseWorkerNpub(delegatedWorkerNpub));
+        if (shouldConfigureWorker) {
+          setStatus("Vote published. Configuring audit proxy...");
+          await delegateToWorker({
+            statusPrefix: "Vote published.",
+            definitionOverride: definitionToPublish,
+            definitionEventIdOverride: result.eventId,
+          });
         }
       } else {
         setStatus("Vote publish failed.");
@@ -4356,6 +4440,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     const npub = nip19.npubEncode(getPublicKey(secretKey));
     setGeneratedWorkerNsec(nsec);
     setGeneratedWorkerNpub(npub);
+    setDelegationMode("delegated_worker");
     setDelegatedWorkerNpub(npub);
   }
 
@@ -4650,6 +4735,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           } : null}
           questionSummaries={coordinatorQuestionSummaries}
           responseDetails={coordinatorResponseDetails}
+          provisionalResponseDetails={latestProvisionalResponses}
           displayValidCount={displayAcceptedCount}
           displayInvalidCount={latestRejectedCount}
           showSubmittedVotes={false}

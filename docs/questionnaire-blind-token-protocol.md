@@ -1,6 +1,6 @@
 # Questionnaire Blind-Token Protocol
 
-Version: `1.1-draft`
+Version: `1.2-draft`
 
 ## 1. Scope
 
@@ -10,6 +10,7 @@ This protocol defines the questionnaire-first path used by the client:
 - private eligibility and blind issuance transport
 - one blind-token response per submitted ballot index in per-question mode
 - optional per-question blind credentials for current ballot-index slots
+- optional unauthorised per-question provisional response events for live charts
 - deterministic duplicate handling by token nullifier, including scoped per-question nullifiers
 - public result summary publication
 
@@ -26,6 +27,8 @@ The response payload mode can be:
 - `6423` - questionnaire result summary (`questionnaire_result_summary`)
 - `6424` - blind-token response submission (`questionnaire_response_blind`)
 - `6425` - public submission decision (`questionnaire_submission_decision`)
+- `6426` - public private-invite claim status (`questionnaire_private_invite_status`)
+- `6427` - provisional per-question response hint (`questionnaire_response_provisional`)
 
 ## 3. Questionnaire definition
 
@@ -146,6 +149,31 @@ Tags:
 - `["nullifier", "<tokenNullifier>"]`
 - `["e", "<questionnaire_definition_event_id>"]`
 - optional `["payload-mode", "encrypted"]`
+
+### 5.3 Provisional per-question response (`6427`)
+
+Provisional response events are live display hints only. They are not accepted votes and do not carry a blind-token proof.
+
+- `eventType: "questionnaire_response_provisional"`
+- `questionnaireId`
+- `responseId`
+- `submittedAt`
+- `authorPubkey` (same anonymous ballot response key used by the final submission for this credential)
+- `questionIds[]`
+- optional `credentialIndex` for proxy credential `2`
+- `answers[]`
+
+Tags:
+
+- `["t", "questionnaire_response_provisional"]`
+- `["questionnaire", "<id>"]`
+- `["schema", "1"]`
+- `["etype", "questionnaire_response_provisional"]`
+- `["response-id", "<responseId>"]`
+- `["question-id", "<questionId>"]` per question
+- optional `["e", "<questionnaire_definition_event_id>"]`
+
+Observers and organisers may show these as muted live chart markers. The audit result still comes from verified `6424` blind-token responses plus `6425` public submission decisions.
 
 ## 6. Result summary
 

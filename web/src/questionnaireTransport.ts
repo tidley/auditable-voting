@@ -30,9 +30,12 @@ import { buildQuestionnaireBlindTokenSignedMessage } from "./questionnaireBlindT
 import {
   parseQuestionnaireSubmissionDecisionEvent,
   parseQuestionnaireBlindResponseEvent,
+  parseQuestionnaireProvisionalResponseEvent,
   QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND,
   QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
   type QuestionnaireBlindResponseEvent,
+  type QuestionnaireProvisionalResponseEvent,
   type QuestionnaireSubmissionDecisionEvent,
 } from "./questionnaireResponsePublish";
 import { parseQuestionnaireResultSummaryEvent } from "./questionnaireRuntime";
@@ -51,6 +54,11 @@ const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 6;
 type QuestionnaireBlindResponseEntry = {
   event: NostrEvent;
   response: QuestionnaireBlindResponseEvent;
+};
+
+export type QuestionnaireProvisionalResponseEntry = {
+  event: NostrEvent;
+  response: QuestionnaireProvisionalResponseEvent;
 };
 
 export type QuestionnaireBlindAdmissionDecision = {
@@ -284,6 +292,36 @@ export async function fetchQuestionnaireBlindResponses(input: {
     .map((event) => ({ event, response: parseQuestionnaireBlindResponseEvent(event.content) }))
     .filter((entry) => entry.response?.questionnaireId === input.questionnaireId)
     .filter((entry): entry is { event: NostrEvent; response: QuestionnaireBlindResponseEvent } => Boolean(entry.response));
+}
+
+export async function fetchQuestionnaireProvisionalResponses(input: {
+  questionnaireId: string;
+  relays?: string[];
+  limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
+  maxPages?: number;
+  timeBudgetMs?: number;
+}) {
+  const events = (await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND,
+    relays: input.relays,
+    readRelayLimit: input.readRelayLimit ?? 8,
+    preferKindOnly: input.preferKindOnly,
+    limit: input.limit ?? 200,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    parseQuestionnaireIdFromEvent: (event) => {
+      const parsed = parseQuestionnaireProvisionalResponseEvent(event.content);
+      return parsed?.questionnaireId ?? null;
+    },
+  })).events;
+
+  return events
+    .map((event) => ({ event, response: parseQuestionnaireProvisionalResponseEvent(event.content) }))
+    .filter((entry) => entry.response?.questionnaireId === input.questionnaireId)
+    .filter((entry): entry is QuestionnaireProvisionalResponseEntry => Boolean(entry.response));
 }
 
 export function subscribeQuestionnaireBlindResponses(input: {

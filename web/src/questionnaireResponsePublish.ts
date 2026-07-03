@@ -16,10 +16,12 @@ import type {
 } from "./questionnaireProtocol";
 import {
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PROVISIONAL,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
 } from "./questionnaireProtocolConstants";
 
 export const QUESTIONNAIRE_RESPONSE_BLIND_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND;
+export const QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PROVISIONAL;
 export const QUESTIONNAIRE_SUBMISSION_DECISION_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION;
 
 export type BlindTokenProof = {
@@ -32,6 +34,7 @@ export type BlindTokenProof = {
     slotId?: string | null;
     slotIndex?: number | null;
     version?: number | null;
+    credentialIndex?: number | null;
   } | null;
 };
 
@@ -63,6 +66,18 @@ export type QuestionnaireBlindResponseEncryptedPayload = {
   questionnaireId: string;
   responseId: string;
   submittedAt: number;
+  answers: QuestionnaireResponseAnswer[];
+};
+
+export type QuestionnaireProvisionalResponseEvent = {
+  schemaVersion: 1;
+  eventType: "questionnaire_response_provisional";
+  questionnaireId: string;
+  responseId: string;
+  submittedAt: number;
+  authorPubkey: string;
+  questionIds: string[];
+  credentialIndex?: number;
   answers: QuestionnaireResponseAnswer[];
 };
 
@@ -214,6 +229,84 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
   });
 }
 
+export async function publishQuestionnaireProvisionalResponsePublic(input: {
+  responseNsec: string;
+  questionnaireId: string;
+  questionnaireDefinitionEventId?: string | null;
+  responseId: string;
+  submittedAt?: number;
+  questionIds: string[];
+  credentialIndex?: number;
+  answers: QuestionnaireResponseAnswer[];
+  relays?: string[];
+} & PublicPublishOptions) {
+  const authorPubkey = nip19.npubEncode(getPublicKey(decodeNsecSecretKey(input.responseNsec)));
+  const submittedAt = input.submittedAt ?? Math.floor(Date.now() / 1000);
+  const questionIds = [...new Set(input.questionIds.map((questionId) => questionId.trim()).filter(Boolean))];
+  const eventPayload: QuestionnaireProvisionalResponseEvent = {
+    schemaVersion: 1,
+    eventType: "questionnaire_response_provisional",
+    questionnaireId: input.questionnaireId,
+    responseId: input.responseId,
+    submittedAt,
+    authorPubkey,
+    questionIds,
+    ...(input.credentialIndex && input.credentialIndex > 1 ? { credentialIndex: Math.floor(input.credentialIndex) } : {}),
+    answers: input.answers,
+  };
+
+  const secretKey = decodeNsecSecretKey(input.responseNsec);
+  const event = finalizeEvent({
+    kind: QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND,
+    created_at: submittedAt,
+    tags: [
+      ["t", "questionnaire_response_provisional"],
+      ["q", input.questionnaireId],
+      ["questionnaire", input.questionnaireId],
+      ["schema", "1"],
+      ["etype", "questionnaire_response_provisional"],
+      ["response-id", input.responseId],
+      ...questionIds.map((questionId) => ["question-id", questionId]),
+      ...(input.questionnaireDefinitionEventId?.trim()
+        ? [["e", input.questionnaireDefinitionEventId.trim()] as string[]]
+        : []),
+    ],
+    content: JSON.stringify(eventPayload),
+  }, secretKey);
+  const relays = buildPublicRelays(input.relays, input.includeDefaultRelays);
+  const pool = getSharedNostrPool();
+  const publishTask = () => publishToRelaysStaggered(
+    (relay) => pool.publish([relay], event, { maxWait: input.publishMaxWaitMs ?? SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+    relays,
+    { staggerMs: input.relayStaggerMs ?? SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+  );
+  const results = input.usePublishQueue === false
+    ? await publishTask()
+    : await queueNostrPublish(
+      publishTask,
+      { channel: "questionnaire-response-provisional", minIntervalMs: input.minPublishIntervalMs ?? SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
+  const relayResults = results.map((result, index) => (
+    result.status === "fulfilled"
+      ? { relay: relays[index], success: true as const }
+      : {
+          relay: relays[index],
+          success: false as const,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }
+  ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
+  return {
+    eventId: event.id,
+    event,
+    relayResults,
+    successes: relayResults.filter((entry) => entry.success).length,
+    failures: relayResults.filter((entry) => !entry.success).length,
+  };
+}
+
 export async function publishQuestionnaireBlindResponseEncrypted(input: {
   responseNsec: string;
   coordinatorNpub: string;
@@ -362,6 +455,44 @@ export function parseQuestionnaireBlindResponseEvent(content: string): Questionn
       return null;
     }
     if (!parsed.answers && !parsed.encryptedPayload) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function parseQuestionnaireProvisionalResponseEvent(content: string): QuestionnaireProvisionalResponseEvent | null {
+  try {
+    const parsed = JSON.parse(content) as QuestionnaireProvisionalResponseEvent;
+    if (
+      parsed?.schemaVersion !== 1
+      || parsed?.eventType !== "questionnaire_response_provisional"
+      || typeof parsed?.questionnaireId !== "string"
+      || typeof parsed?.responseId !== "string"
+      || typeof parsed?.submittedAt !== "number"
+      || typeof parsed?.authorPubkey !== "string"
+      || !Array.isArray(parsed?.questionIds)
+      || !Array.isArray(parsed?.answers)
+    ) {
+      return null;
+    }
+    if (parsed.questionIds.some((questionId) => typeof questionId !== "string" || !questionId.trim())) {
+      return null;
+    }
+    if (parsed.credentialIndex !== undefined && (
+      typeof parsed.credentialIndex !== "number"
+      || !Number.isFinite(parsed.credentialIndex)
+      || parsed.credentialIndex < 1
+    )) {
+      return null;
+    }
+    if (parsed.answers.some((answer) => (
+      typeof answer?.questionId !== "string"
+      || typeof answer?.answerType !== "string"
+      || !parsed.questionIds.includes(answer.questionId)
+    ))) {
       return null;
     }
     return parsed;

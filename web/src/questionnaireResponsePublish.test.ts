@@ -3,6 +3,7 @@ import { getPublicKey, nip19, nip44 } from "nostr-tools";
 import {
   decryptQuestionnaireBlindResponseAnswers,
   parseQuestionnaireBlindResponseEncryptedPayload,
+  parseQuestionnaireProvisionalResponseEvent,
   type QuestionnaireBlindResponseEvent,
 } from "./questionnaireResponsePublish";
 import { sha256HexRust } from "./wasm/auditableVotingCore";
@@ -88,5 +89,30 @@ describe("questionnaire response publish helpers", () => {
     expect(decrypted.answers).toEqual([
       { questionId: "q1", answerType: "free_text", text: "private comment" },
     ]);
+  });
+
+  it("parses public provisional per-question responses", () => {
+    const parsed = parseQuestionnaireProvisionalResponseEvent(JSON.stringify({
+      schemaVersion: 1,
+      eventType: "questionnaire_response_provisional",
+      questionnaireId: "q1",
+      responseId: "provisional1",
+      submittedAt: 100,
+      authorPubkey: "npub1test",
+      questionIds: ["q1"],
+      answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
+    }));
+
+    expect(parsed?.responseId).toBe("provisional1");
+    expect(parseQuestionnaireProvisionalResponseEvent(JSON.stringify({
+      schemaVersion: 1,
+      eventType: "questionnaire_response_provisional",
+      questionnaireId: "q1",
+      responseId: "bad",
+      submittedAt: 100,
+      authorPubkey: "npub1test",
+      questionIds: ["q2"],
+      answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
+    }))).toBeNull();
   });
 });

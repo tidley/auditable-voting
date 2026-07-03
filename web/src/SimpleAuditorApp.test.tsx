@@ -9,6 +9,7 @@ const transportMocks = vi.hoisted(() => ({
   fetchQuestionnaireResultSummary: vi.fn(),
   fetchQuestionnaireParticipantCount: vi.fn(),
   fetchQuestionnaireBlindResponses: vi.fn(),
+  fetchQuestionnaireProvisionalResponses: vi.fn(),
   fetchQuestionnaireSubmissionDecisions: vi.fn(),
   fetchQuestionnaireWorkerDelegationStatus: vi.fn(),
   verifyQuestionnaireBlindResponseProofs: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("./questionnaireTransport", async (importOriginal) => {
     fetchQuestionnaireResultSummary: transportMocks.fetchQuestionnaireResultSummary,
     fetchQuestionnaireParticipantCount: transportMocks.fetchQuestionnaireParticipantCount,
     fetchQuestionnaireBlindResponses: transportMocks.fetchQuestionnaireBlindResponses,
+    fetchQuestionnaireProvisionalResponses: transportMocks.fetchQuestionnaireProvisionalResponses,
     fetchQuestionnaireSubmissionDecisions: transportMocks.fetchQuestionnaireSubmissionDecisions,
     fetchQuestionnaireWorkerDelegationStatus: transportMocks.fetchQuestionnaireWorkerDelegationStatus,
     verifyQuestionnaireBlindResponseProofs: transportMocks.verifyQuestionnaireBlindResponseProofs,
@@ -124,9 +126,8 @@ describe("SimpleAuditorApp", () => {
     render(<SimpleAuditorApp />);
 
     await waitFor(() => {
-      expect(screen.getByText("Responses")).toBeTruthy();
+      expect(document.body.textContent).toContain("3/3 accepted (100%)");
     });
-    expect(screen.getByText("3/3 accepted (100%)")).toBeTruthy();
     expect(screen.queryByText("1/1 accepted (100%)")).toBeNull();
     expect(document.body.textContent).not.toContain("Accepted: 3 (100%).");
   });
@@ -269,6 +270,8 @@ function setupTransportMocks() {
   transportMocks.fetchQuestionnaireBlindResponses.mockImplementation(async (input: { questionnaireId: string }) => [
     makeResponseEntry(input.questionnaireId),
   ]);
+  transportMocks.fetchQuestionnaireProvisionalResponses.mockReset();
+  transportMocks.fetchQuestionnaireProvisionalResponses.mockResolvedValue([]);
   transportMocks.fetchQuestionnaireSubmissionDecisions.mockReset();
   transportMocks.fetchQuestionnaireSubmissionDecisions.mockResolvedValue([]);
   transportMocks.fetchQuestionnaireWorkerDelegationStatus.mockReset();

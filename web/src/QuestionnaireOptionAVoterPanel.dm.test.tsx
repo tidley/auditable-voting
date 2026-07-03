@@ -51,6 +51,7 @@ vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
   fetchQuestionnaireDefinitions: vi.fn().mockResolvedValue([]),
   fetchQuestionnairePrivateInviteStatus: vi.fn().mockResolvedValue(null),
+  fetchQuestionnaireProvisionalResponses: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("./services/signerService", () => ({
@@ -850,7 +851,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await user.click(screen.getByRole("button", { name: "Message organiser" }));
     await user.click(screen.getByRole("button", { name: "Back to Join" }));
 
-    expect(onMessageOrganiser).toHaveBeenCalledTimes(1);
+    expect(onMessageOrganiser).toHaveBeenCalledWith(coordinatorNpub);
     expect(onBackToJoin).toHaveBeenCalledTimes(1);
     expect(requestBlindBallot).not.toHaveBeenCalled();
   });
@@ -1742,7 +1743,8 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
     storeCachedQuestionnaireDefinition(definition);
 
-    const { rerender } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
+    const view = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
+    const { rerender } = view;
 
     const yesButton = await screen.findByRole("button", { name: "Yes" });
     await user.click(yesButton);
@@ -1768,6 +1770,16 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     rerender(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
     expect(screen.getByRole("button", { name: "Yes" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "No" }).className).toContain("is-dimmed");
+
+    await waitFor(() => {
+      expect(window.localStorage.length).toBeGreaterThan(0);
+    });
+    view.unmount();
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Yes" }).getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByRole("button", { name: "No" }).className).toContain("is-dimmed");
+    });
   });
 
   it("renders questions from the blind issuance definition when public definition fetch is empty", async () => {
@@ -2160,17 +2172,27 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
 
     const { container } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_draft_next"]} localVoterNpub={localVoterNpub} />);
-    const controls = () => within(container.querySelector(".simple-optiona-voter-controls") as HTMLElement);
+    const nav = () => within(container.querySelector(".simple-questionnaire-question-nav") as HTMLElement);
 
-    expect(await screen.findByText("Ballot 1 · Question 1/2")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
-    expect(controls().queryByRole("button", { name: "Please answer all required questions" })).toBeNull();
-    await userEvent.click(controls().getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Question 1 of 2")).toBeTruthy();
+    expect(nav().getByRole("button", { name: /Next/ }).className).not.toContain("is-ready");
+    await userEvent.click(nav().getByRole("button", { name: /Next/ }));
 
-    expect(await screen.findByText("Ballot 1 · Question 2/2")).toBeTruthy();
-    expect(controls().getByRole("button", { name: "Please answer all required questions" })).toBeTruthy();
+    expect(await screen.findByText("Question 2 of 2")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "No" }));
-    expect(controls().getByRole("button", { name: "Submit response" })).toBeTruthy();
+    expect(nav().queryByRole("button", { name: /Submit/ })).toBeNull();
+    expect(container.querySelector(".simple-optiona-voter-controls")).toBeNull();
+
+    await userEvent.click(nav().getByRole("button", { name: /Previous/ }));
+    expect(await screen.findByText("Question 1 of 2")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    expect(nav().getByRole("button", { name: /Next/ }).className).toContain("is-ready");
+    await userEvent.click(nav().getByRole("button", { name: /Next/ }));
+    expect(await screen.findByText("Question 2 of 2")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "No" }));
+    const submitButton = nav().getByRole("button", { name: /Submit/ }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(false);
+    expect(container.querySelector(".simple-optiona-voter-controls")).toBeNull();
   });
 
   it("shows proxy voter ballots together and submits them as separate votes", async () => {
@@ -2317,8 +2339,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_proxy_together"]} localVoterNpub={localVoterNpub} />);
 
-    expect(await screen.findByText("2 separate votes · Ballot 1 · 1 question")).toBeTruthy();
-    const firstVote = screen.getByRole("region", { name: "Separate vote 1 of 2" });
+    const firstVote = await screen.findByRole("region", { name: "Separate vote 1 of 2" });
     const secondVote = screen.getByRole("region", { name: "Separate vote 2 of 2" });
     await user.click(within(firstVote).getByRole("button", { name: "Yes" }));
     await user.click(within(secondVote).getByRole("button", { name: "No" }));

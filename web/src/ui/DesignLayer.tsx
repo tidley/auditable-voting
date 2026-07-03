@@ -59,14 +59,16 @@ import {
   Settings,
   Share2,
   ShieldCheck,
+  SquarePen,
   Trash2,
   Upload,
+  UserRound,
   UserPlus,
   Users,
   X,
   type LucideIcon,
 } from "lucide-react";
-import type { ButtonHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref, SelectHTMLAttributes } from "react";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -85,6 +87,7 @@ const iconMap = {
   clipboard: Clipboard,
   copy: Copy,
   download: Download,
+  edit: SquarePen,
   export: FileDown,
   external: ExternalLink,
   info: Info,
@@ -107,6 +110,7 @@ const iconMap = {
   shield: ShieldCheck,
   spinner: LoaderCircle,
   upload: Upload,
+  user: UserRound,
   users: Users,
   view: Eye,
   uploadLine: ArrowUpFromLine,
@@ -234,6 +238,7 @@ type UiFieldShellProps = {
 
 type UiTextFieldProps = Omit<AriaTextFieldProps, "className" | "children"> & UiFieldShellProps & {
   inputClassName?: string;
+  inputRef?: Ref<HTMLInputElement>;
   inputProps?: Omit<AriaInputProps, "className">;
 };
 
@@ -243,6 +248,7 @@ export function UiTextField({
   errorMessage,
   fieldClassName,
   inputClassName,
+  inputRef,
   inputProps,
   isDisabled,
   isInvalid,
@@ -258,7 +264,7 @@ export function UiTextField({
       className={cx("av-ui-field", fieldClassName)}
     >
       {label ? <AriaLabel className='av-ui-label'>{label}</AriaLabel> : null}
-      <AriaInput {...inputProps} className={cx("av-ui-input", inputClassName)} />
+      <AriaInput {...inputProps} ref={inputRef} className={cx("av-ui-input", inputClassName)} />
       {description ? <span className='av-ui-description'>{description}</span> : null}
       {errorMessage ? <AriaFieldError className='av-ui-error'>{errorMessage}</AriaFieldError> : null}
     </AriaTextField>

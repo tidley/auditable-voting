@@ -17,6 +17,7 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
   invite: ElectionInviteMessage | null;
   inviteCode: string | null;
   coordinatorNpub: string | null;
+  credentialsPerVoter?: 2;
 } {
   const params = new URLSearchParams(search);
   const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
@@ -55,9 +56,16 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
         },
         inviteCode: inviteCode || null,
         coordinatorNpub: coordinatorNpub || null,
+        ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
       };
     }
-    return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null };
+    return {
+      electionId,
+      invite: null,
+      inviteCode: inviteCode || null,
+      coordinatorNpub: coordinatorNpub || null,
+      ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
+    };
   }
 
   try {
@@ -70,11 +78,11 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
       || typeof parsed?.invitedNpub !== "string"
       || typeof parsed?.coordinatorNpub !== "string"
     ) {
-      return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null };
+      return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}) };
     }
-    return { electionId: parsed.electionId, invite: parsed, inviteCode: inviteCode || null, coordinatorNpub: parsed.coordinatorNpub || coordinatorNpub || null };
+    return { electionId: parsed.electionId, invite: parsed, inviteCode: inviteCode || null, coordinatorNpub: parsed.coordinatorNpub || coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}) };
   } catch {
-    return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null };
+    return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}) };
   }
 }
 

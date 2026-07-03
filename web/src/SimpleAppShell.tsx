@@ -885,6 +885,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               </div>
             </div>
           ) : null}
+          {role === "voter" ? <div id='simple-voter-menu-actions' role='none' /> : null}
           {role === "auditor" ? (
             <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
               <div

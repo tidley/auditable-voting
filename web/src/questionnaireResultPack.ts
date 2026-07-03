@@ -9,7 +9,10 @@ import type {
 const BLOSSOM_AUTH_KIND = 24_242;
 const RESULT_PACK_TYPE = "application/vnd.auditable-voting.result-pack+json" as const;
 const RESULT_PACK_COMPRESSION = "gzip" as const;
-const BLOSSOM_UPLOAD_CONTENT_TYPE = "application/gzip";
+const BLOSSOM_GZIP_UPLOAD_CONTENT_TYPE = "application/gzip";
+const BLOSSOM_JSON_UPLOAD_CONTENT_TYPE = "application/json";
+const RESULT_PACK_DIRECT_UPLOAD_ENCODING = "gzip" as const;
+const RESULT_PACK_WRAPPED_UPLOAD_ENCODING = "json+base64url-gzip" as const;
 const BLOSSOM_UPLOAD_TIMEOUT_MS = 12_000;
 const BLOSSOM_TARGET_UPLOAD_COUNT = 2;
 
@@ -35,6 +38,17 @@ type BlossomBlobDescriptor = {
   type?: string;
 };
 
+type ResultPackUploadEnvelope = {
+  schemaVersion: 1;
+  eventType: "questionnaire_result_pack_blob";
+  type: typeof RESULT_PACK_TYPE;
+  compression: typeof RESULT_PACK_COMPRESSION;
+  sha256: string;
+  size: number;
+  payloadEncoding: "base64url";
+  payload: string;
+};
+
 export async function uploadQuestionnaireResultPack(input: {
   publisherNsec: string;
   resultSummary: QuestionnaireResultSummary;
@@ -53,8 +67,8 @@ export async function uploadQuestionnaireResultPack(input: {
   if (servers.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
     throw new Error("At least two Blossom result-pack servers are required.");
   }
-  const uploads: QuestionnaireResultPackReference[] = [];
-  const errors: string[] = [];
+  const gzipUploads: QuestionnaireResultPackReference[] = [];
+  const gzipErrors: string[] = [];
 
   for (const server of servers) {
     try {
@@ -64,34 +78,61 @@ export async function uploadQuestionnaireResultPack(input: {
         compressed,
         sha256,
       });
-      uploads.push(upload);
-      if (uploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
+      gzipUploads.push(upload);
+      if (gzipUploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
         break;
       }
     } catch (error) {
-      errors.push(`${server}: ${error instanceof Error ? error.message : String(error)}`);
+      gzipErrors.push(`${server}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  if (uploads.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
-    throw new Error(`Blossom result-pack upload failed: ${errors.join("; ")}`);
+  if (gzipUploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
+    return buildMirroredResultPackReference(gzipUploads);
   }
 
-  return {
-    ...uploads[0],
-    mirrors: uploads.map((upload) => ({
-      url: upload.url,
-      server: upload.server,
-    })),
-  };
+  const envelopeBytes = buildJsonWrappedResultPack(compressed, sha256);
+  const envelopeSha256 = await sha256HexBytes(envelopeBytes);
+  const wrappedUploads: QuestionnaireResultPackReference[] = [];
+  const wrappedErrors: string[] = [];
+  for (const server of servers) {
+    try {
+      const upload = await uploadPackBodyToBlossom({
+        nsec: input.publisherNsec,
+        server,
+        body: envelopeBytes,
+        sha256: envelopeSha256,
+        contentType: BLOSSOM_JSON_UPLOAD_CONTENT_TYPE,
+        uploadEncoding: RESULT_PACK_WRAPPED_UPLOAD_ENCODING,
+        payloadSha256: sha256,
+        payloadSize: compressed.length,
+      });
+      wrappedUploads.push(upload);
+      if (wrappedUploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
+        break;
+      }
+    } catch (error) {
+      wrappedErrors.push(`${server}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (wrappedUploads.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
+    throw new Error(
+      `Blossom result-pack upload failed: gzip: ${gzipErrors.join("; ")}; `
+      + `JSON wrapper: ${wrappedErrors.join("; ")}`,
+    );
+  }
+
+  return buildMirroredResultPackReference(wrappedUploads);
 }
 
 export async function fetchQuestionnaireResultPack(
   reference: QuestionnaireResultPackReference,
 ): Promise<QuestionnaireResultPack> {
   validateResultPackReference(reference);
-  const bytes = await fetchVerifiedResultPackBytes(reference);
-  const json = strFromU8(gunzipSync(bytes));
+  const uploadedBytes = await fetchVerifiedResultPackBytes(reference);
+  const compressedBytes = await unwrapVerifiedResultPackBytes(reference, uploadedBytes);
+  const json = strFromU8(gunzipSync(compressedBytes));
   const parsed = JSON.parse(json) as QuestionnaireResultPack;
   if (
     parsed?.schemaVersion !== 1
@@ -171,6 +212,26 @@ async function uploadCompressedPackToBlossom(input: {
   compressed: Uint8Array;
   sha256: string;
 }): Promise<QuestionnaireResultPackReference> {
+  return uploadPackBodyToBlossom({
+    nsec: input.nsec,
+    server: input.server,
+    body: input.compressed,
+    sha256: input.sha256,
+    contentType: BLOSSOM_GZIP_UPLOAD_CONTENT_TYPE,
+    uploadEncoding: RESULT_PACK_DIRECT_UPLOAD_ENCODING,
+  });
+}
+
+async function uploadPackBodyToBlossom(input: {
+  nsec: string;
+  server: string;
+  body: Uint8Array;
+  sha256: string;
+  contentType: string;
+  uploadEncoding: QuestionnaireResultPackReference["uploadEncoding"];
+  payloadSha256?: string;
+  payloadSize?: number;
+}): Promise<QuestionnaireResultPackReference> {
   const uploadUrl = `${input.server}/upload`;
   const auth = buildBlossomUploadAuth({
     nsec: input.nsec,
@@ -180,11 +241,11 @@ async function uploadCompressedPackToBlossom(input: {
   const response = await fetchWithTimeout(uploadUrl, {
     method: "PUT",
     headers: {
-      "Content-Type": BLOSSOM_UPLOAD_CONTENT_TYPE,
+      "Content-Type": input.contentType,
       "X-SHA-256": input.sha256,
       "Authorization": auth,
     },
-    body: input.compressed,
+    body: input.body,
   }, BLOSSOM_UPLOAD_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 240)}`);
@@ -194,7 +255,7 @@ async function uploadCompressedPackToBlossom(input: {
   if (descriptorSha !== input.sha256) {
     throw new Error(`server returned mismatched sha256 ${descriptor.sha256 ?? "(missing)"}`);
   }
-  if (descriptor.size !== input.compressed.length) {
+  if (descriptor.size !== input.body.length) {
     throw new Error(`server returned mismatched size ${descriptor.size ?? "(missing)"}`);
   }
   const url = descriptor.url?.trim() ?? "";
@@ -204,11 +265,42 @@ async function uploadCompressedPackToBlossom(input: {
   return {
     url,
     sha256: input.sha256,
-    size: input.compressed.length,
+    size: input.body.length,
     type: RESULT_PACK_TYPE,
     compression: RESULT_PACK_COMPRESSION,
+    uploadEncoding: input.uploadEncoding,
+    payloadSha256: input.payloadSha256,
+    payloadSize: input.payloadSize,
     uploadedAt: Math.floor(Date.now() / 1000),
     server: input.server,
+  };
+}
+
+function buildJsonWrappedResultPack(compressed: Uint8Array, sha256: string) {
+  const envelope: ResultPackUploadEnvelope = {
+    schemaVersion: 1,
+    eventType: "questionnaire_result_pack_blob",
+    type: RESULT_PACK_TYPE,
+    compression: RESULT_PACK_COMPRESSION,
+    sha256,
+    size: compressed.length,
+    payloadEncoding: "base64url",
+    payload: bytesToBase64Url(compressed),
+  };
+  return strToU8(JSON.stringify(envelope));
+}
+
+function buildMirroredResultPackReference(uploads: QuestionnaireResultPackReference[]) {
+  const [primary] = uploads;
+  if (!primary) {
+    throw new Error("No Blossom result-pack uploads were produced.");
+  }
+  return {
+    ...primary,
+    mirrors: uploads.map((upload) => ({
+      url: upload.url,
+      server: upload.server,
+    })),
   };
 }
 
@@ -248,6 +340,13 @@ function validateResultPackReference(reference: QuestionnaireResultPackReference
   ) {
     throw new Error("Invalid Blossom result-pack reference.");
   }
+  if (
+    reference.uploadEncoding
+    && reference.uploadEncoding !== RESULT_PACK_DIRECT_UPLOAD_ENCODING
+    && reference.uploadEncoding !== RESULT_PACK_WRAPPED_UPLOAD_ENCODING
+  ) {
+    throw new Error("Invalid Blossom result-pack reference.");
+  }
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
@@ -268,6 +367,37 @@ async function sha256HexBytes(bytes: Uint8Array) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function unwrapVerifiedResultPackBytes(reference: QuestionnaireResultPackReference, bytes: Uint8Array) {
+  if ((reference.uploadEncoding ?? RESULT_PACK_DIRECT_UPLOAD_ENCODING) === RESULT_PACK_DIRECT_UPLOAD_ENCODING) {
+    return bytes;
+  }
+  const envelope = JSON.parse(strFromU8(bytes)) as ResultPackUploadEnvelope;
+  if (
+    envelope?.schemaVersion !== 1
+    || envelope?.eventType !== "questionnaire_result_pack_blob"
+    || envelope?.type !== RESULT_PACK_TYPE
+    || envelope?.compression !== RESULT_PACK_COMPRESSION
+    || envelope?.payloadEncoding !== "base64url"
+    || typeof envelope?.payload !== "string"
+  ) {
+    throw new Error("Blossom result-pack wrapper is invalid.");
+  }
+  const compressed = base64UrlToBytes(envelope.payload);
+  const expectedSha256 = (reference.payloadSha256 ?? envelope.sha256 ?? "").toLowerCase();
+  const expectedSize = reference.payloadSize ?? envelope.size;
+  if (!/^[a-f0-9]{64}$/i.test(expectedSha256) || !Number.isFinite(expectedSize) || expectedSize <= 0) {
+    throw new Error("Blossom result-pack wrapper verification data is invalid.");
+  }
+  if (compressed.length !== expectedSize) {
+    throw new Error(`payload size mismatch: expected ${expectedSize}, got ${compressed.length}`);
+  }
+  const actualSha256 = await sha256HexBytes(compressed);
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(`payload sha256 mismatch: expected ${expectedSha256}, got ${actualSha256}`);
+  }
+  return compressed;
+}
+
 function bytesToBase64Url(bytes: Uint8Array) {
   let binary = "";
   for (let index = 0; index < bytes.length; index += 0x8000) {
@@ -277,4 +407,16 @@ function bytesToBase64Url(bytes: Uint8Array) {
     ? btoa(binary)
     : Buffer.from(binary, "binary").toString("base64");
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(value: string) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = typeof atob === "function"
+    ? atob(base64)
+    : Buffer.from(base64, "base64").toString("binary");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }

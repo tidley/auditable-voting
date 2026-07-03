@@ -92,6 +92,7 @@ export interface BearerInviteCodeEntry {
   codeHash: Hex;
   createdAt: IsoTime;
   state: BearerInviteCodeState;
+  credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
   note?: string | null;
   autoRequestBallot?: boolean;
   markedUsedAt?: IsoTime | null;
@@ -226,6 +227,7 @@ export interface VoterElectionLocalState {
   loginVerified: boolean;
   loginVerifiedAt?: IsoTime | null;
   inviteMessage?: ElectionInviteMessage | null;
+  privateInviteCredentialsPerVoter?: QuestionnaireCredentialsPerVoter | null;
   blindRequest?: BlindBallotRequest | null;
   blindRequestSent: boolean;
   blindRequestSentAt?: IsoTime | null;

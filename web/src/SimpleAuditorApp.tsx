@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { nip19, type NostrEvent } from "nostr-tools";
-import QuestionnaireResultsDashboard from "./QuestionnaireResultsDashboard";
+import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardResponseDetail } from "./QuestionnaireResultsDashboard";
 import {
   evaluateQuestionnaireBlindAdmissions,
   fetchQuestionnaireBlindResponses,
+  fetchQuestionnaireProvisionalResponses,
   fetchQuestionnaireDefinitions,
   fetchQuestionnaireParticipantCount,
   fetchQuestionnaireWorkerDelegationStatus,
@@ -26,8 +27,10 @@ import {
 import { decryptQuestionnaireBlindResponseAnswers } from "./questionnaireResponsePublish";
 import {
   parseQuestionnaireBlindResponseEvent,
+  parseQuestionnaireProvisionalResponseEvent,
   parseQuestionnaireSubmissionDecisionEvent,
   QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND,
   QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
 } from "./questionnaireResponsePublish";
 import {
@@ -81,6 +84,7 @@ type AuditorMemoryCache = {
   questionnaires: AuditorQuestionnaireEntry[];
   selectedQuestionnaireId: string;
   selectedResponseDetails: AuditorQuestionnaireResponseDetail[];
+  selectedProvisionalResponseDetails: QuestionnaireResultsDashboardResponseDetail[];
   selectedLatestPublishAt: number | null;
   selectedLiveState: string | null;
   selectedLiveStateEvent: QuestionnaireStateEvent | null;
@@ -101,6 +105,7 @@ let auditorMemoryCache: AuditorMemoryCache = {
   questionnaires: [],
   selectedQuestionnaireId: "",
   selectedResponseDetails: [],
+  selectedProvisionalResponseDetails: [],
   selectedLatestPublishAt: null,
   selectedLiveState: null,
   selectedLiveStateEvent: null,
@@ -176,6 +181,9 @@ export default function SimpleAuditorApp({
   const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>(() => (
     canUseCachedSelection ? auditorMemoryCache.selectedResponseDetails : []
   ));
+  const [selectedProvisionalResponseDetails, setSelectedProvisionalResponseDetails] = useState<QuestionnaireResultsDashboardResponseDetail[]>(() => (
+    canUseCachedSelection ? auditorMemoryCache.selectedProvisionalResponseDetails : []
+  ));
   const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(() => (
     canUseCachedSelection ? auditorMemoryCache.selectedLatestPublishAt : null
   ));
@@ -203,7 +211,7 @@ export default function SimpleAuditorApp({
   const [manualRefreshInFlight, setManualRefreshInFlight] = useState(false);
   const initialListLoadDoneRef = useRef(auditorMemoryCache.questionnaires.length > 0);
   const initialSelectedLoadDoneRef = useRef(canUseCachedSelection && auditorMemoryCache.selectedResponseDetails.length >= 0);
-  const selectedQuestionnaireIdRef = useRef("");
+  const selectedQuestionnaireIdRef = useRef(initialQuestionnaireId);
   const selectedResponseDetailsRef = useRef<AuditorQuestionnaireResponseDetail[]>([]);
   const selectedResultSummaryRef = useRef<QuestionnaireResultSummary | null>(null);
   const selectedRefreshEffectHasRunRef = useRef(false);
@@ -251,6 +259,7 @@ export default function SimpleAuditorApp({
       questionnaires,
       selectedQuestionnaireId,
       selectedResponseDetails,
+      selectedProvisionalResponseDetails,
       selectedLatestPublishAt,
       selectedLiveState,
       selectedLiveStateEvent,
@@ -268,6 +277,7 @@ export default function SimpleAuditorApp({
     selectedLiveStateEvent,
     selectedQuestionnaireId,
     selectedResponseDetails,
+    selectedProvisionalResponseDetails,
     selectedResultSummary,
     selectedWorkerDelegationStatus,
   ]);
@@ -301,9 +311,29 @@ export default function SimpleAuditorApp({
           - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
         ));
 
-      const candidates = historic
+      let candidates = historic
         ? latestDefinitions
         : latestDefinitions.slice(0, AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT);
+      const selectedIdForList = selectedQuestionnaireIdRef.current.trim();
+      if (selectedIdForList && !candidates.some((entry) => entry.definition.questionnaireId === selectedIdForList)) {
+        const selectedDefinitions = await fetchQuestionnaireDefinitions({
+          questionnaireId: selectedIdForList,
+          limit: 50,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+        }).catch(() => []);
+        const selectedDefinition = selectedDefinitions
+          .sort((left, right) => (
+            Number(right.event.created_at ?? right.definition.createdAt ?? 0)
+            - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
+          ))[0];
+        if (selectedDefinition) {
+          candidates = [
+            selectedDefinition,
+            ...candidates.filter((entry) => entry.definition.questionnaireId !== selectedIdForList),
+          ];
+        }
+      }
       const previousEntriesById = new Map(questionnairesRef.current.map((entry) => [entry.questionnaireId, entry]));
       const entries: AuditorQuestionnaireEntry[] = [];
       for (const entry of candidates) {
@@ -343,7 +373,8 @@ export default function SimpleAuditorApp({
         areQuestionnaireEntriesEqual(previous, entries) ? previous : entries
       ));
       const selectedId = selectedQuestionnaireIdRef.current.trim();
-      const nextSelectedId = (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId))
+      const selectedIsUrlPinned = Boolean(initialQuestionnaireId && selectedId === initialQuestionnaireId);
+      const nextSelectedId = (!selectedId || (!selectedIsUrlPinned && !entries.some((entry) => entry.questionnaireId === selectedId)))
         ? (entries[0]?.questionnaireId ?? "")
         : selectedId;
       selectedQuestionnaireIdRef.current = nextSelectedId;
@@ -362,7 +393,7 @@ export default function SimpleAuditorApp({
       const nextStatus = "Failed to refresh public questionnaires.";
       setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     }
-  }, [loadQuestionnairesFromNostr]);
+  }, [initialQuestionnaireId, loadQuestionnairesFromNostr]);
 
   const refreshSelectedQuestionnaireResponses = useCallback(async () => {
     const selectedId = selectedQuestionnaireIdRef.current.trim();
@@ -440,7 +471,7 @@ export default function SimpleAuditorApp({
         latestParticipantCount?.expectedInviteeCount,
         selectedQuestionnaire?.expectedInviteeCount,
       );
-      const [responseEntries, decisionEntries] = await Promise.all([
+      const [responseEntries, decisionEntries, provisionalEntries] = await Promise.all([
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: responseFetchLimit,
@@ -451,6 +482,15 @@ export default function SimpleAuditorApp({
           relays: questionnaireRelays,
         }),
         fetchQuestionnaireSubmissionDecisions({
+          questionnaireId: selectedId,
+          limit: responseFetchLimit,
+          readRelayLimit: 5,
+          preferKindOnly: true,
+          maxPages: AUDITOR_QUESTIONNAIRE_RESPONSE_MAX_PAGES,
+          timeBudgetMs: AUDITOR_QUESTIONNAIRE_RESPONSE_TIME_BUDGET_MS,
+          relays: questionnaireRelays,
+        }).catch(() => []),
+        fetchQuestionnaireProvisionalResponses({
           questionnaireId: selectedId,
           limit: responseFetchLimit,
           readRelayLimit: 5,
@@ -515,11 +555,27 @@ export default function SimpleAuditorApp({
           console.warn("Blossom result-pack fetch failed", error);
         }
       }
+      const provisionalDetails = dedupeAuditorProvisionalResponseDetails(provisionalEntries.map(({ event, response }) => ({
+        event,
+        accepted: true,
+        rejectionReason: null,
+        includedInLatestPublish: false,
+        decryptedAnswerQuestionIds: response.questionIds,
+        response: {
+          responseId: response.responseId,
+          authorPubkey: normalizeToNpub(response.authorPubkey),
+          submittedAt: response.submittedAt,
+          answers: response.answers,
+        },
+      }))).sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
       const nextLiveState = latestState?.state.state ?? null;
       const nextLiveStateEvent = latestState?.state ?? null;
       const nextResultSummary = latestResult?.summary ?? null;
       setSelectedResponseDetails((previous) => (
         areAuditorResponseDetailsEqual(previous, details) ? previous : details
+      ));
+      setSelectedProvisionalResponseDetails((previous) => (
+        areAuditorResponseDetailsEqual(previous, provisionalDetails) ? previous : provisionalDetails
       ));
       setSelectedLatestPublishAt((previous) => (previous === latestPublishAt ? previous : latestPublishAt));
       setSelectedLiveState((previous) => (previous === nextLiveState ? previous : nextLiveState));
@@ -553,6 +609,7 @@ export default function SimpleAuditorApp({
     } catch {
       initialSelectedLoadDoneRef.current = true;
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
+      setSelectedProvisionalResponseDetails((previous) => (previous.length === 0 ? previous : []));
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
       setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
@@ -675,6 +732,7 @@ export default function SimpleAuditorApp({
         QUESTIONNAIRE_STATE_KIND,
         QUESTIONNAIRE_PARTICIPANT_COUNT_KIND,
         QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+        QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND,
         QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
         QUESTIONNAIRE_RESULT_SUMMARY_KIND,
       ],
@@ -694,6 +752,9 @@ export default function SimpleAuditorApp({
         }
         if (event.kind === QUESTIONNAIRE_RESPONSE_BLIND_KIND) {
           return parseQuestionnaireBlindResponseEvent(event.content)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND) {
+          return parseQuestionnaireProvisionalResponseEvent(event.content)?.questionnaireId ?? null;
         }
         if (event.kind === QUESTIONNAIRE_SUBMISSION_DECISION_KIND) {
           return parseQuestionnaireSubmissionDecisionEvent(event.content)?.questionnaireId ?? null;
@@ -723,6 +784,7 @@ export default function SimpleAuditorApp({
     if (!selectedQuestionnaireId.trim()) {
       selectedChangeFromRefreshRef.current = false;
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
+      setSelectedProvisionalResponseDetails((previous) => (previous.length === 0 ? previous : []));
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
       setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
@@ -739,6 +801,7 @@ export default function SimpleAuditorApp({
       return;
     }
     setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
+    setSelectedProvisionalResponseDetails((previous) => (previous.length === 0 ? previous : []));
     setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
     setSelectedLiveState((previous) => (previous === null ? previous : null));
     setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
@@ -786,9 +849,12 @@ export default function SimpleAuditorApp({
       return;
     }
     if (!selectedQuestionnaireId || !filteredQuestionnaires.some((entry) => entry.questionnaireId === selectedQuestionnaireId)) {
+      if (initialQuestionnaireId && selectedQuestionnaireId === initialQuestionnaireId) {
+        return;
+      }
       setSelectedQuestionnaireId(filteredQuestionnaires[0].questionnaireId);
     }
-  }, [filteredQuestionnaires, selectedQuestionnaireId]);
+  }, [filteredQuestionnaires, initialQuestionnaireId, selectedQuestionnaireId]);
 
   useEffect(() => {
     writeSelectedQuestionnaireIdToUrl(selectedQuestionnaireId);
@@ -1024,6 +1090,7 @@ export default function SimpleAuditorApp({
           } : null}
           questionSummaries={displayedQuestionSummaries}
           responseDetails={displayResponseDetails}
+          provisionalResponseDetails={selectedProvisionalResponseDetails}
           displayValidCount={displayValidCount}
           displayInvalidCount={displayInvalidCount}
           loadedValidCount={liveAcceptedCount}
@@ -1249,8 +1316,8 @@ function buildLiveQuestionSummaries(
 }
 
 function areAuditorResponseDetailsEqual(
-  left: AuditorQuestionnaireResponseDetail[],
-  right: AuditorQuestionnaireResponseDetail[],
+  left: QuestionnaireResultsDashboardResponseDetail[],
+  right: QuestionnaireResultsDashboardResponseDetail[],
 ) {
   if (left === right) {
     return true;
@@ -1412,6 +1479,21 @@ function mergeAuditorResponseDetails(
     const existingCreated = Number(existing.event.created_at ?? 0);
     const nextCreated = Number(detail.event.created_at ?? 0);
     if (nextCreated > existingCreated) {
+      byKey.set(key, detail);
+    }
+  }
+  return [...byKey.values()].sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+}
+
+function dedupeAuditorProvisionalResponseDetails(details: QuestionnaireResultsDashboardResponseDetail[]) {
+  const byKey = new Map<string, QuestionnaireResultsDashboardResponseDetail>();
+  for (const detail of details) {
+    const questionIds = [...new Set((detail.response.answers ?? []).map((answer) => answer.questionId).filter(Boolean))]
+      .sort()
+      .join(",");
+    const key = `${detail.response.authorPubkey}:${questionIds || detail.response.responseId}`;
+    const existing = byKey.get(key);
+    if (!existing || Number(detail.event.created_at ?? detail.response.submittedAt ?? 0) >= Number(existing.event.created_at ?? existing.response.submittedAt ?? 0)) {
       byKey.set(key, detail);
     }
   }

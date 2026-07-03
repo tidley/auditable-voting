@@ -11,6 +11,7 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 
 vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
+  fetchQuestionnaireProvisionalResponses: vi.fn().mockResolvedValue([]),
 }));
 
 import { QuestionnaireOptionACoordinatorRuntime } from "./questionnaireOptionARuntime";

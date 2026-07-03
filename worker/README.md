@@ -34,7 +34,7 @@ WORKER_BLOSSOM_RESULT_PACK_SERVERS=https://blossom.nostr.build,https://blossom.p
 
 `WORKER_PUBLIC_ARCHIVE_RELAYS` is optional. When set, the worker still publishes public responses, decisions, close events, and summaries to the hot worker relays first, then copies those same signed events to the archive relays one relay/event at a time at `WORKER_PUBLIC_ARCHIVE_INTERVAL_MS`. Archive fanout is best-effort and bounded by `WORKER_PUBLIC_ARCHIVE_QUEUE_SIZE`.
 
-`WORKER_BLOSSOM_RESULT_PACK_SERVERS` is optional and defaults to the three HTTPS servers shown above. When delegated result summary publishing is enabled, the worker uploads a gzip-compressed public result pack to at least two Blossom servers, then includes the primary URL, mirror URLs, size, and SHA-256 in the result summary. If fewer than two servers accept the upload, the worker publishes the count summary without a Blossom pack.
+`WORKER_BLOSSOM_RESULT_PACK_SERVERS` is optional and defaults to the three HTTPS servers shown above. When delegated result summary publishing is enabled, the worker uploads a gzip-compressed public result pack to at least two Blossom servers, retrying all mirrors with the same gzip payload in a JSON wrapper if gzip is rejected. It then includes the primary URL, mirror URLs, size, SHA-256, and wrapper payload hash when needed in the result summary. If fewer than two servers accept either format, the worker publishes the count summary without a Blossom pack.
 
 ## Run
 

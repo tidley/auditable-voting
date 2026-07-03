@@ -472,9 +472,9 @@ flowchart LR
 ```
 
 Observers derive results from public submissions and public organiser decisions.
-The published summary includes per-response references as a parity backfill, or a pointer to a gzip-compressed Blossom result pack for larger runs. The Observer verifies the advertised compressed blob size and SHA-256 before decompressing or showing rows from any Blossom mirror.
+The published summary includes per-response references as a parity backfill, or a pointer to a gzip-compressed Blossom result pack for larger runs. If gzip blobs are rejected, the same gzip payload is uploaded inside a JSON wrapper. The Observer verifies the advertised blob size and SHA-256, plus the inner gzip hash for wrapped packs, before decompressing or showing rows from any Blossom mirror.
 
-Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Organisers also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
+Before a final result summary exists, the observer derives a live summary from verified public submissions and separate public per-question provisional response events. Provisional events are muted chart hints only; they contain no blind-token proof and do not count for the audit result. Organisers also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
 
 The observer view uses one live subscription for the selected questionnaire and tag-filtered, paginated public refresh reads, with a slower questionnaire-list refresh and an explicit Refresh button for immediate reloads. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event. Encrypted answer details remain hidden unless a matching organiser `nsec` is entered for local decryption.
 

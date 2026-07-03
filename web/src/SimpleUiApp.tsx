@@ -436,6 +436,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const [identityReady, setIdentityReady] = useState(false);
   const [voterId, setVoterId] = useState<string>("pending");
   const [manualCoordinators, setManualCoordinators] = useState<string[]>([]);
+  const [messageOnlyCoordinators, setMessageOnlyCoordinators] = useState<string[]>([]);
   const [nip65Enabled, setNip65Enabled] = useState(false);
   const [questionnaireParticipationHistory, setQuestionnaireParticipationHistory] = useState<
     SimpleVoterCache["questionnaireParticipationHistory"]
@@ -628,6 +629,14 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     () => sanitizeCoordinatorNpubs(manualCoordinators),
     [manualCoordinators],
   );
+  const messageCoordinatorTargets = useMemo(
+    () => sanitizeCoordinatorNpubs([
+      ...configuredCoordinatorTargets,
+      linkedCoordinatorNpub,
+      ...messageOnlyCoordinators,
+    ]),
+    [configuredCoordinatorTargets, linkedCoordinatorNpub, messageOnlyCoordinators],
+  );
   const coordinatorDraftIsValid = isValidNpub(coordinatorDraft.trim());
   const hasConfiguredCoordinators = configuredCoordinatorTargets.length > 0;
   const voteTabActive = activeTab === "vote";
@@ -635,7 +644,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const shouldActivateStartupRelayTraffic = (voteTabActive || hasConfiguredCoordinators) && !questionnaireModeActive;
   const hasUnreadMessages = useHelplineUnreadIndicator({
     actorNsec: messagesVoterNsec,
-    allowedPeerNpubs: configuredCoordinatorTargets,
+    allowedPeerNpubs: messageCoordinatorTargets,
     requireAllowedPeer: true,
     suppressUnread: activeTab === "messages",
     hideReceivedQuestionnaireInviteLinks: true,
@@ -786,6 +795,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       }).catch(() => undefined);
       setVoterKeypair(nextKeypair);
       setManualCoordinators([]);
+      setMessageOnlyCoordinators([]);
       setNip65Enabled(false);
       setQuestionnaireParticipationHistory([]);
       setProtocolStateCache(null);
@@ -1611,6 +1621,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   function clearVoterSessionState(options?: { clearManualCoordinators?: boolean; clearInviteContext?: boolean }) {
     if (options?.clearManualCoordinators ?? false) {
       setManualCoordinators([]);
+      setMessageOnlyCoordinators([]);
       setCoordinatorDraft("");
     }
     protocolStateServiceRef.current = null;
@@ -1828,6 +1839,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             ? []
           : (Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []),
       );
+      setMessageOnlyCoordinators([]);
       setNip65Enabled(cache?.nip65Enabled === true);
       setQuestionnaireParticipationHistory(
         Array.isArray(cache?.questionnaireParticipationHistory)
@@ -1907,6 +1919,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             ? []
           : (Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []),
       );
+      setMessageOnlyCoordinators([]);
       setQuestionnaireParticipationHistory(
         Array.isArray(cache?.questionnaireParticipationHistory)
           ? cache.questionnaireParticipationHistory.filter((entry): entry is SimpleVoterCache["questionnaireParticipationHistory"][number] => (
@@ -2029,6 +2042,14 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   function removeCoordinatorInput(index: number) {
     setManualCoordinators((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
+
+  const openOrganiserMessages = useCallback((coordinatorNpub?: string) => {
+    const target = coordinatorNpub?.trim() ?? "";
+    if (target) {
+      setMessageOnlyCoordinators((current) => sanitizeCoordinatorNpubs([...current, target]));
+    }
+    setActiveTab("messages");
+  }, [setActiveTab]);
 
   function applyDiscoveredQuestionnaireInvites(invites: Array<{ coordinatorNpub: string; electionId: string; invitedNpub: string; type: string; schemaVersion: number; title: string; description: string; voteUrl: string; expiresAt?: string | null }>) {
     for (const invite of invites) {
@@ -3376,7 +3397,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               optionARequestBlindBallotNonce={optionARequestBlindBallotNonce}
               showOptionALoginAction={false}
               onActiveQuestionnaireIdChange={props.onActiveQuestionnaireIdChange}
-              onMessageOrganiser={() => setActiveTab("messages")}
+              onMessageOrganiser={openOrganiserMessages}
               onBackToJoin={() => setActiveTab("configure")}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
@@ -3609,7 +3630,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               role='voter'
               actorNpub={messagesVoterNpub}
               actorNsec={messagesVoterNsec}
-              targetNpubs={configuredCoordinatorTargets}
+              targetNpubs={messageCoordinatorTargets}
             />
           </section>
         ) : null}
@@ -3650,7 +3671,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                 autoSignerLogin={questionnaireAutoSignerLogin}
                 showOptionALoginAction={false}
                 onActiveQuestionnaireIdChange={props.onActiveQuestionnaireIdChange}
-                onMessageOrganiser={() => setActiveTab("messages")}
+                onMessageOrganiser={openOrganiserMessages}
                 onBackToJoin={() => setActiveTab("configure")}
               />
             ) : null}

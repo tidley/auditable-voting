@@ -105,7 +105,7 @@ describe("QuestionnaireResultsDashboard", () => {
   });
 
   it("uses consistent vote-share labels and puts yes first for tied yes/no results", () => {
-    render(
+    const { container } = render(
       <QuestionnaireResultsDashboard
         questionnaire={{
           questionnaireId: "q_result_format",
@@ -288,6 +288,246 @@ describe("QuestionnaireResultsDashboard", () => {
     expect(screen.getByText("1200/1200 accepted (100%)")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Loaded: 400 (33%)");
     expect(document.body.textContent).not.toContain("Accepted: 400 (100%)");
+  });
+
+  it("stacks live pending votes on top of finalised result bars", () => {
+    const { container } = render(
+      <QuestionnaireResultsDashboard
+        questionnaire={{
+          questionnaireId: "q_live_layers",
+          title: "Live layers",
+          questions: [
+            {
+              questionId: "q1",
+              type: "yes_no",
+              prompt: "Ready?",
+              required: true,
+            },
+          ],
+        }}
+        questionSummaries={[
+          {
+            questionId: "q1",
+            answerType: "yes_no",
+            yesCount: 1,
+            noCount: 0,
+          },
+        ]}
+        responseDetails={[
+          {
+            event: { id: "event-final", created_at: 1_774_000_000 },
+            accepted: true,
+            includedInLatestPublish: true,
+            response: {
+              responseId: "submission_final",
+              authorPubkey: "npub1" + "c".repeat(58),
+              submittedAt: 1_774_000_000,
+              tokenNullifier: "nullifier-final",
+              answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
+            },
+          },
+          {
+            event: { id: "event-live", created_at: 1_774_000_100 },
+            accepted: true,
+            includedInLatestPublish: false,
+            response: {
+              responseId: "submission_live",
+              authorPubkey: "npub1" + "d".repeat(58),
+              submittedAt: 1_774_000_100,
+              tokenNullifier: "nullifier-live",
+              answers: [{ questionId: "q1", answerType: "yes_no", value: false }],
+            },
+          },
+        ]}
+        displayValidCount={1}
+        displayInvalidCount={0}
+        loadedValidCount={2}
+        loadedInvalidCount={0}
+        publishedTotalsAvailable
+        coordinatorText="Organiser test"
+        publishedAtLabel="Published"
+      />,
+    );
+
+    expect(screen.getByText("2/2 accepted (100%) · 1 live")).toBeTruthy();
+    expect(screen.getByText("50% 1 VOTE · 1 live")).toBeTruthy();
+    expect(container.querySelector(".simple-auditor-results-progress-live")).toBeTruthy();
+  });
+
+  it("shows provisional per-question votes before final submissions exist", () => {
+    render(
+      <QuestionnaireResultsDashboard
+        questionnaire={{
+          questionnaireId: "q_provisional_only",
+          title: "Provisional only",
+          questions: [
+            {
+              questionId: "q1",
+              type: "yes_no",
+              prompt: "Ready?",
+              required: true,
+            },
+          ],
+        }}
+        questionSummaries={[]}
+        responseDetails={[]}
+        provisionalResponseDetails={[
+          {
+            event: { id: "event-provisional", created_at: 1_774_000_000 },
+            accepted: true,
+            includedInLatestPublish: false,
+            response: {
+              responseId: "provisional_one",
+              authorPubkey: "npub1" + "e".repeat(58),
+              submittedAt: 1_774_000_000,
+              answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
+            },
+          },
+        ]}
+        displayValidCount={0}
+        displayInvalidCount={0}
+        loadedValidCount={0}
+        loadedInvalidCount={0}
+        coordinatorText="Organiser test"
+        publishedAtLabel="Published"
+      />,
+    );
+
+    expect(screen.getAllByText("Q1. Ready?").length).toBeGreaterThan(0);
+    expect(screen.getByText("100% 1 VOTE · 1 live")).toBeTruthy();
+  });
+
+  it("replaces provisional votes from the same anonymous author", () => {
+    const authorPubkey = "npub1" + "i".repeat(58);
+    const { container } = render(
+      <QuestionnaireResultsDashboard
+        questionnaire={{
+          questionnaireId: "q_provisional_replace_author",
+          title: "Provisional replace",
+          questions: [
+            {
+              questionId: "q1",
+              type: "yes_no",
+              prompt: "Ready?",
+              required: true,
+            },
+          ],
+        }}
+        questionSummaries={[]}
+        responseDetails={[]}
+        provisionalResponseDetails={[
+          {
+            event: { id: "event-provisional-old", created_at: 1_774_000_000 },
+            accepted: true,
+            includedInLatestPublish: false,
+            response: {
+              responseId: "provisional_old",
+              authorPubkey,
+              submittedAt: 1_774_000_000,
+              answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
+            },
+          },
+          {
+            event: { id: "event-provisional-new", created_at: 1_774_000_050 },
+            accepted: true,
+            includedInLatestPublish: false,
+            response: {
+              responseId: "provisional_new",
+              authorPubkey,
+              submittedAt: 1_774_000_050,
+              answers: [{ questionId: "q1", answerType: "yes_no", value: false }],
+            },
+          },
+        ]}
+        displayValidCount={0}
+        displayInvalidCount={0}
+        loadedValidCount={0}
+        loadedInvalidCount={0}
+        coordinatorText="Organiser test"
+        publishedAtLabel="Published"
+      />,
+    );
+
+    expect(container.textContent).toMatch(/No[\s\S]*100% 1 VOTE · 1 live/);
+    expect(container.textContent).toMatch(/Yes[\s\S]*0% 0 VOTES/);
+    expect(container.textContent).not.toContain("2 live");
+  });
+
+  it("does not double count provisional votes once a final submission is loaded", () => {
+    render(
+      <QuestionnaireResultsDashboard
+        questionnaire={{
+          questionnaireId: "q_provisional_replaced",
+          title: "Provisional replaced",
+          questions: [
+            {
+              questionId: "q1",
+              type: "yes_no",
+              prompt: "Ready?",
+              required: true,
+            },
+          ],
+        }}
+        questionSummaries={[
+          {
+            questionId: "q1",
+            answerType: "yes_no",
+            yesCount: 1,
+            noCount: 0,
+          },
+        ]}
+        responseDetails={[
+          {
+            event: { id: "event-final", created_at: 1_774_000_100 },
+            accepted: true,
+            includedInLatestPublish: true,
+            response: {
+              responseId: "submission_final",
+              authorPubkey: "npub1" + "f".repeat(58),
+              submittedAt: 1_774_000_100,
+              tokenNullifier: "nullifier-final",
+              answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
+            },
+          },
+        ]}
+        provisionalResponseDetails={[
+          {
+            event: { id: "event-provisional", created_at: 1_774_000_000 },
+            accepted: true,
+            includedInLatestPublish: false,
+            response: {
+              responseId: "provisional_one",
+              authorPubkey: "npub1" + "g".repeat(58),
+              submittedAt: 1_774_000_000,
+              answers: [{ questionId: "q1", answerType: "yes_no", value: false }],
+            },
+          },
+          {
+            event: { id: "event-provisional-two", created_at: 1_774_000_050 },
+            accepted: true,
+            includedInLatestPublish: false,
+            response: {
+              responseId: "provisional_two",
+              authorPubkey: "npub1" + "h".repeat(58),
+              submittedAt: 1_774_000_050,
+              answers: [{ questionId: "q1", answerType: "yes_no", value: false }],
+            },
+          },
+        ]}
+        displayValidCount={1}
+        displayInvalidCount={0}
+        loadedValidCount={1}
+        loadedInvalidCount={0}
+        publishedTotalsAvailable
+        coordinatorText="Organiser test"
+        publishedAtLabel="Published"
+      />,
+    );
+
+    expect(screen.getAllByText("Q1. Ready?").length).toBeGreaterThan(0);
+    expect(screen.getByText("1 response")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("live");
+    expect(document.body.textContent).not.toContain("2/2 accepted");
   });
 
   it("shows submitted votes 100 at a time while filtering across every loaded response", async () => {

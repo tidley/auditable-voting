@@ -8,6 +8,7 @@ import {
   CalendarDays,
   CircleHelp,
   Clock3,
+  Copy,
   FileText,
   UserRound,
   Users,
@@ -16,6 +17,10 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { deriveIdentityWords } from "./identityWords";
 import { UiButton, UiDataTable, UiSwitch, UiTextField } from "./ui/DesignLayer";
+import {
+  calculateRankQuestionScores,
+  normaliseRankedOptionIds,
+} from "./questionnaireProtocol";
 import type {
   QuestionnaireQuestion,
   QuestionnaireResponseAnswer,
@@ -109,6 +114,7 @@ type QuestionnaireResultsDashboardProps = {
   questionnaire: QuestionnaireResultsDashboardQuestionnaire | null;
   questionSummaries: QuestionnaireResultQuestionSummary[];
   responseDetails: QuestionnaireResultsDashboardResponseDetail[];
+  provisionalResponseDetails?: QuestionnaireResultsDashboardResponseDetail[];
   displayValidCount: number;
   displayInvalidCount?: number;
   loadedValidCount?: number;
@@ -176,6 +182,7 @@ export default function QuestionnaireResultsDashboard({
   questionnaire,
   questionSummaries,
   responseDetails,
+  provisionalResponseDetails = [],
   displayValidCount,
   displayInvalidCount = responseDetails.filter((entry) => !entry.accepted).length,
   loadedValidCount,
@@ -228,6 +235,25 @@ export default function QuestionnaireResultsDashboard({
     }
     return counts;
   }, [responseDetails]);
+  const acceptedQuestionLatestAtById = useMemo(() => {
+    const latestByQuestionId = new Map<string, number>();
+    for (const entry of responseDetails) {
+      if (!entry.accepted || !Array.isArray(entry.response.answers)) {
+        continue;
+      }
+      const eventTime = Number(entry.event.created_at ?? entry.response.submittedAt ?? 0);
+      const submittedAt = Number(entry.response.submittedAt ?? 0);
+      const entryTime = Math.max(eventTime, submittedAt);
+      const answeredQuestionIds = new Set<string>();
+      for (const answer of entry.response.answers) {
+        answeredQuestionIds.add(answer.questionId);
+      }
+      for (const questionId of answeredQuestionIds) {
+        latestByQuestionId.set(questionId, Math.max(latestByQuestionId.get(questionId) ?? 0, entryTime));
+      }
+    }
+    return latestByQuestionId;
+  }, [responseDetails]);
   const invalidResponseCount = useMemo(
     () => responseDetails.filter((entry) => !entry.accepted).length,
     [responseDetails],
@@ -236,6 +262,74 @@ export default function QuestionnaireResultsDashboard({
   const loadedAcceptedCount = loadedValidCount ?? responseDetails.filter((entry) => entry.accepted).length;
   const loadedRejectedCount = loadedInvalidCount ?? invalidResponseCount;
   const loadedTotalCount = loadedAcceptedCount + loadedRejectedCount;
+  const acceptedLoadedQuestionSummaryById = useMemo(() => {
+    const summaries = buildLoadedQuestionSummaries(
+      questionnaire?.questions ?? [],
+      responseDetails.filter((entry) => entry.accepted),
+    );
+    return new Map(summaries.map((summary) => [summary.questionId, summary]));
+  }, [questionnaire?.questions, responseDetails]);
+  const provisionalDeltaQuestionSummaryById = useMemo(() => {
+    return buildPendingProvisionalQuestionSummaries(
+      questionnaire?.questions ?? [],
+      provisionalResponseDetails,
+      acceptedQuestionResponseCountById,
+      acceptedQuestionLatestAtById,
+    );
+  }, [acceptedQuestionLatestAtById, acceptedQuestionResponseCountById, provisionalResponseDetails, questionnaire?.questions]);
+  const provisionalPendingResponseCount = useMemo(
+    () => sumQuestionSummaryResponseCounts([...provisionalDeltaQuestionSummaryById.values()]),
+    [provisionalDeltaQuestionSummaryById],
+  );
+  const pendingFinalResponseDetails = useMemo(
+    () => responseDetails.filter((entry) => (
+      publishedTotalsAvailable ? entry.includedInLatestPublish === false : true
+    )),
+    [publishedTotalsAvailable, responseDetails],
+  );
+  const pendingFinalAcceptedCount = useMemo(
+    () => pendingFinalResponseDetails.filter((entry) => entry.accepted).length,
+    [pendingFinalResponseDetails],
+  );
+  const pendingFinalRejectedCount = useMemo(
+    () => pendingFinalResponseDetails.filter((entry) => !entry.accepted).length,
+    [pendingFinalResponseDetails],
+  );
+  const pendingLiveAcceptedCount = pendingFinalAcceptedCount + provisionalPendingResponseCount;
+  const pendingLiveRejectedCount = pendingFinalRejectedCount;
+  const pendingLiveTotalCount = pendingLiveAcceptedCount + pendingLiveRejectedCount;
+  const pendingLiveQuestionSummaryById = useMemo(() => {
+    const summaries = buildLoadedQuestionSummaries(
+      questionnaire?.questions ?? [],
+      pendingFinalResponseDetails.filter((entry) => entry.accepted),
+    );
+    const merged = new Map(summaries.map((summary) => [summary.questionId, summary]));
+    for (const [questionId, provisionalSummary] of provisionalDeltaQuestionSummaryById) {
+      merged.set(questionId, addQuestionSummaries(merged.get(questionId), provisionalSummary));
+    }
+    return merged;
+  }, [pendingFinalResponseDetails, provisionalDeltaQuestionSummaryById, questionnaire?.questions]);
+  const effectiveQuestionSummaries = useMemo(() => {
+    if (publishedTotalsAvailable) {
+      return questionSummaries;
+    }
+    const combined = new Map<string, QuestionnaireResultQuestionSummary>();
+    for (const [questionId, summary] of acceptedLoadedQuestionSummaryById) {
+      combined.set(questionId, summary);
+    }
+    for (const [questionId, summary] of provisionalDeltaQuestionSummaryById) {
+      combined.set(questionId, addQuestionSummaries(combined.get(questionId), summary));
+    }
+    return (questionnaire?.questions ?? [])
+      .map((question) => combined.get(question.questionId))
+      .filter((summary): summary is QuestionnaireResultQuestionSummary => Boolean(summary));
+  }, [
+    acceptedLoadedQuestionSummaryById,
+    provisionalDeltaQuestionSummaryById,
+    publishedTotalsAvailable,
+    questionSummaries,
+    questionnaire?.questions,
+  ]);
 
   useEffect(() => {
     if (!hasInvalidResponses && showInvalidVotes) {
@@ -252,10 +346,10 @@ export default function QuestionnaireResultsDashboard({
       .sort(compareResponseDetailsByShortId);
   }, [responseDetails, showInvalidVotes, voterSearchQuery]);
   const filteredQuestionSummaries = useMemo(
-    () => questionSummaries.filter((summary) => (
+    () => effectiveQuestionSummaries.filter((summary) => (
       questionSummaryMatchesSearch(summary, selectedQuestionById.get(summary.questionId), resultSearchQuery)
     )),
-    [questionSummaries, resultSearchQuery, selectedQuestionById],
+    [effectiveQuestionSummaries, resultSearchQuery, selectedQuestionById],
   );
   const submittedPageCount = Math.max(1, Math.ceil(filteredResponseDetails.length / SUBMITTED_VOTES_PAGE_SIZE));
   const clampedSubmittedPageIndex = Math.min(submittedPageIndex, submittedPageCount - 1);
@@ -301,9 +395,24 @@ export default function QuestionnaireResultsDashboard({
   const loadedTotalLabel = `Loaded: ${loadedTotalCount} (${loadedTotalPercent}%)`;
   const loadedAcceptedLabel = `Accepted: ${loadedAcceptedCount} (${loadedAcceptedPercent}%)`;
   const loadedResponsesLabel = `${loadedTotalLabel} · ${loadedAcceptedLabel}${loadedRejectedCount > 0 ? ` · Invalid: ${loadedRejectedCount}` : ""}`;
+  const visibleAcceptedCount = publishedTotalsAvailable
+    ? displayValidCount + pendingLiveAcceptedCount
+    : loadedAcceptedCount + provisionalPendingResponseCount;
+  const visibleTotalCount = publishedTotalsAvailable
+    ? displayTotalCount + pendingLiveTotalCount
+    : loadedTotalCount + provisionalPendingResponseCount;
+  const visibleAcceptedPercent = visibleTotalCount > 0
+    ? Math.round((visibleAcceptedCount / visibleTotalCount) * 100)
+    : 0;
+  const visibleProgressLabel = pendingLiveTotalCount > 0
+    ? `${visibleAcceptedCount}/${visibleTotalCount || 0} accepted (${visibleAcceptedPercent}%) · ${pendingLiveTotalCount} live`
+    : publishedTotalsAvailable
+      ? publishedProgressLabel
+      : loadedProgressLabel;
   const closingStatus = getClosingStatus(questionnaire);
   const questionnaireDescription = questionnaire?.description?.trim() ?? "";
   const isSessionVariant = variant === "session";
+  const baseSummaryIncludesPending = !publishedTotalsAvailable;
 
   const renderAnswerList = (entry: QuestionnaireResultsDashboardResponseDetail) => (
     <ol className='simple-auditor-answer-list'>
@@ -481,7 +590,13 @@ export default function QuestionnaireResultsDashboard({
           const questionNumber = selectedQuestionNumberById.get(summary.questionId);
           const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
           const questionResponseCount = acceptedQuestionResponseCountById.get(summary.questionId)
-            ?? getSummaryResponseCount(summary, displayValidCount);
+            ?? (publishedTotalsAvailable
+              ? getSummaryResponseCount(summary, displayValidCount)
+              : getSummaryVisibleResponseCount(summary));
+          const pendingSummary = getCompatiblePendingSummary(
+            summary,
+            pendingLiveQuestionSummaryById.get(summary.questionId) ?? (!publishedTotalsAvailable ? summary : undefined),
+          );
           return (
             <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
               <div className='simple-auditor-question-card-head'>
@@ -497,17 +612,25 @@ export default function QuestionnaireResultsDashboard({
                 </div>
               </div>
               {summary.answerType === "yes_no" ? (
-                <YesNoSummaryCard summary={summary} />
+                <YesNoSummaryCard
+                  summary={summary}
+                  pendingSummary={pendingSummary}
+                  baseSummaryIncludesPending={baseSummaryIncludesPending}
+                />
               ) : summary.answerType === "multiple_choice" ? (
                 <MultipleChoiceSummaryCard
                   summary={summary}
                   question={selectedQuestionById.get(summary.questionId)}
                   responseCount={questionResponseCount}
+                  pendingSummary={pendingSummary}
+                  baseSummaryIncludesPending={baseSummaryIncludesPending}
                 />
               ) : summary.answerType === "rank" ? (
                 <RankSummaryCard
                   summary={summary}
                   question={selectedQuestionById.get(summary.questionId)}
+                  pendingSummary={pendingSummary}
+                  baseSummaryIncludesPending={baseSummaryIncludesPending}
                 />
               ) : (
                 <div className='simple-auditor-free-text-cardlet'>
@@ -528,7 +651,7 @@ export default function QuestionnaireResultsDashboard({
         <p className='simple-voter-note'>{fallbackQuestionSummaryNote}</p>
       ) : null}
     </>
-  ) : questionSummaries.length > 0 && resultSearchQuery.trim() ? (
+  ) : effectiveQuestionSummaries.length > 0 && resultSearchQuery.trim() ? (
     <p className='simple-voter-empty'>No result cards match this filter.</p>
   ) : (
     <p className='simple-voter-empty'>{emptyQuestionSummaryText}</p>
@@ -682,13 +805,13 @@ export default function QuestionnaireResultsDashboard({
             <h2 className='simple-voter-section-title'>Live Results</h2>
             <div className='simple-session-live-status' aria-label='Live status'>
               <span className='simple-session-live-status-value'>
-                {publishedTotalsAvailable ? publishedProgressLabel : loadedResponsesLabel}
+                {pendingLiveTotalCount > 0 ? visibleProgressLabel : publishedTotalsAvailable ? publishedProgressLabel : loadedResponsesLabel}
               </span>
-              {publishedTotalsAvailable ? (
-                <div className='simple-auditor-results-progress' aria-hidden='true'>
-                  <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
-                </div>
-              ) : null}
+              <StackedResultBar
+                finalValue={publishedTotalsAvailable ? displayValidCount : 0}
+                pendingValue={pendingLiveAcceptedCount}
+                maxValue={Math.max(visibleTotalCount, 1)}
+              />
             </div>
           </div>
         ) : null}
@@ -760,18 +883,13 @@ export default function QuestionnaireResultsDashboard({
                 <section className='simple-auditor-status-card simple-auditor-total-card'>
                   <span className='simple-auditor-status-icon' aria-hidden='true'><Users /></span>
                   <p className='simple-auditor-summary-label'>Responses</p>
-                  <div className='simple-auditor-results-progress' aria-hidden='true'>
-                    <span
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.max(0, publishedTotalsAvailable ? displayValidityPercentNumber : loadedAcceptedPercent),
-                        )}%`,
-                      }}
-                    />
-                  </div>
+                  <StackedResultBar
+                    finalValue={publishedTotalsAvailable ? displayValidCount : 0}
+                    pendingValue={pendingLiveAcceptedCount}
+                    maxValue={Math.max(visibleTotalCount, 1)}
+                  />
                   <p className='simple-auditor-status-value'>
-                    {publishedTotalsAvailable ? publishedProgressLabel : loadedProgressLabel}
+                    {visibleProgressLabel}
                   </p>
                 </section>
                 <section className='simple-auditor-status-card simple-auditor-status-card-wide'>
@@ -779,7 +897,21 @@ export default function QuestionnaireResultsDashboard({
                     <span className='simple-auditor-status-icon' aria-hidden='true'><UserRound /></span>
                     <div>
                       <p className='simple-auditor-summary-label'>{coordinatorLabel}</p>
-                      <p className='simple-auditor-status-value'>{coordinatorText}</p>
+                      <div className='simple-auditor-status-value simple-auditor-copy-value'>
+                        <span className='simple-auditor-copy-value-text'>{coordinatorText}</span>
+                        <button
+                          type='button'
+                          className='simple-auditor-copy-value-button'
+                          aria-label={`Copy ${coordinatorLabel.toLowerCase()}`}
+                          onClick={() => {
+                            if (typeof navigator !== "undefined" && navigator.clipboard) {
+                              void navigator.clipboard.writeText(coordinatorText);
+                            }
+                          }}
+                        >
+                          <Copy aria-hidden='true' />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -793,7 +925,7 @@ export default function QuestionnaireResultsDashboard({
                 defaultOpen
                 title={<span className='simple-voter-section-title simple-auditor-results-subtitle' role='heading' aria-level={2}>Results</span>}
               >
-                {questionSummaries.length > 0 ? (
+                {effectiveQuestionSummaries.length > 0 ? (
                   <UiTextField
                     label='Filter results'
                     fieldClassName='simple-auditor-results-filter'
@@ -924,40 +1056,55 @@ function PeopleIcon() {
   );
 }
 
-function YesNoSummaryCard({ summary }: {
+function YesNoSummaryCard({
+  summary,
+  pendingSummary,
+  baseSummaryIncludesPending,
+}: {
   summary: Extract<QuestionnaireResultQuestionSummary, { answerType: "yes_no" }>;
+  pendingSummary: QuestionnaireResultQuestionSummary | null;
+  baseSummaryIncludesPending: boolean;
 }) {
-  const total = summary.yesCount + summary.noCount;
+  const pendingYesNo = pendingSummary?.answerType === "yes_no" ? pendingSummary : null;
   const rows = [
     {
       label: "Yes",
-      count: summary.yesCount,
+      baseCount: summary.yesCount,
+      pendingCount: pendingYesNo?.yesCount ?? 0,
       className: "is-yes",
     },
     {
       label: "No",
-      count: summary.noCount,
+      baseCount: summary.noCount,
+      pendingCount: pendingYesNo?.noCount ?? 0,
       className: "is-no",
     },
-  ].sort((left, right) => {
-    if (right.count !== left.count) {
-      return right.count - left.count;
+  ].map((row) => ({
+    ...row,
+    layers: splitLayerValue(row.baseCount, row.pendingCount, baseSummaryIncludesPending),
+  }));
+  const total = rows.reduce((sum, row) => sum + row.layers.totalValue, 0);
+  const sortedRows = [...rows].sort((left, right) => {
+    if (right.layers.totalValue !== left.layers.totalValue) {
+      return right.layers.totalValue - left.layers.totalValue;
     }
     return left.label === "Yes" ? -1 : 1;
   });
   return (
     <div className='simple-auditor-option-bars simple-auditor-boolean-bars'>
-      {rows.map((row) => {
-        const percent = total > 0 ? (row.count / total) * 100 : 0;
+      {sortedRows.map((row) => {
+        const percent = total > 0 ? (row.layers.totalValue / total) * 100 : 0;
         return (
           <div key={row.label} className={`simple-auditor-option-bar-row simple-auditor-boolean-bar-row ${row.className}`}>
             <div className='simple-auditor-option-bar-label'>
               <span>{row.label}</span>
-              <strong>{formatBooleanVoteShare(row.count, percent)}</strong>
+              <strong>{formatBooleanVoteShare(row.layers.totalValue, percent, row.layers.pendingValue)}</strong>
             </div>
-            <div className='simple-auditor-results-progress' aria-hidden='true'>
-              <span style={{ width: row.count > 0 ? `${Math.max(4, percent)}%` : "0%" }} />
-            </div>
+            <StackedResultBar
+              finalValue={row.layers.finalValue}
+              pendingValue={row.layers.pendingValue}
+              maxValue={total}
+            />
           </div>
         );
       })}
@@ -969,29 +1116,46 @@ function MultipleChoiceSummaryCard({
   summary,
   question,
   responseCount,
+  pendingSummary,
+  baseSummaryIncludesPending,
 }: {
   summary: Extract<QuestionnaireResultQuestionSummary, { answerType: "multiple_choice" }>;
   question: QuestionnaireQuestion | undefined;
   responseCount: number;
+  pendingSummary: QuestionnaireResultQuestionSummary | null;
+  baseSummaryIncludesPending: boolean;
 }) {
+  const pendingMultipleChoice = pendingSummary?.answerType === "multiple_choice" ? pendingSummary : null;
+  const rows = getMultipleChoiceSummaryEntries(summary, question)
+    .map(([optionId, baseCount]) => {
+      const layers = splitLayerValue(
+        baseCount,
+        pendingMultipleChoice?.optionCounts[optionId] ?? 0,
+        baseSummaryIncludesPending,
+      );
+      return { optionId, baseCount, layers };
+    });
+  const maxCount = Math.max(1, ...rows.map((row) => row.layers.totalValue));
+  const totalResponses = Math.max(responseCount, ...rows.map((row) => row.layers.totalValue));
   return (
     <div className='simple-auditor-option-bars'>
-      {getMultipleChoiceSummaryEntries(summary, question)
-        .map(([optionId, count]) => {
+      {rows
+        .map((row) => {
           const label = question?.type === "multiple_choice"
-            ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
-            : optionId;
-          const maxCount = Math.max(1, ...Object.values(summary.optionCounts));
-          const percentOfResponses = responseCount > 0 ? (count / responseCount) * 100 : 0;
+            ? question.options.find((option) => option.optionId === row.optionId)?.label ?? row.optionId
+            : row.optionId;
+          const percentOfResponses = totalResponses > 0 ? (row.layers.totalValue / totalResponses) * 100 : 0;
           return (
-            <div key={optionId} className='simple-auditor-option-bar-row'>
+            <div key={row.optionId} className='simple-auditor-option-bar-row'>
               <div className='simple-auditor-option-bar-label'>
                 <span>{label}</span>
-                <strong>{formatVoteShare(count, percentOfResponses)}</strong>
+                <strong>{formatVoteShare(row.layers.totalValue, percentOfResponses, row.layers.pendingValue)}</strong>
               </div>
-              <div className='simple-auditor-results-progress' aria-hidden='true'>
-                <span style={{ width: count > 0 ? `${Math.max(4, (count / maxCount) * 100)}%` : "0%" }} />
-              </div>
+              <StackedResultBar
+                finalValue={row.layers.finalValue}
+                pendingValue={row.layers.pendingValue}
+                maxValue={maxCount}
+              />
             </div>
           );
         })}
@@ -1002,33 +1166,112 @@ function MultipleChoiceSummaryCard({
 function RankSummaryCard({
   summary,
   question,
+  pendingSummary,
+  baseSummaryIncludesPending,
 }: {
   summary: Extract<QuestionnaireResultQuestionSummary, { answerType: "rank" }>;
   question: QuestionnaireQuestion | undefined;
+  pendingSummary: QuestionnaireResultQuestionSummary | null;
+  baseSummaryIncludesPending: boolean;
 }) {
+  const pendingRank = pendingSummary?.answerType === "rank" ? pendingSummary : null;
+  const firstChoiceScore = question?.type === "rank" ? String(question.options.length) : "1";
+  const rows = getRankSummaryEntries(summary, question)
+    .map(([optionId, baseScore]) => {
+      const layers = splitLayerValue(
+        baseScore,
+        pendingRank?.optionScores[optionId] ?? 0,
+        baseSummaryIncludesPending,
+      );
+      const firstChoiceLayers = splitLayerValue(
+        summary.rankCounts[optionId]?.[firstChoiceScore] ?? 0,
+        pendingRank?.rankCounts[optionId]?.[firstChoiceScore] ?? 0,
+        baseSummaryIncludesPending,
+      );
+      return { optionId, layers, firstChoiceLayers };
+    })
+    .sort((left, right) => (
+      right.layers.totalValue - left.layers.totalValue || left.optionId.localeCompare(right.optionId)
+    ));
+  const bestScore = Math.max(1, ...rows.map((row) => row.layers.totalValue));
   return (
     <div className='simple-auditor-option-bars'>
-      {getRankSummaryEntries(summary, question)
-        .map(([optionId, score], index, rows) => {
+      {rows
+        .map((row, index) => {
           const label = question?.type === "rank"
-            ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
-            : optionId;
-          const bestScore = Math.max(0, ...rows.map(([, entryScore]) => entryScore));
-          const width = score > 0 && bestScore > 0 ? `${Math.max(8, (score / bestScore) * 100)}%` : "0%";
-          const firstChoiceScore = question?.type === "rank" ? String(question.options.length) : "1";
-          const firstChoices = summary.rankCounts[optionId]?.[firstChoiceScore] ?? 0;
+            ? question.options.find((option) => option.optionId === row.optionId)?.label ?? row.optionId
+            : row.optionId;
           return (
-            <div key={optionId} className='simple-auditor-option-bar-row'>
+            <div key={row.optionId} className='simple-auditor-option-bar-row'>
               <div className='simple-auditor-option-bar-label'>
                 <span>{index + 1}. {label}</span>
-                <strong>{score} points · {firstChoices} first</strong>
+                <strong>
+                  {formatRankShare(
+                    row.layers.totalValue,
+                    row.firstChoiceLayers.totalValue,
+                    row.layers.pendingValue,
+                  )}
+                </strong>
               </div>
-              <div className='simple-auditor-results-progress' aria-hidden='true'>
-                <span style={{ width }} />
-              </div>
+              <StackedResultBar
+                finalValue={row.layers.finalValue}
+                pendingValue={row.layers.pendingValue}
+                maxValue={bestScore}
+                minimumPercent={8}
+              />
             </div>
           );
         })}
+    </div>
+  );
+}
+
+function splitLayerValue(baseValue: number, pendingValue: number, baseIncludesPending: boolean) {
+  const normalisedBaseValue = Math.max(0, Number(baseValue) || 0);
+  const normalisedPendingValue = Math.max(0, Number(pendingValue) || 0);
+  const finalValue = baseIncludesPending
+    ? Math.max(0, normalisedBaseValue - normalisedPendingValue)
+    : normalisedBaseValue;
+  const livePendingValue = baseIncludesPending
+    ? Math.min(normalisedBaseValue, normalisedPendingValue)
+    : normalisedPendingValue;
+  return {
+    finalValue,
+    pendingValue: livePendingValue,
+    totalValue: finalValue + livePendingValue,
+  };
+}
+
+function StackedResultBar({
+  finalValue,
+  pendingValue,
+  maxValue,
+  minimumPercent = 4,
+}: {
+  finalValue: number;
+  pendingValue: number;
+  maxValue: number;
+  minimumPercent?: number;
+}) {
+  const final = Math.max(0, finalValue);
+  const pending = Math.max(0, pendingValue);
+  const total = final + pending;
+  const totalWidth = total > 0 && maxValue > 0
+    ? Math.min(100, Math.max(minimumPercent, (total / maxValue) * 100))
+    : 0;
+  const finalWidth = total > 0 ? (totalWidth * final) / total : 0;
+  const pendingWidth = total > 0 ? totalWidth - finalWidth : 0;
+  return (
+    <div
+      className={`simple-auditor-results-progress simple-auditor-results-progress-stacked${pending > 0 ? " has-live-pending" : ""}`}
+      aria-hidden='true'
+    >
+      {finalWidth > 0 ? (
+        <span className='simple-auditor-results-progress-final' style={{ width: `${finalWidth}%` }} />
+      ) : null}
+      {pendingWidth > 0 ? (
+        <span className='simple-auditor-results-progress-live' style={{ width: `${pendingWidth}%` }} />
+      ) : null}
     </div>
   );
 }
@@ -1044,12 +1287,16 @@ function formatFreeTextAnswer(text: string) {
   return text || "(empty)";
 }
 
-function formatVoteShare(count: number, percent: number) {
-  return `${percent.toFixed(0)}% ${count} ${count === 1 ? "VOTE" : "VOTES"}`;
+function formatVoteShare(count: number, percent: number, livePendingCount = 0) {
+  return `${percent.toFixed(0)}% ${count} ${count === 1 ? "VOTE" : "VOTES"}${livePendingCount > 0 ? ` · ${livePendingCount} live` : ""}`;
 }
 
-function formatBooleanVoteShare(count: number, percent: number) {
-  return formatVoteShare(count, percent);
+function formatBooleanVoteShare(count: number, percent: number, livePendingCount = 0) {
+  return formatVoteShare(count, percent, livePendingCount);
+}
+
+function formatRankShare(score: number, firstChoices: number, livePendingScore: number) {
+  return `${score} points · ${firstChoices} first${livePendingScore > 0 ? ` · ${livePendingScore} live` : ""}`;
 }
 
 function formatResponseCount(count: number) {
@@ -1074,6 +1321,262 @@ function questionSummaryMatchesSearch(
     ...(question && "options" in question ? question.options.flatMap((option) => [option.optionId, option.label]) : []),
   ];
   return values.some((value) => String(value ?? "").toLowerCase().includes(query));
+}
+
+function buildLoadedQuestionSummaries(
+  questions: QuestionnaireQuestion[],
+  acceptedResponses: QuestionnaireResultsDashboardResponseDetail[],
+): QuestionnaireResultQuestionSummary[] {
+  return questions.map((question): QuestionnaireResultQuestionSummary => {
+    if (question.type === "yes_no") {
+      let yesCount = 0;
+      let noCount = 0;
+      for (const entry of acceptedResponses) {
+        const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+        if (answer?.answerType !== "yes_no") {
+          continue;
+        }
+        if (answer.value) {
+          yesCount += 1;
+        } else {
+          noCount += 1;
+        }
+      }
+      return {
+        questionId: question.questionId,
+        answerType: "yes_no",
+        yesCount,
+        noCount,
+      };
+    }
+
+    if (question.type === "multiple_choice") {
+      const optionCounts = Object.fromEntries(question.options.map((option) => [option.optionId, 0]));
+      for (const entry of acceptedResponses) {
+        const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+        if (answer?.answerType !== "multiple_choice") {
+          continue;
+        }
+        for (const optionId of answer.selectedOptionIds) {
+          if (Object.prototype.hasOwnProperty.call(optionCounts, optionId)) {
+            optionCounts[optionId] += 1;
+          }
+        }
+      }
+      return {
+        questionId: question.questionId,
+        answerType: "multiple_choice",
+        optionCounts,
+      };
+    }
+
+    if (question.type === "rank") {
+      const optionScores = Object.fromEntries(question.options.map((option) => [option.optionId, 0]));
+      const rankCounts: Record<string, Record<string, number>> = Object.fromEntries(
+        question.options.map((option) => [option.optionId, {}]),
+      );
+      let blankResponseCount = 0;
+      for (const entry of acceptedResponses) {
+        const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+        const rankedOptionIds = answer?.answerType === "rank"
+          ? normaliseRankedOptionIds(question, answer.rankedOptionIds)
+          : [];
+        if (rankedOptionIds.length === 0) {
+          blankResponseCount += 1;
+        }
+        const responseScores = calculateRankQuestionScores(question, rankedOptionIds);
+        for (const [optionId, score] of Object.entries(responseScores)) {
+          optionScores[optionId] = (optionScores[optionId] ?? 0) + score;
+          const scoreKey = String(score);
+          rankCounts[optionId][scoreKey] = (rankCounts[optionId][scoreKey] ?? 0) + 1;
+        }
+      }
+      return {
+        questionId: question.questionId,
+        answerType: "rank",
+        optionScores,
+        rankCounts,
+        responseCount: acceptedResponses.length,
+        blankResponseCount,
+      };
+    }
+
+    let freeTextCount = 0;
+    for (const entry of acceptedResponses) {
+      const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+      if (answer?.answerType === "free_text" && answer.text.trim()) {
+        freeTextCount += 1;
+      }
+    }
+    return {
+      questionId: question.questionId,
+      answerType: "free_text",
+      freeTextCount,
+    };
+  });
+}
+
+function buildPendingProvisionalQuestionSummaries(
+  questions: QuestionnaireQuestion[],
+  provisionalResponses: QuestionnaireResultsDashboardResponseDetail[],
+  acceptedResponseCountByQuestionId: Map<string, number>,
+  acceptedLatestAtByQuestionId: Map<string, number>,
+) {
+  const summaries = new Map<string, QuestionnaireResultQuestionSummary>();
+  for (const question of questions) {
+    const latestAcceptedAt = acceptedLatestAtByQuestionId.get(question.questionId) ?? 0;
+    const candidateResponses = provisionalResponses
+      .filter((entry) => (
+        entry.accepted
+        && Array.isArray(entry.response.answers)
+        && entry.response.answers.some((answer) => answer.questionId === question.questionId)
+      ))
+      .filter((entry) => {
+        if (latestAcceptedAt <= 0) {
+          return true;
+        }
+        const eventTime = Number(entry.event.created_at ?? entry.response.submittedAt ?? 0);
+        const submittedAt = Number(entry.response.submittedAt ?? 0);
+        return Math.max(eventTime, submittedAt) > latestAcceptedAt;
+      });
+    const latestByAnonymousAuthor = new Map<string, QuestionnaireResultsDashboardResponseDetail>();
+    for (const entry of candidateResponses) {
+      const key = entry.response.authorPubkey.trim() || entry.response.responseId;
+      const existing = latestByAnonymousAuthor.get(key);
+      const entryTime = Number(entry.event.created_at ?? entry.response.submittedAt ?? 0);
+      const existingTime = existing ? Number(existing.event.created_at ?? existing.response.submittedAt ?? 0) : -1;
+      if (!existing || entryTime >= existingTime) {
+        latestByAnonymousAuthor.set(key, entry);
+      }
+    }
+    const latestCandidateResponses = [...latestByAnonymousAuthor.values()]
+      .sort((left, right) => (
+        Number(right.event.created_at ?? right.response.submittedAt ?? 0)
+        - Number(left.event.created_at ?? left.response.submittedAt ?? 0)
+      ));
+    const pendingCount = Math.max(
+      0,
+      latestCandidateResponses.length - (acceptedResponseCountByQuestionId.get(question.questionId) ?? 0),
+    );
+    if (pendingCount <= 0) {
+      continue;
+    }
+    const pendingResponses = latestCandidateResponses.slice(0, pendingCount).map((entry) => ({
+      ...entry,
+      response: {
+        ...entry.response,
+        answers: entry.response.answers?.filter((answer) => answer.questionId === question.questionId) ?? [],
+      },
+    }));
+    const summary = buildLoadedQuestionSummaries([question], pendingResponses)[0];
+    if (summary && questionSummaryHasVisibleValue(summary)) {
+      summaries.set(question.questionId, summary);
+    }
+  }
+  return summaries;
+}
+
+function getCompatiblePendingSummary(
+  summary: QuestionnaireResultQuestionSummary,
+  pendingSummary: QuestionnaireResultQuestionSummary | undefined,
+): QuestionnaireResultQuestionSummary | null {
+  if (!pendingSummary || pendingSummary.answerType !== summary.answerType) {
+    return null;
+  }
+  return pendingSummary;
+}
+
+function addQuestionSummaries(
+  left: QuestionnaireResultQuestionSummary | undefined,
+  right: QuestionnaireResultQuestionSummary,
+): QuestionnaireResultQuestionSummary {
+  if (!left || left.answerType !== right.answerType || left.questionId !== right.questionId) {
+    return right;
+  }
+  if (left.answerType === "yes_no" && right.answerType === "yes_no") {
+    return {
+      questionId: left.questionId,
+      answerType: "yes_no",
+      yesCount: left.yesCount + right.yesCount,
+      noCount: left.noCount + right.noCount,
+    };
+  }
+  if (left.answerType === "multiple_choice" && right.answerType === "multiple_choice") {
+    const optionIds = new Set([...Object.keys(left.optionCounts), ...Object.keys(right.optionCounts)]);
+    return {
+      questionId: left.questionId,
+      answerType: "multiple_choice",
+      optionCounts: Object.fromEntries([...optionIds].map((optionId) => [
+        optionId,
+        (left.optionCounts[optionId] ?? 0) + (right.optionCounts[optionId] ?? 0),
+      ])),
+    };
+  }
+  if (left.answerType === "rank" && right.answerType === "rank") {
+    const optionIds = new Set([...Object.keys(left.optionScores), ...Object.keys(right.optionScores)]);
+    return {
+      questionId: left.questionId,
+      answerType: "rank",
+      optionScores: Object.fromEntries([...optionIds].map((optionId) => [
+        optionId,
+        (left.optionScores[optionId] ?? 0) + (right.optionScores[optionId] ?? 0),
+      ])),
+      rankCounts: mergeRankCounts(left.rankCounts, right.rankCounts, (a, b) => a + b),
+      responseCount: left.responseCount + right.responseCount,
+      blankResponseCount: left.blankResponseCount + right.blankResponseCount,
+    };
+  }
+  if (left.answerType === "free_text" && right.answerType === "free_text") {
+    return {
+      questionId: left.questionId,
+      answerType: "free_text",
+      freeTextCount: left.freeTextCount + right.freeTextCount,
+    };
+  }
+  return right;
+}
+
+function mergeRankCounts(
+  left: Record<string, Record<string, number>>,
+  right: Record<string, Record<string, number>>,
+  merge: (left: number, right: number) => number,
+) {
+  const optionIds = new Set([...Object.keys(left), ...Object.keys(right)]);
+  return Object.fromEntries([...optionIds].map((optionId) => {
+    const scoreIds = new Set([
+      ...Object.keys(left[optionId] ?? {}),
+      ...Object.keys(right[optionId] ?? {}),
+    ]);
+    return [
+      optionId,
+      Object.fromEntries([...scoreIds].map((scoreId) => [
+        scoreId,
+        merge(left[optionId]?.[scoreId] ?? 0, right[optionId]?.[scoreId] ?? 0),
+      ])),
+    ];
+  }));
+}
+
+function questionSummaryHasVisibleValue(summary: QuestionnaireResultQuestionSummary) {
+  return getSummaryVisibleResponseCount(summary) > 0
+    || (summary.answerType === "rank" && Object.values(summary.optionScores).some((score) => score > 0));
+}
+
+function sumQuestionSummaryResponseCounts(summaries: QuestionnaireResultQuestionSummary[]) {
+  return summaries.reduce((sum, summary) => sum + getSummaryVisibleResponseCount(summary), 0);
+}
+
+function getSummaryVisibleResponseCount(summary: QuestionnaireResultQuestionSummary) {
+  if (summary.answerType === "yes_no") {
+    return summary.yesCount + summary.noCount;
+  }
+  if (summary.answerType === "multiple_choice") {
+    return Math.max(0, ...Object.values(summary.optionCounts));
+  }
+  if (summary.answerType === "rank") {
+    return summary.responseCount;
+  }
+  return summary.freeTextCount;
 }
 
 function getSummaryResponseCount(summary: QuestionnaireResultQuestionSummary, displayValidCount: number) {

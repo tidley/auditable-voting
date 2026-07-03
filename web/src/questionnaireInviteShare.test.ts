@@ -81,6 +81,22 @@ describe("questionnaire invite sharing", () => {
     expect(shouldAutoRequestBallotFromUrl(new URL(url).search)).toBe(true);
   });
 
+  it("preserves proxy-voter credential count in private code links", () => {
+    const url = buildQuestionnaireInviteUrl({
+      baseUrl: "https://vote.example/simple-coordinator.html?role=coordinator",
+      electionId: "q_public_123",
+      inviteCode: "ABC123private",
+      login: false,
+      autoRequestBallot: true,
+      credentialsPerVoter: 2,
+    });
+    const parsed = parseInviteFromUrl(new URL(url).search);
+
+    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&invite_code=abc123private&request_ballot=1&credentials_per_voter=2");
+    expect(parsed.inviteCode).toBe("abc123private");
+    expect(parsed.credentialsPerVoter).toBe(2);
+  });
+
   it("still parses coordinator routing from older private code links", () => {
     const parsed = parseInviteFromUrl("?role=voter&q=q_public_123&coordinator=npub1coordinator&invite_code=abc123private");
 

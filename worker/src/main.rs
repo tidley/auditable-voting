@@ -60,8 +60,11 @@ const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 const PUBLIC_ARCHIVE_SEND_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_AUTH_KIND: u16 = 24_242;
 const BLOSSOM_RESULT_PACK_TARGET_UPLOADS: usize = 2;
-const BLOSSOM_RESULT_PACK_CONTENT_TYPE: &str = "application/gzip";
+const BLOSSOM_RESULT_PACK_GZIP_CONTENT_TYPE: &str = "application/gzip";
+const BLOSSOM_RESULT_PACK_JSON_CONTENT_TYPE: &str = "application/json";
 const BLOSSOM_RESULT_PACK_TYPE: &str = "application/vnd.auditable-voting.result-pack+json";
+const BLOSSOM_RESULT_PACK_DIRECT_UPLOAD_ENCODING: &str = "gzip";
+const BLOSSOM_RESULT_PACK_WRAPPED_UPLOAD_ENCODING: &str = "json+base64url-gzip";
 const BLOSSOM_RESULT_PACK_UPLOAD_TIMEOUT_SECS: u64 = 12;
 const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
 const COMPRESSED_BUNDLE_MESSAGE_TYPE: &str = "optiona_compressed_bundle_dm";
@@ -1069,6 +1072,11 @@ fn authorize_blind_request(
                 election
                     .whitelist_npubs
                     .insert(request.invited_npub.clone());
+                if entry.credentials_per_voter.unwrap_or(1) >= 2 {
+                    election
+                        .proxy_voter_npubs
+                        .insert(request.invited_npub.clone());
+                }
                 return BlindRequestAuthorization::Authorized {
                     state_changed: true,
                 };
@@ -1077,8 +1085,15 @@ fn authorize_blind_request(
                 let inserted = election
                     .whitelist_npubs
                     .insert(request.invited_npub.clone());
+                let proxy_inserted = if entry.credentials_per_voter.unwrap_or(1) >= 2 {
+                    election
+                        .proxy_voter_npubs
+                        .insert(request.invited_npub.clone())
+                } else {
+                    false
+                };
                 return BlindRequestAuthorization::Authorized {
-                    state_changed: inserted,
+                    state_changed: inserted || proxy_inserted,
                 };
             }
             _ => return BlindRequestAuthorization::Rejected,
@@ -1304,10 +1319,30 @@ struct BlossomResultPackReference {
     #[serde(rename = "type")]
     media_type: String,
     compression: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_encoding: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload_size: Option<usize>,
     uploaded_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     server: Option<String>,
     mirrors: Vec<BlossomResultPackMirror>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BlossomResultPackUploadEnvelope {
+    schema_version: u8,
+    event_type: &'static str,
+    #[serde(rename = "type")]
+    media_type: &'static str,
+    compression: &'static str,
+    sha256: String,
+    size: usize,
+    payload_encoding: &'static str,
+    payload: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1315,6 +1350,25 @@ struct BlossomBlobDescriptor {
     url: String,
     sha256: String,
     size: usize,
+}
+
+fn build_mirrored_blossom_result_pack_reference(
+    uploads: Vec<BlossomResultPackReference>,
+) -> Result<BlossomResultPackReference> {
+    let first = uploads
+        .first()
+        .cloned()
+        .context("missing primary Blossom result-pack upload")?;
+    Ok(BlossomResultPackReference {
+        mirrors: uploads
+            .iter()
+            .map(|upload| BlossomResultPackMirror {
+                url: upload.url.clone(),
+                server: upload.server.clone(),
+            })
+            .collect(),
+        ..first
+    })
 }
 
 #[derive(Debug)]
@@ -2974,8 +3028,8 @@ impl WorkerRuntime {
             .connect_timeout(Duration::from_secs(BLOSSOM_RESULT_PACK_UPLOAD_TIMEOUT_SECS))
             .build()
             .context("failed to build Blossom upload client")?;
-        let mut uploads = Vec::new();
-        let mut errors = Vec::new();
+        let mut gzip_uploads = Vec::new();
+        let mut gzip_errors = Vec::new();
 
         for server in &self.config.blossom_result_pack_servers {
             match self
@@ -2983,36 +3037,66 @@ impl WorkerRuntime {
                 .await
             {
                 Ok(upload) => {
-                    uploads.push(upload);
-                    if uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
+                    gzip_uploads.push(upload);
+                    if gzip_uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
                         break;
                     }
                 }
-                Err(error) => errors.push(format!("{server}: {error}")),
+                Err(error) => gzip_errors.push(format!("{server}: {error}")),
             }
         }
 
-        if uploads.len() < BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
+        if gzip_uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
+            return build_mirrored_blossom_result_pack_reference(gzip_uploads);
+        }
+
+        let envelope = BlossomResultPackUploadEnvelope {
+            schema_version: 1,
+            event_type: "questionnaire_result_pack_blob",
+            media_type: BLOSSOM_RESULT_PACK_TYPE,
+            compression: "gzip",
+            sha256: sha256.clone(),
+            size: compressed.len(),
+            payload_encoding: "base64url",
+            payload: URL_SAFE_NO_PAD.encode(&compressed),
+        };
+        let envelope_bytes =
+            serde_json::to_vec(&envelope).context("failed to encode result-pack wrapper")?;
+        let envelope_sha256 = sha256_hex_bytes(&envelope_bytes);
+        let mut wrapped_uploads = Vec::new();
+        let mut wrapped_errors = Vec::new();
+        for server in &self.config.blossom_result_pack_servers {
+            match self
+                .upload_wrapped_result_pack_to_server(
+                    &http,
+                    &keys,
+                    server,
+                    &envelope_bytes,
+                    &envelope_sha256,
+                    &sha256,
+                    compressed.len(),
+                )
+                .await
+            {
+                Ok(upload) => {
+                    wrapped_uploads.push(upload);
+                    if wrapped_uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
+                        break;
+                    }
+                }
+                Err(error) => wrapped_errors.push(format!("{server}: {error}")),
+            }
+        }
+
+        if wrapped_uploads.len() < BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
             anyhow::bail!(
-                "Blossom result-pack upload failed to reach two mirrors: {}",
-                errors.join("; ")
+                "Blossom result-pack upload failed to reach two mirrors: gzip: {}; JSON wrapper: {}",
+                gzip_errors.join("; "),
+                wrapped_errors.join("; ")
             );
         }
 
-        let first = uploads
-            .first()
-            .cloned()
-            .context("missing primary Blossom result-pack upload")?;
-        Ok(BlossomResultPackReference {
-            mirrors: uploads
-                .iter()
-                .map(|upload| BlossomResultPackMirror {
-                    url: upload.url.clone(),
-                    server: upload.server.clone(),
-                })
-                .collect(),
-            ..first
-        })
+        build_mirrored_blossom_result_pack_reference(wrapped_uploads)
     }
 
     async fn upload_result_pack_to_server(
@@ -3023,15 +3107,84 @@ impl WorkerRuntime {
         compressed: &[u8],
         sha256: &str,
     ) -> Result<BlossomResultPackReference> {
+        let descriptor = self
+            .upload_result_pack_body_to_server(
+                http,
+                keys,
+                server,
+                compressed,
+                sha256,
+                BLOSSOM_RESULT_PACK_GZIP_CONTENT_TYPE,
+            )
+            .await?;
+        Ok(BlossomResultPackReference {
+            url: descriptor.url,
+            sha256: sha256.to_string(),
+            size: descriptor.size,
+            media_type: BLOSSOM_RESULT_PACK_TYPE.to_string(),
+            compression: "gzip".to_string(),
+            upload_encoding: Some(BLOSSOM_RESULT_PACK_DIRECT_UPLOAD_ENCODING.to_string()),
+            payload_sha256: None,
+            payload_size: None,
+            uploaded_at: Timestamp::now().as_secs() as i64,
+            server: Some(server.trim_end_matches('/').to_string()),
+            mirrors: Vec::new(),
+        })
+    }
+
+    async fn upload_wrapped_result_pack_to_server(
+        &self,
+        http: &reqwest::Client,
+        keys: &Keys,
+        server: &str,
+        envelope_bytes: &[u8],
+        envelope_sha256: &str,
+        payload_sha256: &str,
+        payload_size: usize,
+    ) -> Result<BlossomResultPackReference> {
+        let descriptor = self
+            .upload_result_pack_body_to_server(
+                http,
+                keys,
+                server,
+                envelope_bytes,
+                envelope_sha256,
+                BLOSSOM_RESULT_PACK_JSON_CONTENT_TYPE,
+            )
+            .await?;
+        Ok(BlossomResultPackReference {
+            url: descriptor.url,
+            sha256: envelope_sha256.to_string(),
+            size: descriptor.size,
+            media_type: BLOSSOM_RESULT_PACK_TYPE.to_string(),
+            compression: "gzip".to_string(),
+            upload_encoding: Some(BLOSSOM_RESULT_PACK_WRAPPED_UPLOAD_ENCODING.to_string()),
+            payload_sha256: Some(payload_sha256.to_string()),
+            payload_size: Some(payload_size),
+            uploaded_at: Timestamp::now().as_secs() as i64,
+            server: Some(server.trim_end_matches('/').to_string()),
+            mirrors: Vec::new(),
+        })
+    }
+
+    async fn upload_result_pack_body_to_server(
+        &self,
+        http: &reqwest::Client,
+        keys: &Keys,
+        server: &str,
+        body: &[u8],
+        sha256: &str,
+        content_type: &str,
+    ) -> Result<BlossomBlobDescriptor> {
         let upload_url = format!("{}/upload", server.trim_end_matches('/'));
         let auth = self.blossom_upload_auth(keys, &upload_url, sha256)?;
         let response = http
             .put(&upload_url)
-            .header(CONTENT_TYPE, BLOSSOM_RESULT_PACK_CONTENT_TYPE)
-            .header(CONTENT_LENGTH, compressed.len().to_string())
+            .header(CONTENT_TYPE, content_type)
+            .header(CONTENT_LENGTH, body.len().to_string())
             .header("X-SHA-256", sha256)
             .header(AUTHORIZATION, auth)
-            .body(compressed.to_vec())
+            .body(body.to_vec())
             .send()
             .await
             .with_context(|| format!("failed to upload result pack to {upload_url}"))?;
@@ -3054,26 +3207,17 @@ impl WorkerRuntime {
                 descriptor.sha256
             );
         }
-        if descriptor.size != compressed.len() {
+        if descriptor.size != body.len() {
             anyhow::bail!(
                 "Blossom server returned mismatched size: expected {}, got {}",
-                compressed.len(),
+                body.len(),
                 descriptor.size
             );
         }
         if !descriptor.url.starts_with("https://") {
             anyhow::bail!("Blossom server returned non-HTTPS blob URL");
         }
-        Ok(BlossomResultPackReference {
-            url: descriptor.url,
-            sha256: sha256.to_string(),
-            size: descriptor.size,
-            media_type: BLOSSOM_RESULT_PACK_TYPE.to_string(),
-            compression: "gzip".to_string(),
-            uploaded_at: Timestamp::now().as_secs() as i64,
-            server: Some(server.trim_end_matches('/').to_string()),
-            mirrors: Vec::new(),
-        })
+        Ok(descriptor)
     }
 
     fn blossom_upload_auth(&self, keys: &Keys, upload_url: &str, sha256: &str) -> Result<String> {
@@ -4242,6 +4386,7 @@ mod tests {
                     .to_string(),
                 created_at: now_iso(),
                 state: "available".to_string(),
+                credentials_per_voter: None,
                 redeemed_at: None,
                 redeemed_npub: None,
                 revoked_at: None,
@@ -5092,6 +5237,7 @@ mod tests {
                     code_hash: code_hash.to_string(),
                     created_at: now_iso(),
                     state: "available".to_string(),
+                    credentials_per_voter: None,
                     redeemed_at: None,
                     redeemed_npub: None,
                     revoked_at: None,
@@ -5133,6 +5279,51 @@ mod tests {
             authorize_blind_request(&mut election, &second_request),
             BlindRequestAuthorization::Rejected
         );
+    }
+
+    #[test]
+    fn private_invite_code_with_two_credentials_authorizes_proxy_voter() {
+        let code_hash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+        let mut election = ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            eligibility_required: true,
+            bearer_invite_codes: HashMap::from([(
+                code_hash.to_string(),
+                BearerInviteCodeEntry {
+                    election_id: "q_worker_definition".to_string(),
+                    code_hash: code_hash.to_string(),
+                    created_at: now_iso(),
+                    state: "available".to_string(),
+                    credentials_per_voter: Some(2),
+                    redeemed_at: None,
+                    redeemed_npub: None,
+                    revoked_at: None,
+                },
+            )]),
+            ..ElectionRuntimeState::default()
+        };
+
+        let mut first_request = sample_request();
+        first_request.invite_code_hash = Some(code_hash.to_string());
+
+        assert_eq!(
+            authorize_blind_request(&mut election, &first_request),
+            BlindRequestAuthorization::Authorized {
+                state_changed: true
+            }
+        );
+        assert!(election.whitelist_npubs.contains(&first_request.invited_npub));
+        assert!(election.proxy_voter_npubs.contains(&first_request.invited_npub));
+
+        let mut second_credential_request = first_request.clone();
+        second_credential_request.request_id = "request_worker_definition_proxy_private".to_string();
+        second_credential_request.ballot_scope = Some(json!({
+            "slotIndex": 1,
+            "version": 1,
+            "credentialIndex": 2
+        }));
+
+        assert!(blind_request_proxy_authorized(&election, &second_credential_request));
     }
 
     #[test]
@@ -5812,6 +6003,9 @@ mod tests {
             size: 123,
             media_type: BLOSSOM_RESULT_PACK_TYPE.to_string(),
             compression: "gzip".to_string(),
+            upload_encoding: Some(BLOSSOM_RESULT_PACK_DIRECT_UPLOAD_ENCODING.to_string()),
+            payload_sha256: None,
+            payload_size: None,
             uploaded_at: 1,
             server: Some("https://blossom.nostr.build".to_string()),
             mirrors: vec![

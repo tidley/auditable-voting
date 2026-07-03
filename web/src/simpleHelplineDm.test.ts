@@ -4,6 +4,7 @@ import {
   contentIsQuestionnaireInviteLinkOnly,
   fetchHelplineDmMessages,
   resetHelplineDmMessageFeedsForTests,
+  sendHelplineDmMessage,
   subscribeHelplineDmMessages,
   type HelplineDmMessage,
 } from "./simpleHelplineDm";
@@ -87,6 +88,34 @@ describe("simpleHelplineDm", () => {
     });
 
     expect(messages.map((message) => message.body)).toEqual([link]);
+  });
+
+  it("reads a message produced by the helpline send path", async () => {
+    const senderSecret = generateSecretKey();
+    const senderNsec = nip19.nsecEncode(senderSecret);
+    const recipientSecret = generateSecretKey();
+    const recipientNpub = nip19.npubEncode(getPublicKey(recipientSecret));
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const publishedEvents: Array<ReturnType<typeof nip17.wrapEvent>> = [];
+    publish.mockImplementation((_relays: string[], event: ReturnType<typeof nip17.wrapEvent>) => {
+      publishedEvents.push(event);
+      return [Promise.resolve(undefined)];
+    });
+
+    await sendHelplineDmMessage({
+      senderNsec,
+      recipientNpub,
+      message: "Can you check my invite?",
+      relays: ["wss://relay.example"],
+    });
+    querySync.mockResolvedValue(publishedEvents);
+
+    const messages = await fetchHelplineDmMessages({
+      actorNsec: recipientNsec,
+      relays: ["wss://relay.example"],
+    });
+
+    expect(messages.map((message) => message.body)).toEqual(["Can you check my invite?"]);
   });
 
   it("shares one actor feed between listeners and replays cached live messages", async () => {

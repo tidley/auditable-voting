@@ -51,6 +51,7 @@ import type { QuestionnaireDefinition, QuestionnaireResponseAnswer } from "./que
 import { buildQuestionnaireResultSummary } from "./questionnaireRuntime";
 import {
   publishQuestionnaireBlindResponsePublic,
+  publishQuestionnaireProvisionalResponsePublic,
   publishQuestionnaireSubmissionDecisionPublic,
 } from "./questionnaireResponsePublish";
 import type { SignerService } from "./services/signerService";
@@ -245,6 +246,13 @@ vi.mock("./questionnaireResponsePublish", () => ({
       relayResults: [],
     };
   }),
+  publishQuestionnaireProvisionalResponsePublic: vi.fn(async (input: { responseId: string }) => ({
+    eventId: `provisional-${input.responseId}`,
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  })),
+  parseQuestionnaireProvisionalResponseEvent: vi.fn(),
   publishQuestionnaireSubmissionDecisionPublic: vi.fn(async (input: { submissionId: string }) => ({
     eventId: `decision-${input.submissionId}`,
     successes: 1,
@@ -281,6 +289,7 @@ vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireDefinitions: vi.fn().mockResolvedValue([]),
   fetchQuestionnaireBlindResponses: vi.fn(async (input: { questionnaireId: string }) =>
     publicBlindResponseStore.entries.filter((entry) => entry.response.questionnaireId === input.questionnaireId)),
+  fetchQuestionnaireProvisionalResponses: vi.fn().mockResolvedValue([]),
   fetchQuestionnaireSubmissionDecisions: vi.fn().mockResolvedValue([]),
 }));
 
@@ -299,6 +308,14 @@ function signer(npub: string): SignerService {
       return { ...event, pubkey: npub };
     },
   };
+}
+
+function npubFromNsec(nsec: string) {
+  const decoded = nip19.decode(nsec);
+  if (decoded.type !== "nsec" || !(decoded.data instanceof Uint8Array)) {
+    throw new Error("Expected nsec.");
+  }
+  return nip19.npubEncode(getPublicKey(decoded.data));
 }
 
 function buildDefinition(input: {
@@ -817,14 +834,23 @@ describe("questionnaireOptionARuntime", () => {
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
 
+    await voter.publishProvisionalResponses(["q1"]);
+    const provisionalNsec = vi.mocked(publishQuestionnaireProvisionalResponsePublic).mock.calls.at(-1)?.[0].responseNsec;
+    expect(provisionalNsec).toBeTruthy();
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "no" }]);
+    await voter.publishProvisionalResponses(["q1"]);
+    expect(vi.mocked(publishQuestionnaireProvisionalResponsePublic).mock.calls.at(-1)?.[0].responseNsec).toBe(provisionalNsec);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
     await voter.submitVote(["q1"]);
     const submitted = voter.getSnapshot()?.submission;
     expect(submitted?.responseNpub).toBeTruthy();
     expect(submitted?.responseNpub).not.toBe(voterNpub);
     expect(submitted?.invitedNpub).toBe(submitted?.responseNpub);
+    expect(provisionalNsec ? npubFromNsec(provisionalNsec) : "").toBe(submitted?.responseNpub);
     expect(vi.mocked(publishQuestionnaireBlindResponsePublic)).toHaveBeenCalledWith(expect.objectContaining({
       questionnaireId: electionId,
       responseId: submitted?.submissionId,
+      responseNsec: provisionalNsec,
     }));
     expect(vi.mocked(publishOptionABallotSubmissionDm)).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: voterNpub,
@@ -1077,6 +1103,130 @@ describe("questionnaireOptionARuntime", () => {
     expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1"]?.accepted).toBe(true);
     expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1:c2"]?.accepted).toBe(true);
     expect(coordinator.getAcceptedUniqueCount()).toBe(2);
+  }, 15000);
+
+  it("requests two proxy credentials for a normal questionnaire", async () => {
+    const proxyElectionId = `${electionId}_normal_proxy_credentials`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), proxyElectionId);
+    await coordinator.loginWithSigner({
+      title: "Proxy normal",
+      description: "Proxy vote",
+      state: "open",
+      flowMode: "public_submission_v1",
+      responseMode: "blind_token",
+    });
+    coordinator.addWhitelistNpub(voterNpub, { credentialsPerVoter: 2 });
+    const blindSigningPublicKey = coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null;
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId: proxyElectionId, coordinatorNpub, title: "Proxy normal" }),
+      blindSigningPublicKey,
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    upsertElectionSummary({
+      electionId: proxyElectionId,
+      title: definition.title,
+      description: definition.description ?? "",
+      state: "open",
+      openedAt: new Date(definition.openAt * 1000).toISOString(),
+      closedAt: new Date(definition.closeAt * 1000).toISOString(),
+      coordinatorNpub,
+      blindSigningPublicKey,
+      protocolVersion: definition.protocolVersion,
+      flowMode: definition.flowMode,
+      responseMode: definition.responseMode,
+    });
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Proxy normal",
+      description: "Proxy vote",
+      voteUrl: "https://example.org/vote",
+    });
+    expect(sentInvite.invite.credentialsPerVoter).toBe(2);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), proxyElectionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    const blindRequests = Object.entries(voter.getSnapshot()?.blindRequests ?? {});
+    expect(blindRequests).toHaveLength(2);
+    expect(blindRequests.map(([key]) => key).sort()).toEqual(["::0:v1:c2", "__questionnaire__"]);
+    expect(vi.mocked(publishOptionABlindRequestDm)).not.toHaveBeenCalled();
+    expect(vi.mocked(publishOptionABlindRequestBundleDm)).toHaveBeenCalledWith(expect.objectContaining({
+      requests: expect.arrayContaining([
+        expect.objectContaining({ ballotScope: null }),
+        expect.objectContaining({ ballotScope: expect.objectContaining({ credentialIndex: 2 }) }),
+      ]),
+    }));
+
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    expect(Object.entries(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(2);
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.submitVote(["q1"], { credentialIndex: 2 });
+    const secondSubmission = voter.getSnapshot()?.submissions?.["::0:v1:c2"];
+    expect(secondSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBe(2);
+    const publicResponse = publicBlindResponseStore.entries.find((entry) => (
+      entry.response.questionnaireId === proxyElectionId
+    ))?.response;
+    expect(publicResponse?.tokenProofs?.[0]?.ballotScope).toMatchObject({ credentialIndex: 2 });
+  }, 15000);
+
+  it("does not publish a legacy blind request before a referenced definition is loaded", async () => {
+    const referencedElectionId = `${electionId}_referenced_definition_wait`;
+    const blindSigningPublicKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), referencedElectionId);
+    await voter.loginWithSigner({
+      type: "election_invite",
+      schemaVersion: 1,
+      electionId: referencedElectionId,
+      title: "Referenced definition",
+      description: "Wait for definition",
+      voteUrl: "https://example.org/vote",
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      credentialsPerVoter: 2,
+      blindSigningPublicKey,
+      definitionReference: {
+        questionnaireId: referencedElectionId,
+        coordinatorNpub,
+      },
+      expiresAt: null,
+    });
+
+    await expect(voter.requestBlindBallot({ forceResend: true })).rejects.toMatchObject({
+      code: "definition_not_ready",
+    });
+    expect(vi.mocked(publishOptionABlindRequestDm)).not.toHaveBeenCalled();
+    expect(vi.mocked(publishOptionABlindRequestBundleDm)).not.toHaveBeenCalled();
+  }, 15000);
+
+  it("does not publish a legacy blind request before a public v2 definition is loaded", async () => {
+    const referencedElectionId = `${electionId}_public_definition_wait`;
+    const blindSigningPublicKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    upsertElectionSummary({
+      electionId: referencedElectionId,
+      title: "Public definition",
+      description: "Wait for definition",
+      state: "open",
+      coordinatorNpub,
+      blindSigningPublicKey,
+      protocolVersion: 2,
+      flowMode: "public_submission_v1",
+      responseMode: "blind_token",
+    });
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), referencedElectionId);
+    voter.bootstrapWithLocalIdentity({
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      allowInviteMissing: true,
+    });
+
+    await expect(voter.requestBlindBallot({ forceResend: true })).rejects.toMatchObject({
+      code: "definition_not_ready",
+    });
+    expect(vi.mocked(publishOptionABlindRequestDm)).not.toHaveBeenCalled();
+    expect(vi.mocked(publishOptionABlindRequestBundleDm)).not.toHaveBeenCalled();
   }, 15000);
 
   it("keeps proxy credentials off for normal admitted voters", async () => {
@@ -1544,6 +1694,37 @@ describe("questionnaireOptionARuntime", () => {
     expect(coordinator.getSnapshot()?.whitelist[secondNpub]).toBeUndefined();
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
     expect(listBlindRequests(electionId).some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
+  });
+
+  it("redeems a private invite code as a proxy voter and issues both credentials", async () => {
+    const inviteCode = "private-invite-code-proxy";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const proxyNpub = "npub1privatecodeproxy000000000000000000000000000000";
+
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    const blindSigningPublicKey = await coordinator.ensureBlindSigningPublicKey();
+    storeCachedQuestionnaireDefinition({
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      blindSigningPublicKey,
+    });
+    coordinator.addBearerInviteCode(inviteCodeHash, { credentialsPerVoter: 2 });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(proxyNpub), electionId);
+    voter.setBearerInviteCode(inviteCode, { credentialsPerVoter: 2 });
+    voter.bootstrapWithLocalIdentity({
+      invitedNpub: proxyNpub,
+      allowInviteMissing: true,
+    });
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+
+    const whitelistEntry = coordinator.getSnapshot()?.whitelist[proxyNpub];
+    expect(whitelistEntry?.inviteCodeHash).toBe(inviteCodeHash);
+    expect(whitelistEntry?.credentialsPerVoter).toBe(2);
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+    expect(Object.keys(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(2);
   });
 
   it("uses organiser private invite metadata to control availability", async () => {

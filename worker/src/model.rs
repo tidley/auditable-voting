@@ -152,6 +152,8 @@ pub struct BearerInviteCodeEntry {
     pub created_at: String,
     pub state: String,
     #[serde(default)]
+    pub credentials_per_voter: Option<u8>,
+    #[serde(default)]
     pub redeemed_at: Option<String>,
     #[serde(default)]
     pub redeemed_npub: Option<String>,

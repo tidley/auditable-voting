@@ -566,7 +566,7 @@ flowchart LR
   E --> V --> U --> T --> R
 ```
 
-Before a final result summary exists, the Observer view derives a live provisional summary from verified public submissions and labels it as live relay-derived data. This is the “auditable” part of auditable voting.
+Before a final result summary exists, the Observer view derives a live summary from verified public submissions and separate public per-question provisional response events. Provisional events are signed by the same anonymous ballot identity that will sign the final submission for that credential, so newer hints from that ballot replace older hints. They are muted chart hints only; they contain no blind-token proof and do not count for the audit result. Verified blind-token submissions and public decisions remain the auditable source.
 
 ---
 
@@ -620,7 +620,7 @@ Planned backup direction:
 - optional upload to Blossom
 - restore on a new device
 
-Final result summaries can also reference a public gzip-compressed Blossom result pack. The pack is mirrored to at least two Blossom servers when upload succeeds, and clients verify the compressed blob size and SHA-256 from the summary before decompressing or displaying the rows.
+Final result summaries can also reference a public gzip-compressed Blossom result pack. The pack is mirrored to at least two Blossom servers when upload succeeds. If gzip uploads are rejected, every mirror is retried with the same gzip payload inside a JSON wrapper. Clients verify the uploaded blob size and SHA-256 from the summary, then verify the inner gzip payload hash when a wrapper is used, before decompressing or displaying rows.
 
 ---
 

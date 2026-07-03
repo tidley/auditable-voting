@@ -217,6 +217,9 @@ export type QuestionnaireResultPackReference = {
   size: number;
   type: "application/vnd.auditable-voting.result-pack+json";
   compression: "gzip";
+  uploadEncoding?: "gzip" | "json+base64url-gzip";
+  payloadSha256?: string;
+  payloadSize?: number;
   uploadedAt: number;
   server?: string;
   mirrors?: Array<{
