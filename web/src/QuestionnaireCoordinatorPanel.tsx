@@ -858,8 +858,9 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.35";
+const WORKER_MINIMUM_VERSION = "0.1.36";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
+const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
 function buildWorkerLauncherContents(input: {
   target: WorkerLauncherTarget;
@@ -1551,6 +1552,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
+  const autoConfirmWorkerKeyRef = useRef<string | null>(null);
+  const autoConfirmWorkerInFlightRef = useRef(false);
   const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
@@ -4376,6 +4379,85 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}${error instanceof Error ? error.message : "Audit proxy configuration failed."}`);
     }
   }
+
+  useEffect(() => {
+    if (
+      !isProxyBuildPage
+      || delegationMode !== "delegated_worker"
+      || activeWorkerDelegation
+      || autoConfirmWorkerInFlightRef.current
+    ) {
+      return;
+    }
+    const electionId = questionnaireId.trim();
+    const coordinatorNpubTrimmed = coordinatorNpub.trim();
+    const coordinatorNsecTrimmed = coordinatorNsec.trim();
+    if (!electionId || !coordinatorNpubTrimmed || !coordinatorNsecTrimmed) {
+      return;
+    }
+
+    const generatedNpub = normaliseWorkerNpub(generatedWorkerNpub);
+    const selectedNpub = normaliseWorkerNpub(delegatedWorkerNpub);
+    const generatedStatus = generatedNpub
+      ? availableWorkerStatuses.find((entry) => normaliseWorkerNpub(entry.workerNpub) === generatedNpub) ?? null
+      : null;
+    const selectedStatus = selectedNpub
+      ? availableWorkerStatuses.find((entry) => normaliseWorkerNpub(entry.workerNpub) === selectedNpub) ?? null
+      : null;
+    const recognisedStatus = generatedStatus ?? selectedStatus;
+    const recognisedNpub = normaliseWorkerNpub(recognisedStatus?.workerNpub ?? "");
+    if (!recognisedStatus || !recognisedNpub) {
+      return;
+    }
+
+    const heartbeatMs = Date.parse(recognisedStatus.heartbeatAt);
+    if (!Number.isFinite(heartbeatMs) || Date.now() - heartbeatMs > WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS) {
+      return;
+    }
+
+    if (selectedNpub !== recognisedNpub) {
+      selectAvailableWorkerStatus(recognisedStatus);
+      return;
+    }
+
+    const coordinatorState = loadCoordinatorState({
+      coordinatorNpub: coordinatorNpubTrimmed,
+      electionId,
+    });
+    if (delegatedWorkerCapabilities.includes("issue_blind_tokens") && !coordinatorState?.blindSigningPrivateKey) {
+      return;
+    }
+
+    const autoConfirmKey = [
+      electionId,
+      coordinatorNpubTrimmed,
+      recognisedNpub,
+      coordinatorState?.blindSigningPrivateKey?.keyId ?? "no-blind-key",
+      delegatedWorkerCapabilities.join(","),
+    ].join(":");
+    if (autoConfirmWorkerKeyRef.current === autoConfirmKey) {
+      return;
+    }
+
+    autoConfirmWorkerKeyRef.current = autoConfirmKey;
+    autoConfirmWorkerInFlightRef.current = true;
+    setStatus("Audit proxy detected; confirming configuration...");
+    void delegateToWorker({ statusPrefix: "Audit proxy detected." }).finally(() => {
+      autoConfirmWorkerInFlightRef.current = false;
+    });
+  }, [
+    activeWorkerDelegation,
+    availableWorkerStatuses,
+    coordinatorNpub,
+    coordinatorNsec,
+    delegatedWorkerCapabilities,
+    delegatedWorkerNpub,
+    delegationMode,
+    generatedWorkerNpub,
+    isProxyBuildPage,
+    questionnaireId,
+    selectAvailableWorkerStatus,
+  ]);
 
   async function revokeWorkerDelegation() {
     const electionId = questionnaireId.trim();
