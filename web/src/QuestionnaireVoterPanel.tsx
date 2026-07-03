@@ -421,6 +421,7 @@ type QuestionnaireVoterPanelProps = {
   showOptionALoginAction?: boolean;
   onMessageOrganiser?: () => void;
   onBackToJoin?: () => void;
+  onActiveQuestionnaireIdChange?: (questionnaireId: string) => void;
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
@@ -449,6 +450,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         showLoginAction={props.showOptionALoginAction}
         onMessageOrganiser={props.onMessageOrganiser}
         onBackToJoin={props.onBackToJoin}
+        onActiveQuestionnaireIdChange={props.onActiveQuestionnaireIdChange}
       />
     );
   }
@@ -457,6 +459,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const incomingParticipationHistory = props.participationHistory;
   const announcedQuestionnaireIds = props.announcedQuestionnaireIds;
   const [questionnaireId, setQuestionnaireId] = useState("");
+  useEffect(() => {
+    props.onActiveQuestionnaireIdChange?.(questionnaireId.trim());
+  }, [props.onActiveQuestionnaireIdChange, questionnaireId]);
   const [selectorEntries, setSelectorEntries] = useState<QuestionnaireSelectorEntry[]>([]);
   const [coordinatorContextNpubs, setCoordinatorContextNpubs] = useState<string[]>([]);
   const shouldHydrateSavedCoordinatorContext = useMemo(() => hasVoterInviteContextInUrl(), []);

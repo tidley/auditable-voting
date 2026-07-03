@@ -144,7 +144,7 @@ import {
 } from "./questionnaireTransport";
 import {
   normaliseQuestionnaireCredentialsPerVoter,
-  normaliseQuestionBallotSlot,
+  questionBallotCredentialScope,
   questionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireCredentialsPerVoter,
@@ -592,13 +592,7 @@ function buildQuestionnaireCredentialScopes(
   const seen = new Set<string>();
   for (let credentialIndex = 1; credentialIndex <= credentialCount; credentialIndex += 1) {
     definition.questions.forEach((question, index) => {
-      const slot = normaliseQuestionBallotSlot(question, index);
-      const scope = withCredentialIndex({
-        questionId: question.questionId,
-        slotId: slot.slotId,
-        slotIndex: slot.slotIndex,
-        version: slot.version,
-      }, credentialIndex);
+      const scope = questionBallotCredentialScope(question, index, credentialIndex);
       const key = ballotScopeKey(scope);
       if (!seen.has(key)) {
         seen.add(key);
@@ -620,30 +614,12 @@ function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined
   if (!question) {
     return null;
   }
-  const slot = normaliseQuestionBallotSlot(question, index);
-  const targetKey = ballotScopeKey({
-    questionId: question.questionId,
-    slotId: slot.slotId,
-    slotIndex: slot.slotIndex,
-    version: slot.version,
-  });
+  const targetKey = ballotScopeKey(questionBallotCredentialScope(question, index));
   const canonicalIndex = definition.questions.findIndex((candidate, candidateIndex) => {
-    const candidateSlot = normaliseQuestionBallotSlot(candidate, candidateIndex);
-    return ballotScopeKey({
-      questionId: candidate.questionId,
-      slotId: candidateSlot.slotId,
-      slotIndex: candidateSlot.slotIndex,
-      version: candidateSlot.version,
-    }) === targetKey;
+    return ballotScopeKey(questionBallotCredentialScope(candidate, candidateIndex)) === targetKey;
   });
   const canonicalQuestion = canonicalIndex >= 0 ? definition.questions[canonicalIndex] : question;
-  const canonicalSlot = normaliseQuestionBallotSlot(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index);
-  return withCredentialIndex({
-    questionId: canonicalQuestion.questionId,
-    slotId: canonicalSlot.slotId,
-    slotIndex: canonicalSlot.slotIndex,
-    version: canonicalSlot.version,
-  }, credentialIndex);
+  return questionBallotCredentialScope(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index, credentialIndex);
 }
 
 function submissionCredentialBundle(submission: BallotSubmission): BallotCredentialProof[] {

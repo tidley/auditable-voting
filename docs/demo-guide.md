@@ -154,7 +154,7 @@ This is the identity used for the public submission. It is not your normal voter
 
 Open **Observer**.
 
-Use **Find Published Questionnaires** to choose the questionnaire, then open **Submitted Votes**.
+Use **Questionnaire Results** to choose the questionnaire, then open **Submitted Votes**.
 
 The Observer **Search** box can find a questionnaire by questionnaire ID, organiser identity, **Submission ID**, **Submittor identity - short**, or **Submittor identity - full**.
 

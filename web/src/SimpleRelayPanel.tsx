@@ -19,8 +19,9 @@ type RelayProbe = {
   detail: string;
 };
 
-const RELAY_PROBE_TIMEOUT_MS = 4000;
-const RELAY_PROBE_CONCURRENCY = 3;
+const RELAY_PROBE_TIMEOUT_MS = 10000;
+const RELAY_PROBE_CONCURRENCY = 6;
+const RELAY_PROBE_ATTEMPTS = 2;
 
 function classifyRelayStrength(latencyMs: number): RelayStrength {
   if (latencyMs < 400) {
@@ -95,15 +96,28 @@ async function attemptRelayProbe(relay: string): Promise<RelayProbe> {
 }
 
 async function probeRelay(relay: string): Promise<RelayProbe> {
-  try {
-    return await attemptRelayProbe(relay);
-  } catch {
-    return {
-      relay,
-      strength: 'offline',
-      detail: 'Offline',
-    };
+  let bestProbe: RelayProbe | null = null;
+  for (let attempt = 0; attempt < RELAY_PROBE_ATTEMPTS; attempt += 1) {
+    try {
+      const probe = await attemptRelayProbe(relay);
+      if (!bestProbe || (probe.latencyMs ?? Infinity) < (bestProbe.latencyMs ?? Infinity)) {
+        bestProbe = probe;
+      }
+      if (probe.strength !== 'weak') {
+        return probe;
+      }
+    } catch {
+      // Retry once before calling a browser-side relay probe offline.
+    }
   }
+  if (bestProbe) {
+    return bestProbe;
+  }
+  return {
+    relay,
+    strength: 'offline',
+    detail: 'Offline',
+  };
 }
 
 async function probeRelaysInBatches(
@@ -162,10 +176,12 @@ export default function SimpleRelayPanel({
   expandSignal,
   questionnaireRelaysInput,
   onQuestionnaireRelaysInputChange,
+  standalone = false,
 }: {
   expandSignal?: number;
   questionnaireRelaysInput?: string;
   onQuestionnaireRelaysInputChange?: (value: string) => void;
+  standalone?: boolean;
 }) {
   const [questionnaireRelayDraft, setQuestionnaireRelayDraft] = useState("");
   const publicRelays = useMemo(
@@ -253,10 +269,11 @@ export default function SimpleRelayPanel({
   return (
     <SimpleCollapsibleSection
       title='Relays'
-      titleToggleLabel='Relays'
-      defaultCollapsed
-      renderWhenExpanded
+      titleToggleLabel={standalone ? undefined : 'Relays'}
+      defaultCollapsed={!standalone}
+      renderWhenExpanded={!standalone}
       expandSignal={expandSignal}
+      hideToggle={standalone}
     >
       {editableQuestionnaireRelays ? (
         <div className='simple-relay-group'>

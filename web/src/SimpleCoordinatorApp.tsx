@@ -178,6 +178,54 @@ type SimpleCoordinatorKeypair = {
   nsec: string;
 };
 
+function ParticipantNoteField({
+  id,
+  value,
+  draftValue,
+  onDraftChange,
+  onCommit,
+}: {
+  id: string;
+  value: string;
+  draftValue?: string;
+  onDraftChange: (note: string) => void;
+  onCommit: (note: string) => void;
+}) {
+  const visibleValue = draftValue ?? value;
+
+  useEffect(() => {
+    const input = document.getElementById(id);
+    if (!(input instanceof HTMLInputElement) || document.activeElement === input) {
+      return;
+    }
+    if (input.value !== visibleValue) {
+      input.value = visibleValue;
+    }
+  }, [id, visibleValue]);
+
+  return (
+    <UiTextField
+      defaultValue={visibleValue}
+      fieldClassName='simple-admitted-voter-note-field'
+      inputClassName='simple-voter-input simple-voter-input-inline'
+      inputProps={{
+        id,
+        "aria-label": "Note",
+        onChange: (event) => {
+          onDraftChange(event.currentTarget.value);
+        },
+        onBlur: (event) => {
+          const note = event.currentTarget.value;
+          onDraftChange(note);
+          if (note !== value) {
+            onCommit(note);
+          }
+        },
+      }}
+    />
+  );
+}
+
 const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
 const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
@@ -1330,6 +1378,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [knownVoterContactSearch, setKnownVoterContactSearch] = useState("");
   const [participantSearchQuery, setParticipantSearchQuery] = useState("");
   const [coordinatorParticipantResponseDetails, setCoordinatorParticipantResponseDetails] = useState<QuestionnaireResultsDashboardResponseDetail[]>([]);
+  const participantNoteDraftsRef = useRef<Record<string, string>>({});
   const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const [selectedImportedKnownVoterNpubs, setSelectedImportedKnownVoterNpubs] = useState<string[]>([]);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
@@ -1382,8 +1431,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       return "";
     }
     const params = new URLSearchParams(window.location.search);
-    return (params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
+    return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
   }, [questionnaireRosterAnnouncement.questionnaireId]);
+  useEffect(() => {
+    participantNoteDraftsRef.current = {};
+  }, [activeCoordinatorNpub, optionAElectionId]);
   const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
   const optionACoordinatorRuntime = useMemo(() => (
     optionAElectionId
@@ -2007,32 +2059,29 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       },
       {
         id: "note",
-        header: "Internal note",
-        meta: { className: "is-note", label: "Internal note" },
+        header: "Note",
+        meta: { className: "is-note", label: "Note" },
         cell: ({ row }) => {
           const participant = row.original;
           const state = rowState(participant);
           return participant.admittedEntry || state.privateInviteEntry ? (
-              <UiTextField
-                fieldClassName='simple-admitted-voter-note-field'
-                inputClassName='simple-voter-input simple-voter-input-inline'
-                inputProps={{
-                  id: state.noteInputId,
-                  value: state.noteValue,
-                  placeholder: "Internal note",
-                  "aria-label": "Internal note",
-                  title: "Internal note",
-                  onChange: (event) => {
-                    const note = event.target.value;
-                    if (participant.admittedEntry) {
-                      updateAdmittedVoterDetails(participant.npub, { note });
-                    }
-                    if (state.privateInviteEntry) {
-                      updatePrivateInviteCodeNote(state.privateInviteEntry.codeHash, note);
-                    }
-                  },
-                }}
-              />
+            <ParticipantNoteField
+              id={state.noteInputId}
+              value={state.noteValue}
+              draftValue={participantNoteDraftsRef.current[state.noteInputId]}
+              onDraftChange={(note) => {
+                participantNoteDraftsRef.current[state.noteInputId] = note;
+              }}
+              onCommit={(note) => {
+                participantNoteDraftsRef.current[state.noteInputId] = note;
+                if (participant.admittedEntry) {
+                  updateAdmittedVoterDetails(participant.npub, { note });
+                }
+                if (state.privateInviteEntry) {
+                  updatePrivateInviteCodeNote(state.privateInviteEntry.codeHash, note);
+                }
+              }}
+            />
           ) : (
             <span className='simple-admitted-voter-empty-cell'>-</span>
           );
@@ -2187,6 +2236,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const participantTable = useReactTable({
     data: filteredAdmittedVoterDisplayRows,
     columns: participantTableColumns,
+    getRowId: (row) => row.npub,
     getCoreRowModel: getCoreRowModel(),
   });
   const filteredImportedKnownVoterContacts = useMemo(() => {
@@ -5027,13 +5077,29 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (delegation.capabilities.includes("issue_blind_tokens") && !coordinatorState.blindSigningPrivateKey) {
       return null;
     }
-    const whitelistNpubs = Object.keys(coordinatorState.whitelist ?? {})
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    const proxyVoterNpubs = Object.values(coordinatorState.whitelist ?? {})
-      .filter((entry) => entry.credentialsPerVoter === 2)
-      .map((entry) => entry.invitedNpub.trim())
-      .filter((entry) => entry.length > 0);
+    const whitelistByNpub = new Map<string, 1 | 2>();
+    for (const entry of Object.values(coordinatorState.whitelist ?? {})) {
+      const npub = entry.invitedNpub.trim();
+      if (npub) {
+        whitelistByNpub.set(npub, entry.credentialsPerVoter === 2 ? 2 : 1);
+      }
+    }
+    if (electionId === optionAElectionId.trim()) {
+      for (const npub of admittedVoterAutoApplyNpubs) {
+        const normalized = npub.trim();
+        if (!normalized) {
+          continue;
+        }
+        whitelistByNpub.set(
+          normalized,
+          admittedVoters[normalized]?.proxyVoter === true ? 2 : (whitelistByNpub.get(normalized) ?? 1),
+        );
+      }
+    }
+    const whitelistNpubs = [...whitelistByNpub.keys()];
+    const proxyVoterNpubs = [...whitelistByNpub.entries()]
+      .filter(([, credentialsPerVoter]) => credentialsPerVoter === 2)
+      .map(([npub]) => npub);
     const bearerInviteCodes = Object.values(coordinatorState.bearerInviteCodes ?? {});
     const workerBearerInviteCodes = bearerInviteCodes.map(({
       note: _note,
@@ -7951,6 +8017,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 ? () => optionACoordinatorRuntime.ensureBlindSigningPublicKey()
                 : undefined}
               view='responses'
+              initialQuestionnaireId={optionAElectionId}
               onAddSession={startNewRound}
               canAddSession={canStartNewRound}
               questionnaireRelaysInput={questionnaireRelaysInput}

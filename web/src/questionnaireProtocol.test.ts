@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  questionBallotCredentialScope,
   normaliseQuestionBallotSlot,
   normalizeQuestionnaireDefinition,
   questionBallotScopeKey,
@@ -148,6 +149,11 @@ describe("questionnaireProtocol", () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(questionBallotScopeKey(groupedSlot.questions[0], 0)).toBe(questionBallotScopeKey(groupedSlot.questions[1], 1));
+    expect(questionBallotCredentialScope(groupedSlot.questions[0], 0)).toEqual({
+      slotIndex: 1,
+      version: 1,
+    });
+    expect(questionBallotCredentialScope(groupedSlot.questions[1], 1)).toEqual(questionBallotCredentialScope(groupedSlot.questions[0], 0));
 
     const bumpedSecondSlot: QuestionnaireDefinition = {
       ...groupedSlot,

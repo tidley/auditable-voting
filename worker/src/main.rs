@@ -12,8 +12,7 @@ use crate::model::{
     WorkerDelegationCertificate, WorkerDelegationEnvelope, WorkerDelegationRevocation,
     WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot, WorkerPersistentState,
     WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION, OPTIONA_WORKER_DELEGATION_KIND,
     OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
@@ -92,10 +91,8 @@ const PRIVATE_DM_REJECTING_RELAYS: &[&str] = &[
     // "kind 1059 not permitted", so keep it out of worker private DM publish/read paths.
     "wss://relay.nostr.info",
 ];
-const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &[
-    "wss://vm-1734.lnvps.cloud/",
-    "wss://relay.nostr.net",
-];
+const PRIVATE_DM_FALLBACK_RELAYS: &[&str] =
+    &["wss://vm-1734.lnvps.cloud/", "wss://relay.nostr.net"];
 const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
 const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
 const PUBLIC_RESPONSE_CONCURRENCY: usize = 16;
@@ -1244,6 +1241,23 @@ fn record_issuance_for_request(election: &mut ElectionRuntimeState, request: &Bl
     }
 }
 
+fn remember_deferred_blind_request(
+    election: &mut ElectionRuntimeState,
+    request: &BlindBallotRequest,
+) {
+    election
+        .deferred_blind_request_ids
+        .insert(request.request_id.clone());
+    election
+        .deferred_blind_requests
+        .insert(request.request_id.clone(), request.clone());
+}
+
+fn forget_deferred_blind_request(election: &mut ElectionRuntimeState, request_id: &str) {
+    election.deferred_blind_request_ids.remove(request_id);
+    election.deferred_blind_requests.remove(request_id);
+}
+
 #[derive(Clone)]
 struct WorkerRuntime {
     config: WorkerConfig,
@@ -1901,6 +1915,37 @@ impl WorkerRuntime {
         Ok(())
     }
 
+    async fn process_deferred_blind_requests_for_election(&self, election_id: &str) -> Result<()> {
+        let requests = {
+            let state = self.state.lock().await;
+            let Some(election) = state.elections.get(election_id) else {
+                return Ok(());
+            };
+            election
+                .deferred_blind_request_ids
+                .iter()
+                .filter_map(|request_id| election.deferred_blind_requests.get(request_id).cloned())
+                .collect::<Vec<_>>()
+        };
+        if requests.is_empty() {
+            return Ok(());
+        }
+        debug!(
+            "replaying deferred blind requests: election_id={}, requests={}",
+            election_id,
+            requests.len()
+        );
+        let jobs = requests
+            .into_iter()
+            .map(|request| ControlBlindRequestJob {
+                event_id: format!("deferred:{}:{}", election_id, request.request_id),
+                requests: vec![request],
+                mark_seen_on_deferred: true,
+            })
+            .collect::<Vec<_>>();
+        self.process_control_blind_request_jobs(jobs).await
+    }
+
     async fn mark_control_event_processed(&self, event_id: &str) -> Result<()> {
         let mut state = self.state.lock().await;
         state
@@ -2532,10 +2577,20 @@ impl WorkerRuntime {
         election.definition_event_id = Some(event.id.to_hex());
         state.last_public_scan_at = Some(now_iso());
         self.store.save(&state)?;
+        drop(state);
         debug!(
             "public questionnaire definition stored: election_id={}, event_id={}",
             questionnaire_id, event.id
         );
+        if let Err(error) = self
+            .process_deferred_blind_requests_for_election(&questionnaire_id)
+            .await
+        {
+            warn!(
+                "deferred blind request replay failed after public definition load for election {}; requests remain retryable: {error}",
+                questionnaire_id
+            );
+        }
         Ok(true)
     }
 
@@ -2656,14 +2711,16 @@ impl WorkerRuntime {
             election
                 .processed_submission_ids
                 .insert(submission.response_id.clone());
-            election.published_response_refs.push(QuestionnairePublishedResponseRef {
-                response_id: submission.response_id.clone(),
-                author_pubkey: submission.author_pubkey.clone(),
-                submitted_at: submission.submitted_at,
-                accepted,
-                answers: submission.answers.clone(),
-                rejection_reason: if accepted { None } else { Some(reason.clone()) },
-            });
+            election
+                .published_response_refs
+                .push(QuestionnairePublishedResponseRef {
+                    response_id: submission.response_id.clone(),
+                    author_pubkey: submission.author_pubkey.clone(),
+                    submitted_at: submission.submitted_at,
+                    accepted,
+                    answers: submission.answers.clone(),
+                    rejection_reason: if accepted { None } else { Some(reason.clone()) },
+                });
             election.last_vote_verification_at = Some(now_iso());
 
             let decision = if election
@@ -2906,7 +2963,9 @@ impl WorkerRuntime {
         encoder
             .write_all(&pack_json)
             .context("failed to gzip result pack")?;
-        let compressed = encoder.finish().context("failed to finish result-pack gzip")?;
+        let compressed = encoder
+            .finish()
+            .context("failed to finish result-pack gzip")?;
         let sha256 = sha256_hex_bytes(&compressed);
         let keys = Keys::parse(&self.config.worker_nsec)
             .context("WORKER_NSEC is not valid for Blossom upload auth")?;
@@ -2979,7 +3038,10 @@ impl WorkerRuntime {
         let status = response.status();
         if status != reqwest::StatusCode::OK && status != reqwest::StatusCode::CREATED {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("HTTP {status}: {}", body.chars().take(240).collect::<String>());
+            anyhow::bail!(
+                "HTTP {status}: {}",
+                body.chars().take(240).collect::<String>()
+            );
         }
         let descriptor: BlossomBlobDescriptor = response
             .json()
@@ -3064,7 +3126,10 @@ impl WorkerRuntime {
         });
         let mut result_pack: Option<BlossomResultPackReference> = None;
         if !response_refs.is_empty() {
-            match self.upload_result_pack(election_id, &summary, &response_refs).await {
+            match self
+                .upload_result_pack(election_id, &summary, &response_refs)
+                .await
+            {
                 Ok(reference) => {
                     info!(
                         "uploaded result pack for election {} to {} Blossom mirrors",
@@ -3169,6 +3234,15 @@ impl WorkerRuntime {
             self.fetch_public_definition_for_election(&snapshot.election_id)
                 .await?;
         }
+        if let Err(error) = self
+            .process_deferred_blind_requests_for_election(&snapshot.election_id)
+            .await
+        {
+            warn!(
+                "deferred blind request replay failed after config load for election {}; requests remain retryable: {error}",
+                snapshot.election_id
+            );
+        }
         Ok(())
     }
 
@@ -3212,13 +3286,22 @@ impl WorkerRuntime {
     ) -> Result<PreparedBlindIssuance> {
         let election = {
             let mut state = self.state.lock().await;
-            let Some(election) = state.elections.get_mut(&request.election_id) else {
+            let election = state
+                .elections
+                .entry(request.election_id.clone())
+                .or_insert_with(ElectionRuntimeState::default);
+            if election.election_id.is_empty() {
+                election.election_id = request.election_id.clone();
+            }
+            if election.delegation_id.is_empty() && election.capabilities.is_empty() {
+                remember_deferred_blind_request(election, &request);
+                self.store.save(&state)?;
                 info!(
                     "blind request deferred for election {} because no worker config is loaded yet",
                     request.election_id
                 );
                 return Ok(PreparedBlindIssuance::Deferred);
-            };
+            }
             if election.revoked || is_expired(&election.expires_at) {
                 return Ok(PreparedBlindIssuance::Handled);
             }
@@ -3238,9 +3321,7 @@ impl WorkerRuntime {
                 );
             }
             if election.blind_signing_private_key.is_none() {
-                election
-                    .deferred_blind_request_ids
-                    .insert(request.request_id.clone());
+                remember_deferred_blind_request(election, &request);
                 self.store.save(&state)?;
                 warn!(
                     "blind request deferred for election {} because no blind signing key is configured",
@@ -3249,9 +3330,7 @@ impl WorkerRuntime {
                 return Ok(PreparedBlindIssuance::Deferred);
             }
             if election.definition.is_none() {
-                election
-                    .deferred_blind_request_ids
-                    .insert(request.request_id.clone());
+                remember_deferred_blind_request(election, &request);
                 self.store.save(&state)?;
                 warn!(
                     "blind request deferred for election {} because public questionnaire definition is not loaded yet",
@@ -3260,9 +3339,7 @@ impl WorkerRuntime {
                 return Ok(PreparedBlindIssuance::Deferred);
             }
             if !has_effective_eligibility_config(election) {
-                election
-                    .deferred_blind_request_ids
-                    .insert(request.request_id.clone());
+                remember_deferred_blind_request(election, &request);
                 self.store.save(&state)?;
                 warn!(
                     "blind request deferred for election {} because delegated eligibility config is not loaded yet",
@@ -3273,9 +3350,7 @@ impl WorkerRuntime {
             if election.whitelist_npubs.contains(&request.invited_npub)
                 && !blind_request_proxy_authorized(election, &request)
             {
-                election
-                    .deferred_blind_request_ids
-                    .remove(&request.request_id);
+                forget_deferred_blind_request(election, &request.request_id);
                 self.store.save(&state)?;
                 warn!(
                     "blind request rejected because proxy voting is not enabled for this voter: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
@@ -3291,9 +3366,7 @@ impl WorkerRuntime {
                 .contains(&request.request_id)
                 && has_existing_issuance_for_request(election, &request)
             {
-                election
-                    .deferred_blind_request_ids
-                    .remove(&request.request_id);
+                forget_deferred_blind_request(election, &request.request_id);
                 self.store.save(&state)?;
                 warn!(
                     "blind request ignored because this invited npub/scope already has a delegated issuance: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
@@ -3307,9 +3380,7 @@ impl WorkerRuntime {
             let state_changed_by_authorization = match authorize_blind_request(election, &request) {
                 BlindRequestAuthorization::Authorized { state_changed } => state_changed,
                 BlindRequestAuthorization::Deferred => {
-                    election
-                        .deferred_blind_request_ids
-                        .insert(request.request_id.clone());
+                    remember_deferred_blind_request(election, &request);
                     self.store.save(&state)?;
                     info!(
                         "blind request deferred for election {} because delegated eligibility is not satisfied yet",
@@ -3318,9 +3389,7 @@ impl WorkerRuntime {
                     return Ok(PreparedBlindIssuance::Deferred);
                 }
                 BlindRequestAuthorization::Rejected => {
-                    election
-                        .deferred_blind_request_ids
-                        .remove(&request.request_id);
+                    forget_deferred_blind_request(election, &request.request_id);
                     self.store.save(&state)?;
                     warn!(
                         "blind request rejected by delegated eligibility: election_id={}, request_id={}, invited_npub={}",
@@ -3330,9 +3399,7 @@ impl WorkerRuntime {
                 }
             };
             if !blind_request_proxy_authorized(election, &request) {
-                election
-                    .deferred_blind_request_ids
-                    .remove(&request.request_id);
+                forget_deferred_blind_request(election, &request.request_id);
                 self.store.save(&state)?;
                 warn!(
                     "blind request rejected because proxy voting is not enabled for this voter: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
@@ -3369,9 +3436,7 @@ impl WorkerRuntime {
         if private_key.key_id != request.blind_signing_key_id {
             let mut state = self.state.lock().await;
             if let Some(election) = state.elections.get_mut(&request.election_id) {
-                election
-                    .deferred_blind_request_ids
-                    .remove(&request.request_id);
+                forget_deferred_blind_request(election, &request.request_id);
                 self.store.save(&state)?;
             }
             warn!(
@@ -3393,9 +3458,7 @@ impl WorkerRuntime {
                 continue;
             };
             record_issuance_for_request(election, request);
-            election
-                .deferred_blind_request_ids
-                .remove(&request.request_id);
+            forget_deferred_blind_request(election, &request.request_id);
             election
                 .seen_blind_request_ids
                 .insert(request.request_id.clone());
@@ -3490,6 +3553,7 @@ impl WorkerRuntime {
         if delegation_changed {
             existing.seen_blind_request_ids.clear();
             existing.deferred_blind_request_ids.clear();
+            existing.deferred_blind_requests.clear();
             existing.issued_invited_npubs.clear();
             existing.issued_invited_scope_keys.clear();
             existing.whitelist_npubs.clear();
@@ -3746,6 +3810,21 @@ mod tests {
             .collect::<String>()
     }
 
+    fn private_jwk_from_keypair(keypair: &KeyPairSha384PSSDeterministic) -> serde_json::Value {
+        let components = keypair.sk.components();
+        let primes = components.primes();
+        json!({
+            "kty": "RSA",
+            "alg": "PS384",
+            "ext": true,
+            "n": URL_SAFE_NO_PAD.encode(components.n()),
+            "e": URL_SAFE_NO_PAD.encode(components.e()),
+            "d": URL_SAFE_NO_PAD.encode(components.d()),
+            "p": URL_SAFE_NO_PAD.encode(&primes[0]),
+            "q": URL_SAFE_NO_PAD.encode(&primes[1]),
+        })
+    }
+
     fn test_definition_and_keypair(
         questionnaire_id: &str,
     ) -> (serde_json::Value, KeyPairSha384PSSDeterministic) {
@@ -3898,6 +3977,125 @@ mod tests {
             control_blind_request_sender,
         };
         (runtime, state_dir)
+    }
+
+    #[tokio::test]
+    async fn blind_request_before_worker_config_is_deferred_with_payload() {
+        let coordinator_keys = Keys::generate();
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+        let request = sample_request();
+
+        let result = runtime
+            .prepare_blind_issuance(request.clone())
+            .await
+            .expect("prepare blind issuance");
+
+        assert!(matches!(result, PreparedBlindIssuance::Deferred));
+        let state = runtime.state.lock().await;
+        let election = state
+            .elections
+            .get(&request.election_id)
+            .expect("deferred election");
+        assert!(election
+            .deferred_blind_request_ids
+            .contains(&request.request_id));
+        assert_eq!(
+            election
+                .deferred_blind_requests
+                .get(&request.request_id)
+                .expect("deferred request")
+                .invited_npub,
+            request.invited_npub
+        );
+        drop(state);
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn deferred_blind_request_can_issue_after_worker_config_arrives() {
+        let coordinator_keys = Keys::generate();
+        let (definition, keypair) = test_definition_and_keypair("q_worker_definition");
+        let mut request = sample_request();
+        request.blind_signing_key_id = "key_test_public".to_string();
+        let mut rng = DefaultRng;
+        let blinding = keypair
+            .pk
+            .blind(&mut rng, b"request-before-config")
+            .expect("blind request token");
+        request.blinded_message = hex_bytes(&blinding.blind_message.0);
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+
+        assert!(matches!(
+            runtime
+                .prepare_blind_issuance(request.clone())
+                .await
+                .expect("defer request"),
+            PreparedBlindIssuance::Deferred
+        ));
+
+        {
+            let mut state = runtime.state.lock().await;
+            let election = state
+                .elections
+                .get_mut(&request.election_id)
+                .expect("deferred election");
+            election.delegation_id = "delegation_worker_definition".to_string();
+            election.capabilities = vec![WorkerCapability::IssueBlindTokens];
+            election.expires_at = (Utc::now() + ChronoDuration::days(1)).to_rfc3339();
+            election.expected_invitee_count = Some(1);
+            election.eligibility_configured = true;
+            election.definition = Some(definition);
+            election.blind_signing_private_key = Some(QuestionnaireBlindPrivateKey {
+                scheme: "rsabssa-sha384-pss-deterministic-v1".to_string(),
+                key_id: "key_test_public".to_string(),
+                jwk: json!({}),
+                private_jwk: private_jwk_from_keypair(&keypair),
+            });
+            runtime.store.save(&state).expect("save configured state");
+        }
+
+        let stored_request = {
+            let state = runtime.state.lock().await;
+            state
+                .elections
+                .get(&request.election_id)
+                .expect("configured election")
+                .deferred_blind_requests
+                .get(&request.request_id)
+                .expect("stored deferred request")
+                .clone()
+        };
+        let PreparedBlindIssuance::Issuance { request, issuance } = runtime
+            .prepare_blind_issuance(stored_request)
+            .await
+            .expect("issue deferred request")
+        else {
+            panic!("expected deferred request to become issuable");
+        };
+        assert_eq!(issuance.request_id, request.request_id);
+        runtime
+            .mark_blind_issuances_published(&[request.clone()])
+            .await
+            .expect("mark issued");
+
+        let state = runtime.state.lock().await;
+        let election = state
+            .elections
+            .get(&request.election_id)
+            .expect("issued election");
+        assert!(!election
+            .deferred_blind_request_ids
+            .contains(&request.request_id));
+        assert!(!election
+            .deferred_blind_requests
+            .contains_key(&request.request_id));
+        assert!(election
+            .seen_blind_request_ids
+            .contains(&request.request_id));
+        drop(state);
+        fs::remove_dir_all(state_dir).ok();
     }
 
     fn throughput_scoped_request(voter_index: usize, question_index: usize) -> BlindBallotRequest {

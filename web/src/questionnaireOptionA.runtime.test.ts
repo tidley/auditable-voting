@@ -920,24 +920,24 @@ describe("questionnaireOptionARuntime", () => {
     await voter.requestBlindBallot({ forceResend: true });
 
     const requestedScopes = Object.values(voter.getSnapshot()?.blindRequests ?? {})
-      .map((request) => request.ballotScope?.slotId)
+      .map((request) => `${request.ballotScope?.slotIndex}:v${request.ballotScope?.version}`)
       .sort();
-    expect(requestedScopes).toEqual(["director-alice", "director-bob"]);
+    expect(requestedScopes).toEqual(["1:v1", "2:v1"]);
     expect(vi.mocked(publishOptionABlindRequestDm)).not.toHaveBeenCalled();
     expect(vi.mocked(publishOptionABlindRequestBundleDm)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(publishOptionABlindRequestBundleDm)).toHaveBeenCalledWith(expect.objectContaining({
       requests: expect.arrayContaining([
-        expect.objectContaining({ ballotScope: expect.objectContaining({ slotId: "director-alice" }) }),
-        expect.objectContaining({ ballotScope: expect.objectContaining({ slotId: "director-bob" }) }),
+        expect.objectContaining({ ballotScope: expect.objectContaining({ slotIndex: 1, version: 1 }) }),
+        expect.objectContaining({ ballotScope: expect.objectContaining({ slotIndex: 2, version: 1 }) }),
       ]),
     }));
 
     await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
     const issuedScopes = Object.values(voter.getSnapshot()?.blindIssuances ?? {})
-      .map((issuance) => issuance.ballotScope?.slotId)
+      .map((issuance) => `${issuance.ballotScope?.slotIndex}:v${issuance.ballotScope?.version}`)
       .sort();
-    expect(issuedScopes).toEqual(["director-alice", "director-bob"]);
+    expect(issuedScopes).toEqual(["1:v1", "2:v1"]);
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
 
     await voter.submitVote(["q1"], { questionId: "q1" });
@@ -945,7 +945,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(firstSubmission?.credentialBundle).toHaveLength(1);
     expect(firstSubmission?.payload.responses).toHaveLength(1);
     expect(firstSubmission?.payload.responses[0]?.questionId).toBe("q1");
-    expect(firstSubmission?.credentialBundle?.[0]?.ballotScope?.slotId).toBe("director-alice");
+    expect(firstSubmission?.credentialBundle?.[0]?.ballotScope).toMatchObject({ slotIndex: 1, version: 1 });
 
     await coordinator.processPendingSubmissions(["q1", "q2"]);
     voter.refreshIssuanceAndAcceptance();
@@ -958,7 +958,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(secondSubmission?.credentialBundle).toHaveLength(1);
     expect(secondSubmission?.payload.responses).toHaveLength(1);
     expect(secondSubmission?.payload.responses[0]?.questionId).toBe("q2");
-    expect(secondSubmission?.credentialBundle?.[0]?.ballotScope?.slotId).toBe("director-bob");
+    expect(secondSubmission?.credentialBundle?.[0]?.ballotScope).toMatchObject({ slotIndex: 2, version: 1 });
 
     const publicResponses = publicBlindResponseStore.entries.filter((entry) => (
       entry.response.questionnaireId === bundleElectionId
@@ -1199,9 +1199,9 @@ describe("questionnaireOptionARuntime", () => {
     await voter.requestBlindBallot({ forceResend: true });
 
     const requestedScopes = Object.values(voter.getSnapshot()?.blindRequests ?? {})
-      .map((request) => `${request.ballotScope?.slotId}:${request.ballotScope?.slotIndex}`)
+      .map((request) => `${request.ballotScope?.slotIndex}:v${request.ballotScope?.version}`)
       .sort();
-    expect(requestedScopes).toEqual(["ballot-1:1", "ballot-2:2"]);
+    expect(requestedScopes).toEqual(["1:v1", "2:v1"]);
 
     await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();

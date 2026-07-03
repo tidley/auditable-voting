@@ -308,6 +308,18 @@ export function questionBallotScopeKey(question: QuestionnaireQuestion, index: n
   return `slot:${slot.slotIndex}:v${slot.version}${credentialSuffix}`;
 }
 
+export function questionBallotCredentialScope(question: QuestionnaireQuestion, index: number, credentialIndex = 1) {
+  const slot = normaliseQuestionBallotSlot(question, index);
+  const normalizedCredentialIndex = Number.isFinite(credentialIndex)
+    ? Math.max(1, Math.floor(credentialIndex))
+    : 1;
+  return {
+    slotIndex: slot.slotIndex,
+    version: slot.version,
+    ...(normalizedCredentialIndex > 1 ? { credentialIndex: normalizedCredentialIndex } : {}),
+  };
+}
+
 export function clampRankMinimum(question: Pick<QuestionnaireRankQuestion, "options" | "minimumRanked">) {
   const optionCount = Array.isArray(question.options) ? question.options.length : 0;
   if (!Number.isFinite(question.minimumRanked)) {

@@ -78,6 +78,9 @@ const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
 export const QUESTIONNAIRE_ID_RESET_EVENT = "auditable-voting:coordinator-questionnaire-id-reset";
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
+const COORDINATOR_RESPONSE_FETCH_DEFAULT_LIMIT = 2_000;
+const COORDINATOR_RESPONSE_FETCH_MAX_PAGES = 32;
+const COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS = 30_000;
 const QUESTIONNAIRE_TIMER_FALLBACK_MINUTES = "60";
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES = 5_256_000; // 10 years
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS = QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES * 60;
@@ -137,6 +140,7 @@ type QuestionnaireCoordinatorPanelProps = {
   onQuestionnaireRelaysInputChange?: (value: string) => void;
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: () => void;
+  initialQuestionnaireId?: string;
   proxySetupSignal?: number;
   setupFocusTarget?: QuestionnaireSetupFocusTarget;
   setupFocusSignal?: number;
@@ -196,11 +200,8 @@ function createYesNoQuestion(questionId: string, prompt = "", required = true): 
   };
 }
 
-function ballotSlotIndexForQuestion(question: QuestionnaireQuestionDraft, _fallbackIndex: number) {
-  const slotIndex = question.ballotSlot?.slotIndex;
-  return Number.isFinite(slotIndex)
-    ? Math.max(1, Math.floor(slotIndex as number))
-    : 1;
+function ballotSlotIndexForQuestion(_question: QuestionnaireQuestionDraft) {
+  return 1;
 }
 
 function ballotSlotIdForIndex(slotIndex: number) {
@@ -707,6 +708,20 @@ function unixTimestampToIso(timestampSeconds?: number | null) {
     : null;
 }
 
+function calculateCoordinatorResponseFetchLimit(...counts: Array<number | null | undefined>) {
+  const expectedCount = Math.max(
+    0,
+    ...counts
+      .map((count) => Number(count ?? 0))
+      .filter((count) => Number.isFinite(count) && count > 0),
+  );
+  if (expectedCount <= 0) {
+    return COORDINATOR_RESPONSE_FETCH_DEFAULT_LIMIT;
+  }
+  const headroom = Math.max(50, Math.ceil(expectedCount * 0.1));
+  return Math.max(COORDINATOR_RESPONSE_FETCH_DEFAULT_LIMIT, expectedCount + headroom);
+}
+
 function definitionBelongsToCoordinator(definition: QuestionnaireDefinition | null, coordinatorNpub: string) {
   if (!definition) {
     return false;
@@ -835,7 +850,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.34";
+const WORKER_MINIMUM_VERSION = "0.1.35";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 
 function buildWorkerLauncherContents(input: {
@@ -1467,7 +1482,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const buildPage = props.buildPage ?? "questionnaire";
   const isProxyBuildPage = view === "build" && buildPage === "proxy";
   const storedDraft = useMemo(() => readStoredQuestionnaireDraft(), []);
-  const [questionnaireId, setQuestionnaireId] = useState(storedDraft.questionnaireId);
+  const [questionnaireId, setQuestionnaireId] = useState(() => (
+    props.initialQuestionnaireId?.trim() || storedDraft.questionnaireId
+  ));
   const [title, setTitle] = useState(storedDraft.title);
   const [description, setDescription] = useState(storedDraft.description);
   const [closeTimerEnabled, setCloseTimerEnabled] = useState(storedDraft.closeTimerEnabled);
@@ -1657,6 +1674,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setStatus(null);
     resetQuestionnaireReadState();
   }, [resetQuestionnaireReadState]);
+  useEffect(() => {
+    const initialId = props.initialQuestionnaireId?.trim() ?? "";
+    if (!initialId || view === "build") {
+      return;
+    }
+    setQuestionnaireId((current) => (current.trim() === initialId ? current : initialId));
+    setStatus(null);
+    resetQuestionnaireReadState();
+  }, [props.initialQuestionnaireId, resetQuestionnaireReadState, view]);
   useEffect(() => {
     const nextDraftId = props.draftQuestionnaireId?.trim() ?? "";
     if (view !== "build" || !isNewRoundMode || !nextDraftId) {
@@ -2054,6 +2080,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
 
     try {
+      const responseFetchLimit = calculateCoordinatorResponseFetchLimit();
       const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
@@ -2081,16 +2108,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         }),
         fetchQuestionnaireBlindResponses({
           questionnaireId: id,
-          limit: 500,
+          limit: responseFetchLimit,
           readRelayLimit: 8,
           preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
           relays: questionnaireRelayPublishHints,
         }).catch(() => []),
         fetchQuestionnaireSubmissionDecisions({
           questionnaireId: id,
-          limit: 500,
+          limit: responseFetchLimit,
           readRelayLimit: 8,
           preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
           relays: questionnaireRelayPublishHints,
         }).catch(() => []),
         fetchQuestionnaireEventsWithFallback({
@@ -2239,7 +2270,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         for (const candidate of eventDefinitionCandidatesById.values()) {
           storeCachedQuestionnaireDefinition(candidate.definition);
         }
-        if (selectedId && view !== "responses") {
+        const explicitInitialId = props.initialQuestionnaireId?.trim() ?? "";
+        if (selectedId && (view !== "responses" || selectedId === explicitInitialId)) {
           ids.add(selectedId);
         }
         setAvailableQuestionnaireIds(sortQuestionnaireIdsBySessionOrder(ids, eventCreatedAtById));
@@ -2291,7 +2323,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             titlesById[summaryId] = summaryTitle;
           }
         }
-        if (selectedId && view !== "responses") {
+        const explicitInitialId = props.initialQuestionnaireId?.trim() ?? "";
+        if (selectedId && (view !== "responses" || selectedId === explicitInitialId)) {
           ids.add(selectedId);
         }
         setAvailableQuestionnaireIds(sortQuestionnaireIdsBySessionOrder(ids));
@@ -2303,7 +2336,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     return () => {
       cancelled = true;
     };
-  }, [coordinatorNpub, questionnaireId, questionnaireRelayPublishHints, view]);
+  }, [coordinatorNpub, props.initialQuestionnaireId, questionnaireId, questionnaireRelayPublishHints, view]);
 
   useEffect(() => {
     if (view !== "responses" || availableQuestionnaireIds.length === 0) {
@@ -2344,6 +2377,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     };
 
     const loadInitialBackfill = async () => {
+      const responseFetchLimit = calculateCoordinatorResponseFetchLimit();
       const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
@@ -2371,16 +2405,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         }),
         fetchQuestionnaireBlindResponses({
           questionnaireId: id,
-          limit: 500,
+          limit: responseFetchLimit,
           readRelayLimit: 8,
           preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
           relays: questionnaireRelayPublishHints,
         }).catch(() => []),
         fetchQuestionnaireSubmissionDecisions({
           questionnaireId: id,
-          limit: 500,
+          limit: responseFetchLimit,
           readRelayLimit: 8,
           preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
           relays: questionnaireRelayPublishHints,
         }).catch(() => []),
         fetchQuestionnaireEventsWithFallback({
@@ -2494,7 +2532,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       },
       relays: questionnaireRelayPublishHints,
       readRelayLimit: 8,
-      limit: 500,
+      limit: calculateCoordinatorResponseFetchLimit(),
       onEvent: (event) => {
         if (event.kind === QUESTIONNAIRE_DEFINITION_KIND) {
           definitionById.set(event.id, event);
@@ -2749,14 +2787,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     });
   }
 
-  function setQuestionBallotIndex(index: number, slotIndex: number) {
-    updateQuestion(index, (entry) => withQuestionBallotSlot(entry, index, {
-      slotIndex,
-      bumpVersion: true,
-    }));
-  }
-
-  function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]) {
+function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]) {
     updateQuestion(index, (entry) => {
       if (entry.type === type) {
         return entry;
@@ -3793,15 +3824,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       let responsePublishAttemptCount = 0;
 
       if (usePublicSubmissionFlow) {
+        const responseFetchLimit = calculateCoordinatorResponseFetchLimit(latestAcceptedCount + latestRejectedCount, latestResultAcceptedCount);
         const [publicResponses, decisionEntries] = await Promise.all([
           fetchQuestionnaireBlindResponses({
             questionnaireId: definition.questionnaireId,
-            limit: 500,
+            limit: responseFetchLimit,
+            readRelayLimit: 8,
+            preferKindOnly: true,
+            maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+            timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
             relays: definition.questionnaireRelays ?? questionnaireRelayPublishHints,
           }).catch(() => []),
           fetchQuestionnaireSubmissionDecisions({
             questionnaireId: definition.questionnaireId,
-            limit: 500,
+            limit: responseFetchLimit,
+            readRelayLimit: 8,
+            preferKindOnly: true,
+            maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+            timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
             relays: definition.questionnaireRelays ?? questionnaireRelayPublishHints,
           }).catch(() => []),
         ]);
@@ -3880,7 +3920,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         const acceptedResponses = [...acceptedByKey.values()];
         const existingPublicResponses = await fetchQuestionnaireBlindResponses({
           questionnaireId: definition.questionnaireId,
-          limit: 500,
+          limit: calculateCoordinatorResponseFetchLimit(acceptedResponses.length),
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
           relays: definition.questionnaireRelays ?? questionnaireRelayPublishHints,
         }).catch(() => []);
         const existingResponseIds = new Set(
@@ -4778,9 +4822,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         {questions.map((question, index) => {
           const canMoveUp = index > 0;
           const canMoveDown = index < questions.length - 1;
-          const ballotIndex = ballotSlotIndexForQuestion(question, index);
-          const maxBallotIndex = Math.max(1, questions.length);
-          const ballotInputId = `question-ballot-index-${index}`;
 
           return (
             <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
@@ -4815,46 +4856,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         });
                     }}
                   />
-                  <div className='simple-questionnaire-ballot-index-control'>
-                    <label htmlFor={ballotInputId}>Ballot</label>
-                    <div className='simple-questionnaire-ballot-stepper'>
-                      <input
-                        id={ballotInputId}
-                        className='simple-questionnaire-ballot-index-input'
-                        type='number'
-                        inputMode='numeric'
-                        min={1}
-                        max={maxBallotIndex}
-                        value={ballotIndex}
-                        aria-label={`Question ${index + 1} ballot index`}
-                        onChange={(event) => {
-                          const parsed = Number.parseInt(event.target.value, 10);
-                          if (!Number.isFinite(parsed)) {
-                            return;
-                          }
-                          setQuestionBallotIndex(index, Math.min(Math.max(1, parsed), maxBallotIndex));
-                        }}
-                      />
-                      <div className='simple-questionnaire-ballot-stepper-buttons'>
-                        <UiButton
-                          className='simple-questionnaire-ballot-stepper-button'
-                          icon='uploadLine'
-                          iconOnly
-                          aria-label={`Increase question ${index + 1} ballot index`}
-                          isDisabled={ballotIndex >= maxBallotIndex}
-                          onPress={() => setQuestionBallotIndex(index, Math.min(maxBallotIndex, ballotIndex + 1))}
-                        />
-                        <UiButton
-                          className='simple-questionnaire-ballot-stepper-button'
-                          icon='downloadLine'
-                          iconOnly
-                          aria-label={`Decrease question ${index + 1} ballot index`}
-                          isDisabled={ballotIndex <= 1}
-                          onPress={() => setQuestionBallotIndex(index, Math.max(1, ballotIndex - 1))}
-                        />
-                      </div>
-                    </div>
-                  </div>
                   <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${index + 1} actions`}>
                     <UiButton
                       icon='copy'

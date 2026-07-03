@@ -26,6 +26,7 @@ import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition }
 import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
 import {
   normaliseQuestionBallotSlot,
+  questionBallotCredentialScope,
   questionBallotScopeKey,
   questionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
@@ -473,7 +474,7 @@ export function formatVoteActionButtonText(input: {
     return "Next";
   }
   if (!input.requiredQuestionsAnswered) {
-    return "Please answer all required questions";
+    return "Answer required questions to continue";
   }
   if (input.canSubmitNow) {
     return "Submit response";
@@ -524,6 +525,7 @@ type QuestionnaireOptionAVoterPanelProps = {
   showLoginAction?: boolean;
   onMessageOrganiser?: () => void;
   onBackToJoin?: () => void;
+  onActiveQuestionnaireIdChange?: (questionnaireId: string) => void;
 };
 
 type PrivateInviteBlockState = {
@@ -600,30 +602,12 @@ function scopedBallotScopeForQuestion(
   if (!question) {
     return null;
   }
-  const slot = normaliseQuestionBallotSlot(question, index);
-  const targetKey = scopedBallotScopeKey({
-    questionId: question.questionId,
-    slotId: slot.slotId,
-    slotIndex: slot.slotIndex,
-    version: slot.version,
-  });
+  const targetKey = scopedBallotScopeKey(questionBallotCredentialScope(question, index));
   const canonicalIndex = definition.questions.findIndex((candidate, candidateIndex) => {
-    const candidateSlot = normaliseQuestionBallotSlot(candidate, candidateIndex);
-    return scopedBallotScopeKey({
-      questionId: candidate.questionId,
-      slotId: candidateSlot.slotId,
-      slotIndex: candidateSlot.slotIndex,
-      version: candidateSlot.version,
-    }) === targetKey;
+    return scopedBallotScopeKey(questionBallotCredentialScope(candidate, candidateIndex)) === targetKey;
   });
   const canonicalQuestion = canonicalIndex >= 0 ? definition.questions[canonicalIndex] : question;
-  const canonicalSlot = normaliseQuestionBallotSlot(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index);
-  return withCredentialIndex({
-    questionId: canonicalQuestion.questionId,
-    slotId: canonicalSlot.slotId,
-    slotIndex: canonicalSlot.slotIndex,
-    version: canonicalSlot.version,
-  }, credentialIndex);
+  return questionBallotCredentialScope(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index, credentialIndex);
 }
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
@@ -718,6 +702,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   };
   const linkedContextElectionId = inviteContext.electionId?.trim() ?? "";
   const currentQuestionnaireId = snapshot?.electionId?.trim() || electionId.trim() || linkedContextElectionId || latestAnnouncedQuestionnaireId.trim();
+  useEffect(() => {
+    props.onActiveQuestionnaireIdChange?.(currentQuestionnaireId);
+  }, [currentQuestionnaireId, props.onActiveQuestionnaireIdChange]);
   const contextPendingInvites = useMemo(() => (
     linkedContextElectionId
       ? pendingInvites.filter((invite) => invite.electionId === linkedContextElectionId)
@@ -784,7 +771,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       void runtime.requestBlindBallot({ forceResend: true }).then(() => {
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
-        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+        setStatus(formatBlindRequestStatus("sent"));
         setRefreshNonce((value) => value + 1);
       }).catch(() => undefined);
     }
@@ -1272,7 +1259,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           setActiveInvite(null);
           setStatus(inviteStatus.claimedByThisDevice
             ? "Invite already claimed by this device/account."
-            : `Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+            : formatBlindRequestStatus("sent"));
           setRefreshNonce((value) => value + 1);
         } finally {
           delete autoRequestInFlightForRef.current[requestKey];
@@ -2196,6 +2183,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return issueBlindTokensWorker?.workerNpub?.trim() ? "audit proxy" : "organiser";
   }
 
+  function formatBlindRequestStatus(action: "sent" | "resent") {
+    const verb = action === "resent" ? "resent" : "sent";
+    const issuerName = getCredentialIssuerDisplayName();
+    if (issuerName === "audit proxy") {
+      return `Blind ballot request ${verb}.`;
+    }
+    return `Blind ballot request ${verb}. Waiting for ${issuerName} issuance.`;
+  }
+
   function buildGeneralPrivateInviteFallbackUrl(questionnaireId: string, coordinatorNpub?: string | null) {
     const id = questionnaireId.trim();
     if (!id || typeof window === "undefined") {
@@ -2316,12 +2312,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         autoRequestSentForRef.current[requestKey] = true;
       }
       setActiveInvite(null);
-      const credentialIssuerName = getCredentialIssuerDisplayName();
       setStatus(wasAlreadyWaiting
-        ? `Blind ballot request resent. Waiting for ${credentialIssuerName} issuance.`
+        ? formatBlindRequestStatus("resent")
         : claimedByThisDevice
           ? "Invite already claimed by this device/account."
-          : `Blind ballot request sent. Waiting for ${credentialIssuerName} issuance.`
+          : formatBlindRequestStatus("sent")
       );
       setRefreshNonce((value) => value + 1);
     } catch (error) {
@@ -2629,7 +2624,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+        setStatus(formatBlindRequestStatus("sent"));
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Request failed.");
@@ -2877,7 +2872,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+        setStatus(formatBlindRequestStatus("sent"));
         setRefreshNonce((value) => value + 1);
       })().catch((error) => {
         setStatus(error instanceof Error ? error.message : "Could not send blind ballot request.");
@@ -3281,20 +3276,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const hasAdjacentQuestion = previousQuestionIndex >= 0 || nextQuestionIndex >= 0;
   const activeQuestionProgressLabel = (() => {
     const questionPosition = Math.min(activeQuestionIndex + 1, Math.max(questions.length, 1));
-    const questionCountLabel = questions.length > 1
+    const questionCountLabel = questions.length > 0
       ? `Question ${questionPosition}/${questions.length}`
-      : "1 question";
-    const scopeLabel = activeQuestionScope?.slotIndex
-      ? `Ballot ${activeQuestionScope.slotIndex} · ${questionCountLabel}`
-      : questionCountLabel;
-    const proxyLabel = showProxyBallotsTogether
-      ? `${credentialCount} separate votes · `
-      : credentialCount > 1
-        ? `Vote ${activeCredentialIndex}/${credentialCount} · `
-        : "";
-    return responseSubmittedForCurrentQuestionnaire
-      ? `${proxyLabel}${scopeLabel} · Complete`
-      : `${proxyLabel}${scopeLabel}`;
+      : "Question 0/0";
+    return questionCountLabel;
   })();
   const combinedProxySubmitLabel = showProxyBallotsTogether && canSubmitNow
     ? proxyCredentialIndexesToSubmit.length > 1
@@ -3306,7 +3291,29 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
     || loadElectionSummary(actionQuestionnaireId)?.coordinatorNpub?.trim()
     || "";
-  const voteActionButtonText = combinedProxySubmitLabel || formatVoteActionButtonText({
+  const requiredAnswerPrompt = (() => {
+    if (requiredQuestionsAnsweredForAction) {
+      return "";
+    }
+    if (perQuestionMode && activeQuestion && !showProxyBallotsTogether) {
+      if (activeQuestion.type === "rank") {
+        const key = answerKeyForQuestion(activeQuestion.questionId);
+        const ranked = Array.isArray(answers[key]) ? (answers[key] as string[]) : [];
+        const requirement = getRankRequirementState(activeQuestion.options?.length ?? 0, activeQuestion.minimumRanked ?? 0, ranked.length);
+        if (requirement.missing > 0) {
+          return requirement.missing === 1
+            ? "Choose 1 option to continue"
+            : `Choose ${requirement.missing} options to continue`;
+        }
+      }
+      return "Answer this question to continue";
+    }
+    if (showProxyBallotsTogether) {
+      return "Answer each separate vote to continue";
+    }
+    return "Answer required questions to continue";
+  })();
+  const formattedVoteActionButtonText = formatVoteActionButtonText({
     snapshot: snapshotForAction,
     requiredQuestionsAnswered: requiredQuestionsAnsweredForAction,
     canSubmitNow,
@@ -3320,6 +3327,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     canAdvanceQuestionBeforeSubmit,
     submitInFlight,
   });
+  const voteActionButtonText = responseSubmittedForCurrentQuestionnaire || (perQuestionMode && allQuestionResponsesSubmitted) || submitInFlight
+    ? formattedVoteActionButtonText
+    : requiredAnswerPrompt || combinedProxySubmitLabel || formattedVoteActionButtonText;
   useEffect(() => {
     if (showProxyBallotsTogether) {
       return;
@@ -3493,7 +3503,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const credentialStateText = snapshot?.credentialReady
     ? "Received"
     : snapshot?.blindRequestSent
-      ? `Waiting for ${credentialIssuerName}`
+      ? credentialIssuerIsProxy ? "Request sent" : `Waiting for ${credentialIssuerName}`
       : "Not requested";
   const submissionStateText = snapshot?.submissionAccepted === true
     ? "Accepted"
@@ -3511,9 +3521,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ? "Accepted"
     : snapshot?.submissionAccepted === false
       ? "Rejected"
-      : displaySubmission
-        ? `Waiting for ${decisionActorName}`
-        : "Not submitted";
+      : "";
   const submittedAtLabel = displaySubmission?.submittedAt
     ? new Date(displaySubmission.submittedAt).toLocaleString()
     : "";
@@ -3625,7 +3633,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   className={`simple-questionnaire-rank-row${questionSubmitted ? " is-response-locked" : ""}`}
                   role='button'
                   tabIndex={questionSubmitted ? -1 : 0}
-                  aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
+                  aria-label={questionSubmitted
+                    ? `${option.label} ranked #${rankedIndex + 1}`
+                    : `Remove ${option.label} as #${rankedIndex + 1}`}
                   aria-disabled={questionSubmitted}
                   onClick={() => {
                     if (questionSubmitted) {
@@ -3649,32 +3659,38 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                       <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
                       <span>{option.label}</span>
                     </span>
-                    <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
+                    {questionSubmitted ? null : (
+                      <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
+                    )}
                   </span>
-                  <div className='simple-questionnaire-rank-actions'>
-                    <UiButton
-                      icon='uploadLine'
-                      iconOnly
-                      className='simple-voter-secondary simple-questionnaire-rank-action'
-                      onPress={(event) => {
-                        event.stopPropagation();
-                        moveRankedAnswer(question.questionId, option.optionId, -1, credentialIndex);
-                      }}
-                      isDisabled={questionSubmitted || rankedIndex === 0}
-                      aria-label='Move up'
-                    />
-                    <UiButton
-                      icon='downloadLine'
-                      iconOnly
-                      className='simple-voter-secondary simple-questionnaire-rank-action'
-                      onPress={(event) => {
-                        event.stopPropagation();
-                        moveRankedAnswer(question.questionId, option.optionId, 1, credentialIndex);
-                      }}
-                      isDisabled={questionSubmitted || rankedIndex === ranked.length - 1}
-                      aria-label='Move down'
-                    />
-                  </div>
+                  {questionSubmitted ? null : (
+                    <div
+                      className='simple-questionnaire-rank-actions'
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <UiButton
+                        icon='uploadLine'
+                        iconOnly
+                        className='simple-voter-secondary simple-questionnaire-rank-action'
+                        onPress={() => {
+                          moveRankedAnswer(question.questionId, option.optionId, -1, credentialIndex);
+                        }}
+                        isDisabled={rankedIndex === 0}
+                        aria-label='Move up'
+                      />
+                      <UiButton
+                        icon='downloadLine'
+                        iconOnly
+                        className='simple-voter-secondary simple-questionnaire-rank-action'
+                        onPress={() => {
+                          moveRankedAnswer(question.questionId, option.optionId, 1, credentialIndex);
+                        }}
+                        isDisabled={rankedIndex === ranked.length - 1}
+                        aria-label='Move down'
+                      />
+                    </div>
+                  )}
                 </div>
               );
             }) : null}
@@ -3684,7 +3700,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               {unrankedOptions.map((option) => (
                 <UiButton
                   key={option.optionId}
-                  icon='add'
+                  icon={false}
                   className='simple-voter-secondary simple-questionnaire-rank-add'
                   onPress={() => addRankedAnswer(question.questionId, option.optionId, credentialIndex)}
                   isDisabled={questionSubmitted}
@@ -3803,7 +3819,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const showQuestionnaireDescription = Boolean(
     questionnaireDescriptionText && questionnaireDescriptionText !== questionnaireHeadingText,
   );
-  const questionnaireDisplayId = statusQuestionnaireId;
   const ballotStatusSection = (
     <section id='questionnaire-ballot-status' className='simple-settings-card' aria-label='Ballot status'>
       <h4 className='simple-voter-section-title'>Ballot status</h4>
@@ -3844,11 +3859,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <li className={snapshot?.credentialReady ? "is-complete" : waitingForCredential ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot credential: {credentialStateText}</li>
         <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
       </ul>
-      {waitingForCredential ? (
+      {waitingForCredential && !credentialIssuerIsProxy ? (
         <p className='simple-voter-note'>
-          {credentialIssuerIsProxy
-            ? "Waiting for the audit proxy to issue your ballot credential. This page checks automatically; the organiser does not need to stay online once the proxy has received its delegation."
-            : "Waiting for the organiser to issue your ballot credential. This page checks automatically; the organiser must be online and can press Process requests."}
+          Waiting for the organiser to issue your ballot credential. This page checks automatically; the organiser must be online and can press Process requests.
         </p>
       ) : null}
     </section>
@@ -4010,10 +4023,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             <p className='simple-questionnaire-voter-description'>{questionnaireDescriptionText}</p>
           ) : null}
         </div>
-        <p className='simple-questionnaire-voter-number simple-questionnaire-voter-overview-id'>
-          Questionnaire
-          <span className='simple-questionnaire-voter-number-id'>{questionnaireDisplayId || "Missing"}</span>
-        </p>
       </section>
 
       {questions.length === 0 ? (
@@ -4078,29 +4087,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               <div className='simple-questionnaire-voter-heading'>
                 <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {question.prompt || "Untitled question"}</h4>
                 {showProxyBallotsTogether ? (
-                  <p className='simple-questionnaire-voter-requirement'>
-                    {questionSubmitted ? "Submitted" : questionRequirement}
-                  </p>
+                  questionSubmitted ? (
+                    <p className='simple-questionnaire-voter-requirement'>Submitted</p>
+                  ) : null
                 ) : (() => {
-                  const key = answerKeyForQuestion(question.questionId);
-                  const ranked = question.type === "rank" && Array.isArray(answers[key])
-                    ? (answers[key] as string[])
-                    : [];
-                  const rankRequirement = question.type === "rank"
-                    ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
-                    : null;
                   const requirementLabel = questionAccepted
                     ? null
                     : questionSubmitted
                       ? "Submitted"
-                      : rankRequirement?.label ?? (questionHasResponse(question) ? null : questionRequirement);
-                  const requirementClass = rankRequirement?.missing
-                    ? " is-needed"
-                    : requirementLabel === "Optional"
-                      ? " is-optional"
-                      : "";
+                      : null;
                   return requirementLabel ? (
-                    <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
+                    <p className='simple-questionnaire-voter-requirement'>
                       {requirementLabel}
                     </p>
                   ) : null;
@@ -4218,9 +4215,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             <div>
               <h4 className='simple-voter-section-title'>Vote receipt</h4>
             </div>
-            <span className={snapshot?.submissionAccepted === false ? "simple-vote-receipt-status is-rejected" : "simple-vote-receipt-status"}>
-              {receiptStatusLabel}
-            </span>
+            {receiptStatusLabel ? (
+              <span className={snapshot?.submissionAccepted === false ? "simple-vote-receipt-status is-rejected" : "simple-vote-receipt-status"}>
+                {receiptStatusLabel}
+              </span>
+            ) : null}
           </div>
           <div className='simple-submission-identity-body simple-vote-receipt-body'>
             <div className='simple-vote-receipt-identity-panel'>
@@ -4287,7 +4286,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             </dl>
             <details className='simple-vote-receipt-advanced'>
               <summary>Advanced details</summary>
-              <p className='simple-voter-note'>Raw Nostr and cryptographic fields for troubleshooting and audit checks.</p>
               <dl className='simple-submission-identity-details simple-vote-receipt-advanced-grid'>
                 {advancedReceiptRows.map((row) => (
                   <div key={row.label}>

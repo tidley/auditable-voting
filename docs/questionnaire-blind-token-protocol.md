@@ -65,6 +65,18 @@ Validation rules include:
 
 When an answer-bearing question changes after credentials have been issued, the client keeps the question identity but bumps the slot `version` for that ballot index group. New blind-token requests for that group are then bound to the new slot version; old scoped credentials remain unspendable for the edited slot.
 
+### 3.1 Grouped ballot privacy choice
+
+The current implementation uses the pragmatic grouping rule: questions with the same ballot slot are one anonymous ballot group and spend one blind credential. That gives the same privacy shape as a single ballot question with several fields, so no zero-knowledge proof is required beyond the blind-token proof.
+
+Stronger privacy variants are possible, but they are different protocol projects:
+
+- Hidden answers inside a grouped public ballot require a zero-knowledge proof that each hidden answer is valid without revealing it.
+- Encrypted answers with a publicly verifiable tally require proofs that ciphertexts encode valid answers and that the tally was computed correctly.
+- Several unlinkable per-question spends from one eligibility credential require anonymous-credential or set-membership proofs.
+
+Those tools are less accessible than RSABSSA blind signatures. A browser implementation would need an audited ZK library, explicit circuits, proof-size and proving-time budgets, and a review of setup assumptions before it should be trusted for real elections.
+
 ## 4. Questionnaire state
 
 Shape:

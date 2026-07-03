@@ -1942,6 +1942,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.getAllByLabelText(/Open Colour ID for token/i).length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
     expect(within(receiptRegion).getByText("Vote receipt")).toBeTruthy();
+    expect(within(receiptRegion).queryByText(/Waiting for/i)).toBeNull();
     expect(screen.getAllByText("Anonymous voting identity").length).toBeGreaterThan(0);
     expect(screen.getAllByText("rrr-rrr").length).toBeGreaterThan(0);
     expect(within(receiptRegion).queryByText("Identity words")).toBeNull();
@@ -2063,13 +2064,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_complete"]} localVoterNpub={localVoterNpub} />);
 
-    expect(await screen.findByText("Ballot 1 · Question 1/2 · Complete")).toBeTruthy();
-    expect(screen.queryByText("Ballot 1 · 2 questions · Complete")).toBeNull();
+    expect(await screen.findByText("Question 1/2")).toBeTruthy();
+    expect(screen.queryByText(/Complete/)).toBeNull();
     expect(screen.getAllByText("Q1: First grouped question").length).toBeGreaterThan(0);
     expect(screen.queryByText("Q2: Second grouped question")).toBeNull();
     expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Ballot 1 · Question 2/2 · Complete")).toBeTruthy();
+    expect(await screen.findByText("Question 2/2")).toBeTruthy();
     expect(screen.queryByText("Q1: First grouped question")).toBeNull();
     expect(screen.getAllByText("Q2: Second grouped question").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "View results" })).toBeTruthy();

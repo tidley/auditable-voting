@@ -441,7 +441,7 @@
                 <li>An organiser invites a voter or confirms that a voter is eligible.</li>
                 <li>The voter requests fresh blind ballot credentials for this questionnaire, one per ballot index. Large bundled request and issuance DMs can be compressed before encryption, while small bundles stay plain JSON.</li>
                 <li>The organiser or audit proxy signs it without seeing the final credential.</li>
-                <li>The voter submits a public ballot anonymously.</li>
+                <li>The voter submits each ballot index anonymously; grouped questions share one proof, like one multi-part ballot question.</li>
                 <li>Anyone can verify that accepted ballots are valid, unique, and correctly tallied.</li>
               </ol>
             </div>

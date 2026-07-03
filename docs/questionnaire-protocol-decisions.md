@@ -37,6 +37,13 @@ This record freezes the implementation decisions for the questionnaire-first bli
 - Legacy objects default to compatibility mode:
   - `responseMode = legacy_private_envelope` when field is missing.
 
+## 4a. Privacy variant boundary
+
+- Shipped pragmatic variant: same ballot index means one blind credential and one public proof for the whole question group. This is equivalent to making those prompts one multi-part ballot question, so it does not need a zero-knowledge circuit.
+- Stronger variant A, selective per-answer privacy inside a grouped public ballot: would need a zero-knowledge proof that each hidden answer is well-formed and belongs to an issued ballot without revealing the answer. This is accessible only with a SNARK/STARK library, a circuit, trusted-setup or transparent-proof choices, and browser proof performance testing.
+- Stronger variant B, encrypted answers with public tally correctness: would need zero-knowledge proofs that encrypted answers were valid and that the published tally was computed from accepted ciphertexts. This is specialist cryptography rather than ordinary web work; use an audited voting-ZK stack before attempting it in production.
+- Stronger variant C, unlinkable multi-question credentials with per-question hidden linkage: would need anonymous-credential or set-membership proofs proving one eligible credential authorises several scoped spends without linking them. Browser-friendly libraries exist, but integrating them safely is still research-grade for this project.
+
 ## 5. Event kind policy
 
 - Implementation kinds remain regular custom events:

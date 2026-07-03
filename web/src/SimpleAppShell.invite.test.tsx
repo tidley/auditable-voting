@@ -103,6 +103,29 @@ describe("SimpleAppShell invite-link login", () => {
     });
   });
 
+  it("opens the observer relays page from the menu", async () => {
+    const user = userEvent.setup();
+    window.history.pushState(null, "", "/?role=auditor");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+
+    expect(screen.getByText("Observer app")).toBeTruthy();
+    expect(screen.queryByText("Relay panel")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Menu" }));
+    await user.click(screen.getByRole("tab", { name: "Relays" }));
+
+    expect(screen.getByText("Relay panel")).toBeTruthy();
+    expect(screen.queryByText("Observer app")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Menu" }));
+    await user.click(screen.getByRole("tab", { name: "Questionnaire Results" }));
+
+    expect(screen.getByText("Observer app")).toBeTruthy();
+    expect(screen.queryByText("Relay panel")).toBeNull();
+  });
+
   it("does not artificially disable copy buttons while feedback settles", async () => {
     const user = userEvent.setup();
     const { default: SimpleAppShell } = await import("./SimpleAppShell");

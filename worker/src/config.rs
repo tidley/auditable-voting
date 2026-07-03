@@ -11,10 +11,7 @@ const DEFAULT_WORKER_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://relay.primal.net",
 ];
-const DEFAULT_WORKER_DM_RELAYS: &[&str] = &[
-    "wss://vm-1734.lnvps.cloud/",
-    "wss://relay.nostr.net",
-];
+const DEFAULT_WORKER_DM_RELAYS: &[&str] = &["wss://vm-1734.lnvps.cloud/", "wss://relay.nostr.net"];
 const DEFAULT_WORKER_BLOSSOM_RESULT_PACK_SERVERS: &[&str] = &[
     "https://blossom.nostr.build",
     "https://blossom.primal.net",
@@ -53,9 +50,8 @@ impl WorkerConfig {
         };
         let raw_public_archive_relays =
             env::var("WORKER_PUBLIC_ARCHIVE_RELAYS").unwrap_or_default();
-        let raw_blossom_result_pack_servers =
-            env::var("WORKER_BLOSSOM_RESULT_PACK_SERVERS")
-                .unwrap_or_else(|_| DEFAULT_WORKER_BLOSSOM_RESULT_PACK_SERVERS.join(","));
+        let raw_blossom_result_pack_servers = env::var("WORKER_BLOSSOM_RESULT_PACK_SERVERS")
+            .unwrap_or_else(|_| DEFAULT_WORKER_BLOSSOM_RESULT_PACK_SERVERS.join(","));
         let worker_state_dir = env::var("WORKER_STATE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./worker-state"));
@@ -183,6 +179,10 @@ mod tests {
                 "https://blossom.primal.net".to_string(),
             ]
         );
-        assert!(parse_optional_https_urls("WORKER_BLOSSOM_RESULT_PACK_SERVERS", "http://example.com").is_err());
+        assert!(parse_optional_https_urls(
+            "WORKER_BLOSSOM_RESULT_PACK_SERVERS",
+            "http://example.com"
+        )
+        .is_err());
     }
 }

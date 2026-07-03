@@ -379,6 +379,8 @@ pub struct ElectionRuntimeState {
     #[serde(default)]
     pub deferred_blind_request_ids: HashSet<String>,
     #[serde(default)]
+    pub deferred_blind_requests: HashMap<String, BlindBallotRequest>,
+    #[serde(default)]
     pub issued_invited_npubs: HashSet<String>,
     #[serde(default)]
     pub issued_invited_scope_keys: HashSet<String>,
@@ -509,6 +511,7 @@ mod tests {
 
         assert!(election.seen_blind_request_ids.is_empty());
         assert!(election.deferred_blind_request_ids.is_empty());
+        assert!(election.deferred_blind_requests.is_empty());
         assert!(election.issued_invited_npubs.is_empty());
         assert!(election.issued_invited_scope_keys.is_empty());
         assert!(election.whitelist_npubs.is_empty());

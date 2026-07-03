@@ -195,32 +195,15 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(onConfigureWorker).not.toHaveBeenCalled();
   });
 
-  it("lets organisers group questions under one ballot index", async () => {
+  it("keeps questionnaire questions under one hidden ballot index", async () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
     fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-    const firstBallotIndex = screen.getByLabelText("Question 1 ballot index") as HTMLInputElement;
-    const secondBallotIndex = screen.getByLabelText("Question 2 ballot index") as HTMLInputElement;
-
-    expect(firstBallotIndex.value).toBe("1");
-    expect(secondBallotIndex.value).toBe("1");
-
-    fireEvent.change(secondBallotIndex, { target: { value: "2" } });
-    await waitFor(() => {
-      expect(secondBallotIndex.value).toBe("2");
-    });
-
     fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-    const thirdBallotIndex = screen.getByLabelText("Question 3 ballot index") as HTMLInputElement;
-    expect(thirdBallotIndex.value).toBe("2");
 
-    fireEvent.change(secondBallotIndex, { target: { value: "1" } });
-    fireEvent.change(thirdBallotIndex, { target: { value: "1" } });
-
-    await waitFor(() => {
-      expect(secondBallotIndex.value).toBe("1");
-      expect(thirdBallotIndex.value).toBe("1");
-    });
+    expect(screen.queryByLabelText("Question 1 ballot index")).toBeNull();
+    expect(screen.queryByLabelText("Question 2 ballot index")).toBeNull();
+    expect(screen.queryByLabelText("Question 3 ballot index")).toBeNull();
 
     const stored = JSON.parse(
       window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1")) ?? "{}",
@@ -493,6 +476,42 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       const optionText = [...selector.options].map((option) => option.textContent ?? "");
       expect(optionText.some((text) => text.includes("Published questionnaire title - q_cached_title"))).toBe(true);
       expect(optionText.some((text) => text.includes("Copied draft title"))).toBe(false);
+    });
+  });
+
+  it("uses the provided initial questionnaire id for response reads", async () => {
+    const coordinatorNpub = "npub1organiser";
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_stored_draft",
+        title: "Stored draft",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='responses'
+        coordinatorNpub={coordinatorNpub}
+        initialQuestionnaireId='q_from_url'
+      />,
+    );
+
+    await waitFor(() => {
+      const qTagQueries = sharedNostrPoolMocks.querySync.mock.calls
+        .map(([, filter]) => filter as { "#q"?: string[] } | undefined)
+        .filter((filter) => Array.isArray(filter?.["#q"]));
+      expect(qTagQueries.some((filter) => filter?.["#q"]?.includes("q_from_url"))).toBe(true);
+      expect(qTagQueries.some((filter) => filter?.["#q"]?.includes("q_stored_draft"))).toBe(false);
     });
   });
 

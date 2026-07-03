@@ -100,15 +100,38 @@ async function withQuestionnairePublicQuerySlot<T>(task: () => Promise<T>): Prom
   }
 }
 
-export async function queryQuestionnaireEvents(relays: string[], filter: Filter) {
-  const key = JSON.stringify({ relays, filter });
+async function withQuestionnairePublicQueryTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_resolve, reject) => {
+        timer = globalThis.setTimeout(() => {
+          reject(new Error(`Questionnaire relay query timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      globalThis.clearTimeout(timer);
+    }
+  }
+}
+
+export async function queryQuestionnaireEvents(
+  relays: string[],
+  filter: Filter,
+  options: { timeoutMs?: number } = {},
+) {
+  const timeoutMs = Math.max(250, options.timeoutMs ?? QUESTIONNAIRE_PUBLIC_QUERY_TIME_BUDGET_MS);
+  const key = JSON.stringify({ relays, filter, timeoutMs });
   const existing = questionnairePublicInFlightQueries.get(key);
   if (existing) {
     return existing;
   }
   const run = withQuestionnairePublicQuerySlot(async () => {
     const pool = getSharedNostrPool();
-    return pool.querySync(relays, filter);
+    return withQuestionnairePublicQueryTimeout(pool.querySync(relays, filter), timeoutMs);
   });
   questionnairePublicInFlightQueries.set(key, run);
   try {
@@ -149,14 +172,22 @@ async function queryQuestionnaireEventsPaginated(input: {
   let until = typeof input.filter.until === "number" ? input.filter.until : undefined;
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    if (Date.now() - startedAt > timeBudgetMs) {
+    const remainingMs = timeBudgetMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
       break;
     }
-    const pageEvents = await queryQuestionnaireEvents(input.relays, {
-      ...input.filter,
-      ...(until ? { until } : {}),
-      limit: pageLimit,
-    });
+    const pageEvents = await queryQuestionnaireEvents(
+      input.relays,
+      {
+        ...input.filter,
+        ...(until ? { until } : {}),
+        limit: pageLimit,
+      },
+      { timeoutMs: remainingMs },
+    ).catch(() => [] as NostrEvent[]);
+    if (pageEvents.length === 0) {
+      break;
+    }
     const sortedPage = sortEventsNewestFirst(uniqueEvents(pageEvents));
     let addedCount = 0;
     for (const event of sortedPage) {

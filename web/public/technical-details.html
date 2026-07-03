@@ -259,7 +259,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the invite link as the invited voter, or open the app as **Voter** and click **Check invites**.
 2. Open the pending questionnaire.
-3. Click **Request ballot** if the blind credential request does not start automatically. Current per-question questionnaires request a bundle with one scoped credential per ballot index; large request bundles may be compressed before NIP-17 encryption, with plain JSON kept as the fallback.
+3. Click **Request ballot** if the blind credential request does not start automatically. Current questionnaires request one scoped credential for the response group; large request bundles may be compressed before NIP-17 encryption, with plain JSON kept as the fallback.
 4. Wait for the ballot credential to be ready.
 5. Complete the questionnaire and click **Submit response**.
 6. After submission, Vote keeps the submitted answers visible and locks the question controls for that questionnaire.
@@ -349,6 +349,16 @@ The questionnaire path now uses a real blind-signing shape:
 7. The organiser verifies the unblinded credential and accepts the first spend for the token nullifier.
 
 The submitted response no longer uses the invited voter npub as the ballot identity.
+
+Current questionnaire questions use the pragmatic privacy model: one internal anonymous response group, with one blind credential and one public proof. That is no different from asking one multi-part question, so the shipped browser flow does not need a zero-knowledge circuit.
+
+Stronger privacy versions would need more specialised cryptography:
+
+- hiding individual answers inside a grouped public ballot needs a zero-knowledge proof that the hidden answers are valid;
+- encrypted answers with public tally verification need proofs that each ciphertext is a valid answer and that the published tally was computed from the accepted ciphertexts;
+- several unlinkable per-question spends from one eligibility credential need anonymous-credential or set-membership proofs.
+
+These are less accessible than the current RSABSSA blind-signature path. They require audited ZK libraries, explicit circuits, proof-size and browser proving-time checks, and review of trusted-setup or transparent-proof assumptions.
 
 ```mermaid
 sequenceDiagram

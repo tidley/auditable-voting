@@ -427,6 +427,7 @@ type SimpleUiAppProps = {
   onActiveTabChange?: (tab: VoterTab) => void;
   onIdentityChange?: (npub: string) => void;
   onUnreadMessagesChange?: (hasUnreadMessages: boolean) => void;
+  onActiveQuestionnaireIdChange?: (questionnaireId: string) => void;
   showSectionTabs?: boolean;
 };
 
@@ -3374,6 +3375,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               autoSignerLogin={questionnaireAutoSignerLogin}
               optionARequestBlindBallotNonce={optionARequestBlindBallotNonce}
               showOptionALoginAction={false}
+              onActiveQuestionnaireIdChange={props.onActiveQuestionnaireIdChange}
               onMessageOrganiser={() => setActiveTab("messages")}
               onBackToJoin={() => setActiveTab("configure")}
             />
@@ -3647,6 +3649,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                 localVoterNsec={questionnaireLocalVoterNsec}
                 autoSignerLogin={questionnaireAutoSignerLogin}
                 showOptionALoginAction={false}
+                onActiveQuestionnaireIdChange={props.onActiveQuestionnaireIdChange}
                 onMessageOrganiser={() => setActiveTab("messages")}
                 onBackToJoin={() => setActiveTab("configure")}
               />

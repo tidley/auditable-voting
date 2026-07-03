@@ -2147,11 +2147,12 @@ describe("Simple round flow", () => {
     const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(observerUi.getByRole("heading", { name: /Find Published Questionnaires/i, level: 2 })).toBeTruthy();
-      expect(observerUi.getByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeTruthy();
-      expect(observerUi.getByText(/Choose a questionnaire round to inspect results\./i)).toBeTruthy();
-      expect(observerUi.getByText(/Choose a questionnaire round to inspect responses\./i)).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByText(/Loading questionnaires from Nostr relays\.\.\./i)).toBeTruthy();
     });
+    expect(observerUi.queryByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeNull();
+    expect(observerUi.queryByText(/Choose a questionnaire round to inspect results\./i)).toBeNull();
+    expect(observerUi.queryByText(/Choose a questionnaire round to inspect responses\./i)).toBeNull();
   });
 
   it("keeps questionnaire search controls hidden until observer discovery finds questionnaire definitions", async () => {
@@ -2191,10 +2192,9 @@ describe("Simple round flow", () => {
     const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(observerUi.getByRole("heading", { name: /Find Published Questionnaires/i, level: 2 })).toBeTruthy();
-      expect(observerUi.getByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeTruthy();
-      expect(observerUi.getByText(/Choose a questionnaire round to inspect results\./i)).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
     });
+    expect(observerUi.queryByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeNull();
 
     expect(observerUi.queryByLabelText(/Search/i)).toBeNull();
     expect(observerUi.queryByLabelText(/Questionnaire organiser identity/i)).toBeNull();

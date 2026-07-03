@@ -22,6 +22,7 @@ import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
+type AuditorPage = "gallery" | "relays";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
 const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
@@ -256,7 +257,9 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [voterTab, setVoterTab] = useState<VoterTab>(() => (readLinkedQuestionnaireIdFromUrl() ? "vote" : "configure"));
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [auditorPage, setAuditorPage] = useState<AuditorPage>("gallery");
   const [voterMessagesUnread, setVoterMessagesUnread] = useState(false);
+  const [activeVoterQuestionnaireId, setActiveVoterQuestionnaireId] = useState("");
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
   const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState<"qr" | null>(null);
   const [accountIdentityQrSrc, setAccountIdentityQrSrc] = useState<string | null>(null);
@@ -290,6 +293,9 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   useEffect(() => {
     if (role !== "voter") {
       setVoterMessagesUnread(false);
+    }
+    if (role !== "auditor") {
+      setAuditorPage("gallery");
     }
   }, [role]);
 
@@ -450,6 +456,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   const handleVoterIdentityChange = useCallback((npub: string) => {
     setAccountIdentityNpub(npub.trim());
+  }, []);
+  const handleActiveVoterQuestionnaireIdChange = useCallback((questionnaireId: string) => {
+    const nextQuestionnaireId = questionnaireId.trim();
+    setActiveVoterQuestionnaireId((current) => (
+      current === nextQuestionnaireId ? current : nextQuestionnaireId
+    ));
   }, []);
 
   useEffect(() => {
@@ -873,6 +885,41 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               </div>
             </div>
           ) : null}
+          {role === "auditor" ? (
+            <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
+              <div
+                className='simple-role-switch simple-role-switch-menu-inline simple-auditor-menu-switch'
+                role='tablist'
+                aria-label='Observer pages'
+              >
+                <UiButton
+                  icon='view'
+                  role='tab'
+                  aria-selected={auditorPage === "gallery"}
+                  className={`simple-role-switch-button${auditorPage === "gallery" ? ' is-active' : ''}`}
+                  onPress={() => {
+                    setAuditorPage("gallery");
+                    setAccountMenuOpen(false);
+                  }}
+                >
+                  <span>Questionnaire Results</span>
+                </UiButton>
+                <UiButton
+                  icon='share'
+                  role='tab'
+                  aria-selected={auditorPage === "relays"}
+                  className={`simple-role-switch-button${auditorPage === "relays" ? ' is-active' : ''}`}
+                  onPress={() => {
+                    setAuditorPage("relays");
+                    setAccountMenuOpen(false);
+                  }}
+                >
+                  <span>Relays</span>
+                </UiButton>
+              </div>
+            </div>
+          ) : null}
+          {role === "auditor" && auditorPage === "gallery" ? <div id='simple-auditor-menu-filters' role='none' /> : null}
           <div className='simple-account-menu-section' role='none'>
             <p className='simple-account-menu-kicker'>Change View</p>
             <div
@@ -1003,9 +1050,17 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   return (
     <div className={`simple-app-shell${role === "coordinator" ? " simple-app-shell-coordinator" : ""}`}>
       {role === "coordinator" ? null : (
-        <div className='simple-role-switch-wrap'>
+        <div className={`simple-role-switch-wrap${role === "auditor" ? " simple-auditor-topbar-wrap" : ""}`}>
           <div className='simple-role-switch-topbar'>
             {accountMenuControl}
+            {role === "auditor" && auditorPage === "gallery" ? (
+              <div id='simple-auditor-topbar-actions' className='simple-auditor-topbar-actions' />
+            ) : null}
+            {role === "voter" && activeVoterQuestionnaireId ? (
+              <p className='simple-voter-topbar-questionnaire-id' title={activeVoterQuestionnaireId}>
+                {activeVoterQuestionnaireId}
+              </p>
+            ) : null}
             {role === "voter" ? null : isSimpleActorRole(role) && accountIdentityNpub ? (
               <UiButton
                 icon='qr'
@@ -1017,7 +1072,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 {currentRoleSummary}
               </UiButton>
             ) : (
-              <p className='simple-current-role-summary'>{currentRoleSummary}</p>
+              null
             )}
           </div>
         </div>
@@ -1028,15 +1083,23 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           activeTab={voterTab}
           onActiveTabChange={setVoterTab}
           onIdentityChange={handleVoterIdentityChange}
+          onActiveQuestionnaireIdChange={handleActiveVoterQuestionnaireIdChange}
           onUnreadMessagesChange={setVoterMessagesUnread}
           showSectionTabs={false}
         />
       ) : role === 'coordinator' ? (
         <SimpleCoordinatorApp accountMenu={accountMenuControl} />
+      ) : auditorPage === "relays" ? (
+        <main className='simple-voter-shell simple-auditor-shell simple-relays-shell'>
+          <SimpleRelayPanel standalone />
+        </main>
       ) : (
-        <SimpleAuditorApp />
+        <SimpleAuditorApp
+          filtersInMenu
+          filtersMenuOpen={accountMenuOpen && role === "auditor"}
+          onFiltersMenuClose={() => setAccountMenuOpen(false)}
+        />
       )}
-      {role === 'auditor' ? <SimpleRelayPanel /> : null}
       {accountIdentityDialogOpen && accountIdentityNpub ? (
         <div
           className='simple-identity-qr-overlay simple-account-identity-overlay'

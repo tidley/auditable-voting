@@ -1,9 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getQuestionnaireReadRelays,
   parseQuestionnaireAdmissionAnnouncementEvent,
   QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND,
+  queryQuestionnaireEvents,
 } from "./questionnaireNostr";
+
+const sharedNostrPoolMocks = vi.hoisted(() => ({
+  querySync: vi.fn(),
+}));
+
+vi.mock("./sharedNostrPool", () => ({
+  getSharedNostrPool: () => sharedNostrPoolMocks,
+}));
+
+beforeEach(() => {
+  sharedNostrPoolMocks.querySync.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("questionnaireNostr relay selection", () => {
   it("does not use relays that reject questionnaire tag reads", () => {
@@ -26,6 +43,23 @@ describe("questionnaireNostr relay selection", () => {
     expect(relays).not.toContain("wss://relay.primal.net");
     expect(relays).not.toContain("wss://nostr.wine");
     expect(relays).not.toContain("wss://nostr.mom");
+  });
+});
+
+describe("questionnaireNostr relay queries", () => {
+  it("times out stuck public relay queries", async () => {
+    vi.useFakeTimers();
+    sharedNostrPoolMocks.querySync.mockReturnValue(new Promise(() => undefined));
+
+    const query = queryQuestionnaireEvents(
+      ["wss://relay.example"],
+      { kinds: [QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND], limit: 1 },
+      { timeoutMs: 250 },
+    );
+    const assertion = expect(query).rejects.toThrow("Questionnaire relay query timed out after 250ms.");
+
+    await vi.advanceTimersByTimeAsync(250);
+    await assertion;
   });
 });
 

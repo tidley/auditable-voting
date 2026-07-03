@@ -1,5 +1,17 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+import {
+  Button as AriaButton,
+  Disclosure as AriaDisclosure,
+} from "react-aria-components";
+import {
+  CalendarDays,
+  CircleHelp,
+  Clock3,
+  FileText,
+  UserRound,
+  Users,
+} from "lucide-react";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { deriveIdentityWords } from "./identityWords";
@@ -11,6 +23,55 @@ import type {
 } from "./questionnaireProtocol";
 
 const SUBMITTED_VOTES_PAGE_SIZE = 100;
+
+function AuditorDropdown({
+  className = "",
+  headClassName = "",
+  defaultOpen = false,
+  title,
+  children,
+}: {
+  className?: string;
+  headClassName?: string;
+  defaultOpen?: boolean;
+  title: ReactNode;
+  children: ReactNode;
+}) {
+  const bodyId = useId();
+
+  return (
+    <AriaDisclosure
+      defaultExpanded={defaultOpen}
+      className={({ isExpanded }) => `simple-auditor-dropdown ${isExpanded ? "is-open" : "is-closed"} ${className}`.trim()}
+    >
+      {({ isExpanded }) => {
+        const hiddenBodyProps = isExpanded ? {} : ({ inert: "" } as Record<string, string>);
+        return (
+          <>
+            <AriaButton
+              slot='trigger'
+              type='button'
+              className={`simple-auditor-dropdown-head ${headClassName}`.trim()}
+              aria-controls={bodyId}
+            >
+              {title}
+            </AriaButton>
+            <div
+              id={bodyId}
+              className='simple-auditor-dropdown-body'
+              aria-hidden={!isExpanded}
+              {...hiddenBodyProps}
+            >
+              <div className='simple-auditor-dropdown-body-inner'>
+                {children}
+              </div>
+            </div>
+          </>
+        );
+      }}
+    </AriaDisclosure>
+  );
+}
 
 export type QuestionnaireResultsDashboardQuestionnaire = {
   questionnaireId: string;
@@ -138,6 +199,7 @@ export default function QuestionnaireResultsDashboard({
   emptyResponseSelectionText = "Choose a questionnaire round to inspect responses.",
 }: QuestionnaireResultsDashboardProps) {
   const [voterSearchQuery, setVoterSearchQuery] = useState("");
+  const [resultSearchQuery, setResultSearchQuery] = useState("");
   const [showInvalidVotes, setShowInvalidVotes] = useState(false);
   const [submittedPageIndex, setSubmittedPageIndex] = useState(0);
   const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
@@ -189,6 +251,12 @@ export default function QuestionnaireResultsDashboard({
       .filter((entry) => questionnaireResponseDetailMatchesSearch(entry, voterSearchQuery))
       .sort(compareResponseDetailsByShortId);
   }, [responseDetails, showInvalidVotes, voterSearchQuery]);
+  const filteredQuestionSummaries = useMemo(
+    () => questionSummaries.filter((summary) => (
+      questionSummaryMatchesSearch(summary, selectedQuestionById.get(summary.questionId), resultSearchQuery)
+    )),
+    [questionSummaries, resultSearchQuery, selectedQuestionById],
+  );
   const submittedPageCount = Math.max(1, Math.ceil(filteredResponseDetails.length / SUBMITTED_VOTES_PAGE_SIZE));
   const clampedSubmittedPageIndex = Math.min(submittedPageIndex, submittedPageCount - 1);
   const visibleResponseDetails = useMemo(() => {
@@ -229,6 +297,7 @@ export default function QuestionnaireResultsDashboard({
   const loadedAcceptedPercent = loadedTotalCount > 0
     ? Math.round((loadedAcceptedCount / loadedTotalCount) * 100)
     : 0;
+  const loadedProgressLabel = `${loadedAcceptedCount}/${loadedTotalCount || 0} accepted (${loadedAcceptedPercent}%)`;
   const loadedTotalLabel = `Loaded: ${loadedTotalCount} (${loadedTotalPercent}%)`;
   const loadedAcceptedLabel = `Accepted: ${loadedAcceptedCount} (${loadedAcceptedPercent}%)`;
   const loadedResponsesLabel = `${loadedTotalLabel} · ${loadedAcceptedLabel}${loadedRejectedCount > 0 ? ` · Invalid: ${loadedRejectedCount}` : ""}`;
@@ -405,6 +474,200 @@ export default function QuestionnaireResultsDashboard({
     columns: sessionResponseColumns,
     getCoreRowModel: getCoreRowModel(),
   });
+  const questionSummaryContent = filteredQuestionSummaries.length > 0 ? (
+    <>
+      <div className={`simple-auditor-question-grid${isSessionVariant ? " simple-session-question-grid" : ""}`}>
+        {filteredQuestionSummaries.map((summary) => {
+          const questionNumber = selectedQuestionNumberById.get(summary.questionId);
+          const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
+          const questionResponseCount = acceptedQuestionResponseCountById.get(summary.questionId)
+            ?? getSummaryResponseCount(summary, displayValidCount);
+          return (
+            <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
+              <div className='simple-auditor-question-card-head'>
+                <div>
+                  <h3 className='simple-voter-question'>
+                    {questionNumber ? `Q${questionNumber}. ` : ""}
+                    {questionTitle}
+                  </h3>
+                  <p className='simple-auditor-question-response-count'>
+                    <PeopleIcon />
+                    <span>{formatResponseCount(questionResponseCount)}</span>
+                  </p>
+                </div>
+              </div>
+              {summary.answerType === "yes_no" ? (
+                <YesNoSummaryCard summary={summary} />
+              ) : summary.answerType === "multiple_choice" ? (
+                <MultipleChoiceSummaryCard
+                  summary={summary}
+                  question={selectedQuestionById.get(summary.questionId)}
+                  responseCount={questionResponseCount}
+                />
+              ) : summary.answerType === "rank" ? (
+                <RankSummaryCard
+                  summary={summary}
+                  question={selectedQuestionById.get(summary.questionId)}
+                />
+              ) : (
+                <div className='simple-auditor-free-text-cardlet'>
+                  <UiButton
+                    icon='view'
+                    className='simple-auditor-text-button'
+                    onPress={() => setFreeTextViewerQuestionId(summary.questionId)}
+                  >
+                    View answers
+                  </UiButton>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {fallbackQuestionSummaryNote ? (
+        <p className='simple-voter-note'>{fallbackQuestionSummaryNote}</p>
+      ) : null}
+    </>
+  ) : questionSummaries.length > 0 && resultSearchQuery.trim() ? (
+    <p className='simple-voter-empty'>No result cards match this filter.</p>
+  ) : (
+    <p className='simple-voter-empty'>{emptyQuestionSummaryText}</p>
+  );
+  const submittedVotesContent = questionnaire ? (
+    responseDetails.length > 0 ? (
+      <>
+        <div className={`simple-auditor-submitted-toolbar${isSessionVariant ? " simple-session-submitted-toolbar" : ""}`}>
+          {!isSessionVariant ? (
+            <div className='simple-auditor-submitted-stat'>
+              <p className='simple-auditor-summary-label'>Loaded Responses</p>
+              <p className='simple-auditor-score'>{responseDetails.length}</p>
+            </div>
+          ) : null}
+          <div className='simple-auditor-submitted-filter'>
+            <UiTextField
+              label='Filter submitted votes'
+              fieldClassName='simple-auditor-submitted-search-field'
+              inputProps={{
+                id: "simple-auditor-submitted-search",
+                value: voterSearchQuery,
+                onChange: (event) => setVoterSearchQuery(event.target.value),
+                placeholder: "Search by Submission ID, identity words, full identity, or token...",
+              }}
+            />
+            {hasInvalidResponses ? (
+              <UiSwitch
+                className='simple-auditor-invalid-toggle'
+                isSelected={showInvalidVotes}
+                onChange={setShowInvalidVotes}
+                label={`Show ${invalidResponseCount} invalid ${invalidResponseCount === 1 ? "vote" : "votes"} only`}
+              />
+            ) : null}
+          </div>
+          {responseDecryptControls ? (
+            <div className='simple-auditor-submitted-decrypt'>
+              {responseDecryptControls}
+            </div>
+          ) : null}
+        </div>
+        {filteredResponseDetails.length > 0 ? (
+          <div className='simple-auditor-submitted-pager' aria-label='Submitted vote page controls'>
+            <p>
+              Showing {visibleResponseStart}-{visibleResponseEnd} of {filteredResponseDetails.length}
+              {" "}
+              <span>Sorted by short ID</span>
+            </p>
+            {shouldShowSubmittedPager ? (
+              <div className='simple-auditor-submitted-pager-actions'>
+                <UiButton
+                  icon='chevronLeft'
+                  className='simple-auditor-pager-button'
+                  onPress={() => setSubmittedPageIndex((previous) => Math.max(0, previous - 1))}
+                  isDisabled={clampedSubmittedPageIndex <= 0}
+                  aria-label='Previous submitted votes'
+                >
+                  Previous
+                </UiButton>
+                <UiButton
+                  icon='chevronRight'
+                  iconPosition='end'
+                  className='simple-auditor-pager-button'
+                  onPress={() => setSubmittedPageIndex((previous) => Math.min(submittedPageCount - 1, previous + 1))}
+                  isDisabled={clampedSubmittedPageIndex >= submittedPageCount - 1}
+                  aria-label='Next submitted votes'
+                >
+                  Next
+                </UiButton>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {isSessionVariant ? (
+          <div className='simple-session-table-wrap simple-session-submissions-table'>
+            <UiDataTable
+              table={sessionResponseTable}
+              ariaLabel='Submitted votes'
+            />
+          </div>
+        ) : (
+          <ul className='simple-voter-list simple-auditor-result-list'>
+            {visibleResponseDetails.map((entry) => (
+              <li key={entry.event.id} className='simple-voter-list-item'>
+                <div className='simple-auditor-result-row'>
+                  <div className='simple-auditor-result-marker'>
+                    <div className='simple-auditor-result-marker-label'>
+                      <span>{deriveActorDisplayId(entry.response.authorPubkey)}</span>
+                    </div>
+                    <TokenFingerprint
+                      tokenId={entry.response.authorPubkey}
+                      compact
+                      large
+                      hideMetadata
+                      fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
+                    />
+                    {!entry.accepted ? (
+                      <p className='simple-auditor-status-chip simple-auditor-status-chip-invalid'>
+                        Invalid
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className='simple-auditor-result-body'>
+                    <dl className='simple-auditor-submission-meta'>
+                      <div className='simple-auditor-submission-meta-identity'>
+                        <dd title={entry.response.authorPubkey}>
+                          {renderResponseIdentityWords(entry.response.authorPubkey)}
+                        </dd>
+                      </div>
+                      <div className='simple-auditor-submission-meta-time'>
+                        <dt>Submission time</dt>
+                        <dd>{formatQuestionnaireTime(entry.response.submittedAt ?? entry.event.created_at ?? 0)}</dd>
+                      </div>
+                      <div className='simple-auditor-submission-meta-response'>
+                        <dt>Response ID</dt>
+                        <dd>{entry.response.responseId}</dd>
+                      </div>
+                    </dl>
+                    {!entry.accepted ? (
+                      <p className='simple-auditor-invalid-reason'>
+                        Invalid reason: {formatInvalidReason(entry.rejectionReason)}
+                      </p>
+                    ) : null}
+                    {renderResponseDisclosure(entry)}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {filteredResponseDetails.length === 0 ? (
+          <p className='simple-voter-empty'>No voter responses match the current filter.</p>
+        ) : null}
+      </>
+    ) : (
+      <p className='simple-voter-empty'>{emptyResponsesText}</p>
+    )
+  ) : (
+    <p className='simple-voter-empty'>{emptyResponseSelectionText}</p>
+  );
 
   return (
     <>
@@ -434,12 +697,8 @@ export default function QuestionnaireResultsDashboard({
             {isSessionVariant && questionnaireDescription ? (
               <p className='simple-session-questionnaire-description'>{questionnaireDescription}</p>
             ) : null}
-            {!isSessionVariant ? (
+            {!isSessionVariant && (actions || (canExportResults && onExportResults)) ? (
               <div className='simple-auditor-results-hero'>
-                <div className='simple-auditor-results-title-block'>
-                  <p className='simple-auditor-breadcrumb'>Questionnaires / {questionnaire.questionnaireId}</p>
-                  <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
-                </div>
                 {actions ?? (canExportResults && onExportResults ? (
                   <UiButton
                     icon='export'
@@ -453,278 +712,128 @@ export default function QuestionnaireResultsDashboard({
             ) : null}
 
             {!isSessionVariant ? (
-              <div className='simple-auditor-status-grid'>
-                <article className='simple-auditor-status-card'>
-                  <p className='simple-auditor-summary-label'>Questionnaire</p>
+              <AuditorDropdown
+                className='simple-auditor-status-grid simple-auditor-summary-island'
+                headClassName='simple-auditor-summary-island-head'
+                title={(
+                  <span className='simple-voter-section-title' role='heading' aria-level={2}>
+                    {questionnaire.questionnaireId}
+                  </span>
+                )}
+              >
+                <section className='simple-auditor-status-card'>
                   <dl className='simple-auditor-status-details'>
-                    <div>
-                      <dt>ID</dt>
-                      <dd>{questionnaire.questionnaireId}</dd>
+                    <div className='simple-auditor-status-detail-row'>
+                      <span className='simple-auditor-status-icon' aria-hidden='true'><CircleHelp /></span>
+                      <div>
+                        <dt>Question</dt>
+                        <dd>{questionnaire.title}</dd>
+                      </div>
                     </div>
-                    <div>
-                      <dt>Question</dt>
-                      <dd>{questionnaire.title}</dd>
+                    {questionnaireDescription ? (
+                      <div className='simple-auditor-status-detail-row'>
+                        <span className='simple-auditor-status-icon' aria-hidden='true'><FileText /></span>
+                        <div>
+                          <dt>Description</dt>
+                          <dd>{questionnaireDescription}</dd>
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className='simple-auditor-status-detail-row'>
+                      <span className='simple-auditor-status-icon' aria-hidden='true'><CalendarDays /></span>
+                      <div>
+                        <dt>{publishedAtLabel}</dt>
+                        <dd>{formatQuestionnaireTime(publishedAtTime)}</dd>
+                      </div>
                     </div>
+                    {closingStatus ? (
+                      <div className='simple-auditor-status-detail-row'>
+                        <span className='simple-auditor-status-icon' aria-hidden='true'><Clock3 /></span>
+                        <div>
+                          <dt>{closingStatus.heading}</dt>
+                          <dd>{closingStatus.label}</dd>
+                        </div>
+                      </div>
+                    ) : null}
                   </dl>
-                </article>
-                <article className='simple-auditor-status-card'>
-                  <p className='simple-auditor-summary-label'>{publishedTotalsAvailable ? "Published total" : "Loaded responses"}</p>
+                </section>
+                <section className='simple-auditor-status-card simple-auditor-total-card'>
+                  <span className='simple-auditor-status-icon' aria-hidden='true'><Users /></span>
+                  <p className='simple-auditor-summary-label'>Responses</p>
+                  <div className='simple-auditor-results-progress' aria-hidden='true'>
+                    <span
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(0, publishedTotalsAvailable ? displayValidityPercentNumber : loadedAcceptedPercent),
+                        )}%`,
+                      }}
+                    />
+                  </div>
                   <p className='simple-auditor-status-value'>
-                    {publishedTotalsAvailable ? publishedProgressLabel : `${loadedTotalCount} loaded`}
+                    {publishedTotalsAvailable ? publishedProgressLabel : loadedProgressLabel}
                   </p>
-                  {publishedTotalsAvailable ? (
-                    <div className='simple-auditor-results-progress' aria-hidden='true'>
-                      <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
-                    </div>
-                  ) : null}
-                  <p className='simple-voter-note'>
-                    {publishedTotalsAvailable
-                      ? (
-                        <>
-                          {loadedTotalLabel}
-                          <br />
-                          {loadedAcceptedLabel}
-                          {loadedRejectedCount > 0 ? (
-                            <>
-                              <br />
-                              Invalid: {loadedRejectedCount}
-                            </>
-                          ) : null}
-                        </>
-                      )
-                      : `${loadedAcceptedLabel}${loadedRejectedCount > 0 ? `; Invalid: ${loadedRejectedCount}` : ""}.`}
-                  </p>
-                </article>
-                <article className='simple-auditor-status-card'>
-                  <p className='simple-auditor-summary-label'>Published / Closed</p>
-                  <dl className='simple-auditor-status-details'>
+                </section>
+                <section className='simple-auditor-status-card simple-auditor-status-card-wide'>
+                  <div className='simple-auditor-status-detail-row'>
+                    <span className='simple-auditor-status-icon' aria-hidden='true'><UserRound /></span>
                     <div>
-                      <dt>{publishedAtLabel}</dt>
-                      <dd>{formatQuestionnaireTime(publishedAtTime)}</dd>
+                      <p className='simple-auditor-summary-label'>{coordinatorLabel}</p>
+                      <p className='simple-auditor-status-value'>{coordinatorText}</p>
                     </div>
-                    <div>
-                      <dt>{closingStatus.heading}</dt>
-                      <dd>{closingStatus.label}</dd>
-                    </div>
-                  </dl>
-                </article>
-                {questionnaireDescription ? (
-                  <article className='simple-auditor-status-card simple-auditor-status-card-wide simple-auditor-description-card'>
-                    <p className='simple-auditor-summary-label'>Description</p>
-                    <p className='simple-auditor-description-text'>{questionnaireDescription}</p>
-                  </article>
-                ) : null}
-                <article className='simple-auditor-status-card simple-auditor-status-card-wide'>
-                  <p className='simple-auditor-summary-label'>{coordinatorLabel}</p>
-                  <p className='simple-auditor-status-value'>{coordinatorText}</p>
-                </article>
-              </div>
+                  </div>
+                </section>
+              </AuditorDropdown>
             ) : null}
 
-            {questionSummaries.length > 0 ? (
-              <>
-                <div className={`simple-auditor-question-grid${isSessionVariant ? " simple-session-question-grid" : ""}`}>
-                  {questionSummaries.map((summary) => {
-                    const questionNumber = selectedQuestionNumberById.get(summary.questionId);
-                    const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
-                    const questionResponseCount = acceptedQuestionResponseCountById.get(summary.questionId)
-                      ?? getSummaryResponseCount(summary, displayValidCount);
-                    return (
-                      <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
-                        <div className='simple-auditor-question-card-head'>
-                          <div>
-                            <h3 className='simple-voter-question'>
-                              {questionNumber ? `Q${questionNumber}. ` : ""}
-                              {questionTitle}
-                            </h3>
-                            <p className='simple-auditor-question-response-count'>
-                              <PeopleIcon />
-                              <span>{formatResponseCount(questionResponseCount)}</span>
-                            </p>
-                          </div>
-                        </div>
-                        {summary.answerType === "yes_no" ? (
-                          <YesNoSummaryCard summary={summary} />
-                        ) : summary.answerType === "multiple_choice" ? (
-                          <MultipleChoiceSummaryCard
-                            summary={summary}
-                            question={selectedQuestionById.get(summary.questionId)}
-                            responseCount={questionResponseCount}
-                          />
-                        ) : summary.answerType === "rank" ? (
-                          <RankSummaryCard
-                            summary={summary}
-                            question={selectedQuestionById.get(summary.questionId)}
-                          />
-                        ) : (
-                          <div className='simple-auditor-free-text-cardlet'>
-                            <UiButton
-                              icon='view'
-                              className='simple-auditor-text-button'
-                              onPress={() => setFreeTextViewerQuestionId(summary.questionId)}
-                            >
-                              View answers
-                            </UiButton>
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })}
-                </div>
-                {fallbackQuestionSummaryNote ? (
-                  <p className='simple-voter-note'>{fallbackQuestionSummaryNote}</p>
+            {!isSessionVariant ? (
+              <AuditorDropdown
+                className='simple-auditor-results-dropdown'
+                headClassName='simple-auditor-results-dropdown-head'
+                defaultOpen
+                title={<span className='simple-voter-section-title simple-auditor-results-subtitle' role='heading' aria-level={2}>Results</span>}
+              >
+                {questionSummaries.length > 0 ? (
+                  <UiTextField
+                    label='Filter results'
+                    fieldClassName='simple-auditor-results-filter'
+                    inputProps={{
+                      id: 'simple-auditor-results-search',
+                      value: resultSearchQuery,
+                      onChange: (event) => setResultSearchQuery(event.target.value),
+                      placeholder: 'Search by question, type, or option...',
+                    }}
+                  />
                 ) : null}
-              </>
-            ) : (
-              <p className='simple-voter-empty'>{emptyQuestionSummaryText}</p>
-            )}
+                {questionSummaryContent}
+              </AuditorDropdown>
+            ) : questionSummaryContent}
           </>
         ) : emptySelectionText ? (
-          <p className='simple-voter-empty'>{emptySelectionText}</p>
+          <p className='simple-voter-empty simple-auditor-empty-panel'>{emptySelectionText}</p>
         ) : null}
       </section>
 
       {showSubmittedVotes ? (
-        <section className={`simple-voter-section simple-auditor-submissions-section${isSessionVariant ? " simple-session-submissions-section" : ""}`}>
-          <div className='simple-auditor-submissions-header'>
-            <h2 className='simple-voter-section-title'>Submitted Votes</h2>
-          </div>
-          {questionnaire ? (
-            responseDetails.length > 0 ? (
-              <>
-                <div className={`simple-auditor-submitted-toolbar${isSessionVariant ? " simple-session-submitted-toolbar" : ""}`}>
-                  {!isSessionVariant ? (
-                    <div className='simple-auditor-submitted-stat'>
-                      <p className='simple-auditor-summary-label'>Loaded responses</p>
-                      <p className='simple-auditor-score'>{responseDetails.length}</p>
-                    </div>
-                  ) : null}
-                  <div className='simple-auditor-submitted-filter'>
-                    <UiTextField
-                      label='Filter submitted votes'
-                      fieldClassName='simple-auditor-submitted-search-field'
-                      inputProps={{
-                        id: "simple-auditor-submitted-search",
-                        value: voterSearchQuery,
-                        onChange: (event) => setVoterSearchQuery(event.target.value),
-                        placeholder: "Search by Submission ID, identity words, full identity, or token...",
-                      }}
-                    />
-                    {hasInvalidResponses ? (
-                      <UiSwitch
-                        className='simple-auditor-invalid-toggle'
-                        isSelected={showInvalidVotes}
-                        onChange={setShowInvalidVotes}
-                        label={`Show ${invalidResponseCount} invalid ${invalidResponseCount === 1 ? "vote" : "votes"} only`}
-                      />
-                    ) : null}
-                  </div>
-                  {responseDecryptControls ? (
-                    <div className='simple-auditor-submitted-decrypt'>
-                      {responseDecryptControls}
-                    </div>
-                  ) : null}
-                </div>
-                {filteredResponseDetails.length > 0 ? (
-                  <div className='simple-auditor-submitted-pager' aria-label='Submitted vote page controls'>
-                    <p>
-                      Showing {visibleResponseStart}-{visibleResponseEnd} of {filteredResponseDetails.length}
-                      {" "}
-                      <span>Sorted by short ID</span>
-                    </p>
-                    {shouldShowSubmittedPager ? (
-                      <div className='simple-auditor-submitted-pager-actions'>
-                        <UiButton
-                          icon='chevronLeft'
-                          className='simple-auditor-pager-button'
-                          onPress={() => setSubmittedPageIndex((previous) => Math.max(0, previous - 1))}
-                          isDisabled={clampedSubmittedPageIndex <= 0}
-                          aria-label='Previous submitted votes'
-                        >
-                          Previous
-                        </UiButton>
-                        <UiButton
-                          icon='chevronRight'
-                          iconPosition='end'
-                          className='simple-auditor-pager-button'
-                          onPress={() => setSubmittedPageIndex((previous) => Math.min(submittedPageCount - 1, previous + 1))}
-                          isDisabled={clampedSubmittedPageIndex >= submittedPageCount - 1}
-                          aria-label='Next submitted votes'
-                        >
-                          Next
-                        </UiButton>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-                {isSessionVariant ? (
-                  <div className='simple-session-table-wrap simple-session-submissions-table'>
-                    <UiDataTable
-                      table={sessionResponseTable}
-                      ariaLabel='Submitted votes'
-                    />
-                  </div>
-                ) : (
-                  <ul className='simple-voter-list simple-auditor-result-list'>
-                    {visibleResponseDetails.map((entry) => (
-                      <li key={entry.event.id} className='simple-voter-list-item'>
-                        <div className='simple-auditor-result-row'>
-                          <div className='simple-auditor-result-marker'>
-                            <div className='simple-auditor-result-marker-label'>
-                              <span>{deriveActorDisplayId(entry.response.authorPubkey)}</span>
-                            </div>
-                            <TokenFingerprint
-                              tokenId={entry.response.authorPubkey}
-                              compact
-                              large
-                              hideMetadata
-                              fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
-                            />
-                            {!entry.accepted ? (
-                              <p className='simple-auditor-status-chip simple-auditor-status-chip-invalid'>
-                                Invalid
-                              </p>
-                            ) : null}
-                          </div>
-                          <div className='simple-auditor-result-body'>
-                            <dl className='simple-auditor-submission-meta'>
-                              <div className='simple-auditor-submission-meta-identity'>
-                                <dd title={entry.response.authorPubkey}>
-                                  {renderResponseIdentityWords(entry.response.authorPubkey)}
-                                </dd>
-                              </div>
-                              <div className='simple-auditor-submission-meta-time'>
-                                <dt>Submission time</dt>
-                                <dd>{formatQuestionnaireTime(entry.response.submittedAt ?? entry.event.created_at ?? 0)}</dd>
-                              </div>
-                              <div className='simple-auditor-submission-meta-response'>
-                                <dt>Response ID</dt>
-                                <dd>{entry.response.responseId}</dd>
-                              </div>
-                            </dl>
-                            {!entry.accepted ? (
-                              <p className='simple-auditor-invalid-reason'>
-                                Invalid reason: {formatInvalidReason(entry.rejectionReason)}
-                              </p>
-                            ) : null}
-                            {renderResponseDisclosure(entry)}
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {filteredResponseDetails.length === 0 ? (
-                  <p className='simple-voter-empty'>No voter responses match the current filter.</p>
-                ) : null}
-              </>
-            ) : (
-              <p className='simple-voter-empty'>{emptyResponsesText}</p>
-            )
-          ) : (
-            <p className='simple-voter-empty'>{emptyResponseSelectionText}</p>
-          )}
-        </section>
+        isSessionVariant ? (
+          <section className='simple-voter-section simple-auditor-submissions-section simple-session-submissions-section'>
+            <div className='simple-auditor-submissions-header'>
+              <h2 className='simple-voter-section-title'>Submitted Votes</h2>
+            </div>
+            {submittedVotesContent}
+          </section>
+        ) : (
+          <AuditorDropdown
+            className='simple-auditor-submissions-section simple-auditor-submissions-dropdown'
+            headClassName='simple-auditor-submissions-dropdown-head'
+            defaultOpen
+            title={<span className='simple-voter-section-title' role='heading' aria-level={2}>Submitted Votes</span>}
+          >
+            <div className='simple-auditor-submissions-dropdown-body'>
+              {submittedVotesContent}
+            </div>
+          </AuditorDropdown>
+        )
       ) : null}
 
       {freeTextViewerQuestionId && questionnaire ? (
@@ -947,6 +1056,26 @@ function formatResponseCount(count: number) {
   return `${count} response${count === 1 ? "" : "s"}`;
 }
 
+function questionSummaryMatchesSearch(
+  summary: QuestionnaireResultQuestionSummary,
+  question: QuestionnaireQuestion | undefined,
+  searchQuery: string,
+) {
+  const query = searchQuery.trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+  const values = [
+    summary.questionId,
+    summary.answerType,
+    summary.answerType.replaceAll("_", " "),
+    question?.prompt,
+    question?.type,
+    ...(question && "options" in question ? question.options.flatMap((option) => [option.optionId, option.label]) : []),
+  ];
+  return values.some((value) => String(value ?? "").toLowerCase().includes(query));
+}
+
 function getSummaryResponseCount(summary: QuestionnaireResultQuestionSummary, displayValidCount: number) {
   if (summary.answerType === "yes_no") {
     return summary.yesCount + summary.noCount;
@@ -993,14 +1122,14 @@ function getClosingStatus(questionnaire: QuestionnaireResultsDashboardQuestionna
   const isClosed = questionnaire?.state === "closed" || questionnaire?.state === "results_published";
   const heading = isClosed ? "Closed" : "Closing";
   if (!questionnaire) {
-    return { heading, label: "Not set" };
+    return null;
   }
   if (isClosed) {
     const closedAt = questionnaire.closedAt ?? questionnaire.resultPublishedAt ?? questionnaire.closeAt ?? null;
     return { heading, label: closedAt ? formatQuestionnaireTime(closedAt) : "Closed" };
   }
   if (!hasScheduledClose(questionnaire)) {
-    return { heading, label: "No closing time" };
+    return null;
   }
   return { heading, label: formatQuestionnaireTime(questionnaire.closeAt) };
 }

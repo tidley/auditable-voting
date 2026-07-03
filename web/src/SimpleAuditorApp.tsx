@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { nip19, type NostrEvent } from "nostr-tools";
 import QuestionnaireResultsDashboard from "./QuestionnaireResultsDashboard";
 import {
@@ -16,7 +17,6 @@ import {
 import {
   calculateRankQuestionScores,
   normaliseRankedOptionIds,
-  type QuestionnairePublishedResponseRef,
   type QuestionnaireQuestion,
   type QuestionnaireResponseAnswer,
   type QuestionnaireResultQuestionSummary,
@@ -90,6 +90,12 @@ type AuditorMemoryCache = {
   responseRefreshStatus: string | null;
 };
 
+type SimpleAuditorAppProps = {
+  filtersInMenu?: boolean;
+  filtersMenuOpen?: boolean;
+  onFiltersMenuClose?: () => void;
+};
+
 let auditorSessionAutoRefreshDone = false;
 let auditorMemoryCache: AuditorMemoryCache = {
   questionnaires: [],
@@ -145,11 +151,24 @@ function selectedResponsesMatchPublishedTotal(
   summary: QuestionnaireResultSummary | null,
   responseDetails: AuditorQuestionnaireResponseDetail[],
 ) {
-  const publishedTotal = (summary?.acceptedResponseCount ?? 0) + (summary?.rejectedResponseCount ?? 0);
-  return publishedTotal > 0 && responseDetails.length >= publishedTotal;
+  if (!summary) {
+    return false;
+  }
+  const publishedTotal = summary.acceptedResponseCount + summary.rejectedResponseCount;
+  if (publishedTotal <= 0) {
+    return false;
+  }
+  const loadedAcceptedCount = responseDetails.filter((entry) => entry.accepted).length;
+  const loadedRejectedCount = responseDetails.filter((entry) => !entry.accepted).length;
+  return summary.acceptedResponseCount >= loadedAcceptedCount
+    && summary.rejectedResponseCount >= loadedRejectedCount;
 }
 
-export default function SimpleAuditorApp() {
+export default function SimpleAuditorApp({
+  filtersInMenu = false,
+  filtersMenuOpen = false,
+  onFiltersMenuClose,
+}: SimpleAuditorAppProps = {}) {
   const initialQuestionnaireId = useMemo(() => readInitialQuestionnaireIdFromUrl() || auditorMemoryCache.selectedQuestionnaireId, []);
   const canUseCachedSelection = initialQuestionnaireId === auditorMemoryCache.selectedQuestionnaireId;
   const [questionnaires, setQuestionnaires] = useState<AuditorQuestionnaireEntry[]>(() => auditorMemoryCache.questionnaires);
@@ -178,6 +197,8 @@ export default function SimpleAuditorApp() {
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(() => (
     canUseCachedSelection ? auditorMemoryCache.responseRefreshStatus : null
   ));
+  const [filterMenuMount, setFilterMenuMount] = useState<HTMLElement | null>(null);
+  const [topBarActionsMount, setTopBarActionsMount] = useState<HTMLElement | null>(null);
   const [refreshInFlight, setRefreshInFlight] = useState(false);
   const [manualRefreshInFlight, setManualRefreshInFlight] = useState(false);
   const initialListLoadDoneRef = useRef(auditorMemoryCache.questionnaires.length > 0);
@@ -210,6 +231,21 @@ export default function SimpleAuditorApp() {
   useEffect(() => {
     questionnairesRef.current = questionnaires;
   }, [questionnaires]);
+  useEffect(() => {
+    if (!filtersInMenu || !filtersMenuOpen || typeof document === "undefined") {
+      setFilterMenuMount((previous) => (previous === null ? previous : null));
+      return;
+    }
+    const mount = document.getElementById("simple-auditor-menu-filters");
+    setFilterMenuMount((previous) => (previous === mount ? previous : mount));
+  }, [filtersInMenu, filtersMenuOpen]);
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const mount = document.getElementById("simple-auditor-topbar-actions");
+    setTopBarActionsMount((previous) => (previous === mount ? previous : mount));
+  }, []);
   useEffect(() => {
     auditorMemoryCache = {
       questionnaires,
@@ -268,39 +304,13 @@ export default function SimpleAuditorApp() {
       const candidates = historic
         ? latestDefinitions
         : latestDefinitions.slice(0, AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT);
+      const previousEntriesById = new Map(questionnairesRef.current.map((entry) => [entry.questionnaireId, entry]));
       const entries: AuditorQuestionnaireEntry[] = [];
       for (const entry of candidates) {
         const id = entry.definition.questionnaireId;
         const questionnaireRelays = entry.definition.questionnaireRelays;
-        const stateEntries = await fetchQuestionnaireState({
-          questionnaireId: id,
-          limit: 50,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []);
-        const resultEntries = await fetchQuestionnaireResultSummary({
-          questionnaireId: id,
-          limit: 50,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []);
-        const participantCountEntries = await fetchQuestionnaireParticipantCount({
-          questionnaireId: id,
-          limit: 50,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []);
-        const latestState = [...stateEntries]
-          .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0]
-          ?.state.state ?? null;
-        const latestResult = [...resultEntries]
-          .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0]
-          ?.summary ?? null;
         const coordinatorNpub = normalizeToNpub(entry.definition.coordinatorPubkey);
-        const latestParticipantCount = selectLatestParticipantCount(participantCountEntries, id, coordinatorNpub);
+        const previousEntry = previousEntriesById.get(id);
         entries.push({
           questionnaireId: id,
           title: entry.definition.title || "Untitled questionnaire",
@@ -309,15 +319,15 @@ export default function SimpleAuditorApp() {
           createdAt: Number(entry.event.created_at ?? entry.definition.createdAt ?? 0),
           openAt: Number.isFinite(entry.definition.openAt) ? entry.definition.openAt : null,
           closeAt: Number.isFinite(entry.definition.closeAt) ? entry.definition.closeAt : null,
-          state: latestState,
-          expectedInviteeCount: latestParticipantCount?.expectedInviteeCount ?? null,
-          publishedAcceptedResponseCount: latestResult?.acceptedResponseCount ?? null,
-          publishedRejectedResponseCount: latestResult?.rejectedResponseCount ?? null,
-          resultPublishedAt: Number(latestResult?.createdAt ?? 0) || null,
+          state: previousEntry?.state ?? null,
+          expectedInviteeCount: previousEntry?.expectedInviteeCount ?? null,
+          publishedAcceptedResponseCount: previousEntry?.publishedAcceptedResponseCount ?? null,
+          publishedRejectedResponseCount: previousEntry?.publishedRejectedResponseCount ?? null,
+          resultPublishedAt: previousEntry?.resultPublishedAt ?? null,
           questions: entry.definition.questions ?? [],
           questionnaireRelays,
           blindSigningPublicKey: entry.definition.blindSigningPublicKey ?? null,
-          responseSearchValues: buildAuditorResponseRefSearchValues(latestResult?.publishedResponseRefs ?? []),
+          responseSearchValues: previousEntry?.responseSearchValues ?? [],
           eventId: entry.event.id,
         });
       }
@@ -328,6 +338,7 @@ export default function SimpleAuditorApp() {
     try {
       const entries = await loadQuestionnairesFromNostr();
       initialListLoadDoneRef.current = true;
+      questionnairesRef.current = entries;
       setQuestionnaires((previous) => (
         areQuestionnaireEntriesEqual(previous, entries) ? previous : entries
       ));
@@ -481,7 +492,6 @@ export default function SimpleAuditorApp() {
           }));
         details = mergeAuditorResponseDetails(details, summaryRefDetails);
       }
-      let loadedFromResultPack = false;
       if (
         latestResult?.summary.resultPack
         && (
@@ -499,7 +509,6 @@ export default function SimpleAuditorApp() {
               source: "result-pack",
             }));
             const nextDetails = mergeAuditorResponseDetails(details, packDetails);
-            loadedFromResultPack = nextDetails.length > details.length;
             details = nextDetails;
           }
         } catch (error) {
@@ -531,15 +540,16 @@ export default function SimpleAuditorApp() {
         }
         return {
           ...entry,
+          state: nextLiveState,
+          publishedAcceptedResponseCount: nextResultSummary?.acceptedResponseCount ?? entry.publishedAcceptedResponseCount,
+          publishedRejectedResponseCount: nextResultSummary?.rejectedResponseCount ?? entry.publishedRejectedResponseCount,
+          resultPublishedAt: Number(nextResultSummary?.createdAt ?? 0) || entry.resultPublishedAt,
           ...(latestParticipantCount ? { expectedInviteeCount: latestParticipantCount.expectedInviteeCount } : {}),
           responseSearchValues: buildAuditorResponseDetailSearchValues(details),
         };
       }));
-      const nextStatus = loadedFromResultPack
-        ? "Questionnaire responses refreshed from Blossom result pack."
-        : "Questionnaire responses refreshed from Nostr.";
       initialSelectedLoadDoneRef.current = true;
-      setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
+      setResponseRefreshStatus((previous) => (previous === null ? previous : null));
     } catch {
       initialSelectedLoadDoneRef.current = true;
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
@@ -734,7 +744,7 @@ export default function SimpleAuditorApp() {
     setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
     setSelectedResultSummary((previous) => (previous === null ? previous : null));
     setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
-    setResponseRefreshStatus("Refreshing questionnaire responses...");
+    setResponseRefreshStatus((previous) => (previous === null ? previous : null));
     void enqueueRefresh({ list: false, selected: true, forceWhenHidden: true });
   }, [enqueueRefresh, selectedQuestionnaireId]);
 
@@ -816,9 +826,17 @@ export default function SimpleAuditorApp() {
     () => displayResponseDetails.filter((entry) => !entry.accepted).length,
     [displayResponseDetails],
   );
-  const displayValidCount = selectedResultSummary?.acceptedResponseCount ?? liveAcceptedCount;
-  const displayInvalidCount = selectedResultSummary?.rejectedResponseCount ?? liveRejectedCount;
-  const hasPublishedQuestionSummaries = (selectedResultSummary?.questionSummaries?.length ?? 0) > 0;
+  const selectedResultSummaryMatchesLoadedResponses = selectedResultSummary
+    ? selectedResponsesMatchPublishedTotal(selectedResultSummary, displayResponseDetails)
+    : false;
+  const displayValidCount = selectedResultSummaryMatchesLoadedResponses
+    ? selectedResultSummary?.acceptedResponseCount ?? liveAcceptedCount
+    : liveAcceptedCount;
+  const displayInvalidCount = selectedResultSummaryMatchesLoadedResponses
+    ? selectedResultSummary?.rejectedResponseCount ?? liveRejectedCount
+    : liveRejectedCount;
+  const hasPublishedQuestionSummaries = selectedResultSummaryMatchesLoadedResponses
+    && (selectedResultSummary?.questionSummaries?.length ?? 0) > 0;
   const displayedQuestionSummaries = hasPublishedQuestionSummaries
     ? selectedResultSummary?.questionSummaries ?? []
     : liveQuestionSummaries;
@@ -836,11 +854,10 @@ export default function SimpleAuditorApp() {
       return;
     }
     const nextQuestionnaireStatus = "Refreshing public questionnaires...";
-    const nextResponseStatus = "Refreshing questionnaire responses...";
     setManualRefreshInFlight(true);
     try {
       setQuestionnaireRefreshStatus((previous) => (previous === nextQuestionnaireStatus ? previous : nextQuestionnaireStatus));
-      setResponseRefreshStatus((previous) => (previous === nextResponseStatus ? previous : nextResponseStatus));
+      setResponseRefreshStatus((previous) => (previous === null ? previous : null));
       await enqueueRefresh({ list: true, selected: true, forceWhenHidden: true });
     } finally {
       setManualRefreshInFlight(false);
@@ -894,74 +911,103 @@ export default function SimpleAuditorApp() {
     window.URL.revokeObjectURL(url);
   }
 
+  const filterControls = questionnaires.length > 0 ? (
+    <div className='simple-auditor-filters'>
+      <UiTextField
+        label='Search'
+        fieldClassName='simple-auditor-search-field'
+        inputProps={{
+          id: 'simple-auditor-search',
+          value: searchQuery,
+          onChange: (event) => setSearchQuery(event.target.value),
+          placeholder: 'Filter by questionnaire, organiser, Submission ID, or Submittor identity...',
+        }}
+      />
+      <UiSelect
+        label='Questionnaire organiser identity'
+        id='simple-auditor-coordinator-npub'
+        fieldClassName='simple-auditor-organiser-field'
+        value={selectedCoordinatorNpub}
+        onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
+      >
+        <option value=''>Any questionnaire organiser</option>
+        {coordinatorSelectOptions.map((coordinatorNpub) => (
+          <option key={coordinatorNpub} value={coordinatorNpub}>
+            {coordinatorNpub}
+          </option>
+        ))}
+      </UiSelect>
+      {filteredQuestionnaires.length > 0 ? (
+        <UiSelect
+          label='Round'
+          id='simple-auditor-round'
+          fieldClassName='simple-auditor-round-field'
+          value={selectedQuestionnaire?.questionnaireId ?? ''}
+          onChange={(event) => {
+            setSelectedQuestionnaireId(event.target.value);
+            onFiltersMenuClose?.();
+          }}
+        >
+          {filteredQuestionnaires.map((entry) => (
+            <option key={entry.eventId} value={entry.questionnaireId}>
+              {formatRoundOptionLabel(entry)}
+            </option>
+          ))}
+        </UiSelect>
+      ) : (
+        <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
+      )}
+    </div>
+  ) : null;
+  const filterPortal = filtersInMenu && filtersMenuOpen && filterMenuMount && filterControls
+    ? createPortal((
+      <div className='simple-account-menu-section simple-auditor-menu-filter-section' role='none'>
+        <p className='simple-account-menu-kicker'>Filters</p>
+        {filterControls}
+      </div>
+    ), filterMenuMount)
+    : null;
+  const initialQuestionnaireListLoading = questionnaires.length === 0 && !initialListLoadDoneRef.current && refreshInFlight;
+  const shouldShowNoQuestionnaires = questionnaires.length === 0 && !initialQuestionnaireListLoading;
+  const shouldShowResponseRefreshStatus = Boolean(responseRefreshStatus);
+  const shouldShowAuditorPanel = !topBarActionsMount
+    || !filtersInMenu
+    || shouldShowNoQuestionnaires
+    || shouldShowResponseRefreshStatus;
+  const refreshButton = (
+    <UiButton
+      icon={manualRefreshInFlight ? "spinner" : "refresh"}
+      className='simple-auditor-refresh-button'
+      onPress={() => void refreshNow()}
+      isDisabled={manualRefreshInFlight}
+    >
+      {manualRefreshInFlight ? "Busy..." : "Refresh"}
+    </UiButton>
+  );
+  const refreshPortal = topBarActionsMount ? createPortal(refreshButton, topBarActionsMount) : null;
+
   return (
-    <main className='simple-voter-shell'>
-      <section className='simple-voter-page'>
-        <section className='simple-voter-section simple-auditor-panel' data-refresh-status={questionnaireRefreshStatus ?? ""}>
-          <div className='simple-voter-header-row'>
-            <h2 className='simple-voter-section-title'>Find Published Questionnaires</h2>
-            <UiButton
-              icon={manualRefreshInFlight ? "spinner" : "refresh"}
-              className='simple-auditor-refresh-button'
-              onPress={() => void refreshNow()}
-              isDisabled={manualRefreshInFlight}
-            >
-              {manualRefreshInFlight ? "Busy..." : "Refresh"}
-            </UiButton>
-          </div>
-          {questionnaires.length > 0 ? (
-            <div className='simple-auditor-filters'>
-              <UiTextField
-                label='Search'
-                fieldClassName='simple-auditor-search-field'
-                inputProps={{
-                  id: 'simple-auditor-search',
-                  value: searchQuery,
-                  onChange: (event) => setSearchQuery(event.target.value),
-                  placeholder: 'Filter by questionnaire, organiser, Submission ID, or Submittor identity...',
-                }}
-              />
-              <UiSelect
-                label='Questionnaire organiser identity'
-                id='simple-auditor-coordinator-npub'
-                fieldClassName='simple-auditor-organiser-field'
-                value={selectedCoordinatorNpub}
-                onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
-              >
-                <option value=''>Any questionnaire organiser</option>
-                {coordinatorSelectOptions.map((coordinatorNpub) => (
-                  <option key={coordinatorNpub} value={coordinatorNpub}>
-                    {coordinatorNpub}
-                  </option>
-                ))}
-              </UiSelect>
-              {filteredQuestionnaires.length > 0 ? (
-                <UiSelect
-                  label='Round'
-                  id='simple-auditor-round'
-                  fieldClassName='simple-auditor-round-field'
-                  value={selectedQuestionnaire?.questionnaireId ?? ''}
-                  onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
-                >
-                  {filteredQuestionnaires.map((entry) => (
-                    <option key={entry.eventId} value={entry.questionnaireId}>
-                      {formatRoundOptionLabel(entry)}
-                    </option>
-                  ))}
-                </UiSelect>
-              ) : (
-                <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
-              )}
-            </div>
-          ) : !initialListLoadDoneRef.current && refreshInFlight ? (
-            <p className='simple-voter-note'>Loading questionnaires from Nostr relays...</p>
-          ) : (
-            <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
-          )}
-          {responseRefreshStatus ? (
-            <p className='simple-voter-note'>{responseRefreshStatus}</p>
-          ) : null}
-        </section>
+    <main className='simple-voter-shell simple-auditor-shell'>
+      {filterPortal}
+      {refreshPortal}
+      <section className='simple-voter-page simple-auditor-page'>
+        {shouldShowAuditorPanel ? (
+          <section className='simple-voter-section simple-auditor-panel' data-refresh-status={questionnaireRefreshStatus ?? ""}>
+            {!topBarActionsMount ? (
+              <div className='simple-voter-header-row'>
+                {refreshButton}
+              </div>
+            ) : null}
+            {questionnaires.length > 0 ? (
+              filtersInMenu ? null : filterControls
+            ) : shouldShowNoQuestionnaires ? (
+              <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
+            ) : null}
+            {shouldShowResponseRefreshStatus ? (
+              <p className='simple-voter-note'>{responseRefreshStatus}</p>
+            ) : null}
+          </section>
+        ) : null}
 
         <QuestionnaireResultsDashboard
           questionnaire={selectedQuestionnaire ? {
@@ -982,7 +1028,8 @@ export default function SimpleAuditorApp() {
           displayInvalidCount={displayInvalidCount}
           loadedValidCount={liveAcceptedCount}
           loadedInvalidCount={liveRejectedCount}
-          publishedTotalsAvailable={Boolean(selectedResultSummary)}
+          publishedTotalsAvailable={selectedResultSummaryMatchesLoadedResponses}
+          showSubmittedVotes={Boolean(selectedQuestionnaire)}
           coordinatorLabel={selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub ? "Proxy" : "Organiser"}
           coordinatorText={selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub
             ? normalizeToNpub(selectedWorkerDelegationStatus.workerNpub)
@@ -1010,11 +1057,7 @@ export default function SimpleAuditorApp() {
               ) : null}
             </div>
           )}
-          fallbackQuestionSummaryNote={
-            selectedResultSummary && !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0
-              ? "Published result summary contains counts only; showing loaded per-question aggregates from verified submissions."
-              : null
-          }
+          fallbackQuestionSummaryNote={null}
           emptyQuestionSummaryText={
             selectedResultSummary
               ? "Published result summary contains no per-question aggregates, and no live answer payloads are available yet."
@@ -1022,7 +1065,11 @@ export default function SimpleAuditorApp() {
                 ? "Loading questionnaire results from Nostr relays..."
                 : "No published result summary or live verified submissions yet for this questionnaire."
           }
-          emptySelectionText='Choose a questionnaire round to inspect results.'
+          emptySelectionText={
+            initialQuestionnaireListLoading
+              ? "Loading questionnaires from Nostr relays..."
+              : "Choose a questionnaire round to inspect results."
+          }
           emptyResponsesText={
             selectedQuestionnaire && !initialSelectedLoadDoneRef.current && refreshInFlight
               ? "Loading submitted responses from Nostr relays..."
@@ -1254,13 +1301,6 @@ export function matchesAuditorQuestionnaireSearch(
     questionnaire.eventId,
     ...(questionnaire.responseSearchValues ?? []),
   ].some((value) => value.toLowerCase().includes(query));
-}
-
-function buildAuditorResponseRefSearchValues(refs: QuestionnairePublishedResponseRef[]) {
-  return collectAuditorSubmissionSearchValues(refs.map((ref) => ({
-    responseId: ref.responseId,
-    authorPubkey: ref.authorPubkey,
-  })));
 }
 
 function buildAuditorResponseDetailSearchValues(details: AuditorQuestionnaireResponseDetail[]) {

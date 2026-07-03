@@ -60,6 +60,20 @@ function renderDashboard() {
 }
 
 describe("QuestionnaireResultsDashboard", () => {
+  it("uses the UI framework disclosure for result dropdown toggles", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    const resultsToggle = screen.getByRole("button", { name: "Results" });
+    expect(resultsToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(resultsToggle.closest(".simple-auditor-dropdown")?.classList.contains("is-open")).toBe(true);
+
+    await user.click(resultsToggle);
+
+    expect(resultsToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(resultsToggle.closest(".simple-auditor-dropdown")?.classList.contains("is-closed")).toBe(true);
+  });
+
   it("filters submitted votes by submission id and submittor identity", async () => {
     const user = userEvent.setup();
     renderDashboard();
@@ -147,6 +161,70 @@ describe("QuestionnaireResultsDashboard", () => {
     expect(Boolean(yesLabel.compareDocumentPosition(noLabel) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
+  it("filters result cards instantly by question and option text", async () => {
+    const user = userEvent.setup();
+    render(
+      <QuestionnaireResultsDashboard
+        questionnaire={{
+          questionnaireId: "q_result_filter",
+          title: "Result filter",
+          questions: [
+            {
+              questionId: "q1",
+              type: "yes_no",
+              prompt: "Prefer tea?",
+              required: true,
+            },
+            {
+              questionId: "q2",
+              type: "multiple_choice",
+              prompt: "Pick fruit",
+              required: true,
+              multiSelect: false,
+              options: [
+                { optionId: "apple", label: "Apple" },
+                { optionId: "banana", label: "Banana" },
+              ],
+            },
+          ],
+        }}
+        questionSummaries={[
+          {
+            questionId: "q1",
+            answerType: "yes_no",
+            yesCount: 1,
+            noCount: 0,
+          },
+          {
+            questionId: "q2",
+            answerType: "multiple_choice",
+            optionCounts: {
+              apple: 0,
+              banana: 1,
+            },
+          },
+        ]}
+        responseDetails={[]}
+        displayValidCount={1}
+        coordinatorText="Organiser test"
+        publishedAtLabel="Not published"
+      />,
+    );
+
+    const search = screen.getByLabelText("Filter results");
+    expect(screen.getByText("Q1. Prefer tea?")).toBeTruthy();
+    expect(screen.getByText("Q2. Pick fruit")).toBeTruthy();
+
+    await user.type(search, "banana");
+    expect(screen.queryByText("Q1. Prefer tea?")).toBeNull();
+    expect(screen.getByText("Q2. Pick fruit")).toBeTruthy();
+
+    await user.clear(search);
+    await user.type(search, "tea");
+    expect(screen.getByText("Q1. Prefer tea?")).toBeTruthy();
+    expect(screen.queryByText("Q2. Pick fruit")).toBeNull();
+  });
+
   it("shows session live status in the title bar without a separate tile", () => {
     const { container } = render(
       <QuestionnaireResultsDashboard
@@ -186,7 +264,7 @@ describe("QuestionnaireResultsDashboard", () => {
     expect(container.querySelector(".simple-session-live-card")).toBeNull();
   });
 
-  it("separates published accepted totals from loaded response details", () => {
+  it("shows the published accepted total without a duplicate loaded-response note", () => {
     render(
       <QuestionnaireResultsDashboard
         questionnaire={{
@@ -206,10 +284,10 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getByText("Published total")).toBeTruthy();
+    expect(screen.getByText("Responses")).toBeTruthy();
     expect(screen.getByText("1200/1200 accepted (100%)")).toBeTruthy();
-    expect(document.body.textContent).toContain("Loaded: 400 (33%)");
-    expect(document.body.textContent).toContain("Accepted: 400 (100%)");
+    expect(document.body.textContent).not.toContain("Loaded: 400 (33%)");
+    expect(document.body.textContent).not.toContain("Accepted: 400 (100%)");
   });
 
   it("shows submitted votes 100 at a time while filtering across every loaded response", async () => {
