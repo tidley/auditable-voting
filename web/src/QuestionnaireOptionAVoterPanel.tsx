@@ -12,7 +12,7 @@ import {
   QuestionnaireOptionAVoterRuntime,
   OptionARuntimeError,
 } from "./questionnaireOptionARuntime";
-import type { BallotScope, ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalState } from "./questionnaireOptionA";
+import type { BallotScope, BallotSubmission, ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalState } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { deriveIdentityWords } from "./identityWords";
 import {
@@ -26,7 +26,11 @@ import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./question
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
 import {
+  allowedScopesForRequiredScope,
+  normaliseQuestionnaireAllowedScopes,
+  normaliseQuestionnaireBallotGroup,
   normaliseQuestionBallotSlot,
+  questionRequiredScope,
   questionBallotCredentialScope,
   questionBallotScopeKey,
   questionnaireCredentialsPerVoter,
@@ -40,7 +44,7 @@ import { decodeNsec } from "./nostrIdentity";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
 import { tryWriteClipboard } from "./clipboard";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
-import { UiButton, UiSelect, UiSwitch, UiTextArea } from "./ui/DesignLayer";
+import { UiButton, UiIcon, UiSelect, UiSwitch, UiTextArea } from "./ui/DesignLayer";
 import {
   hashQuestionnaireInviteCode,
   hashQuestionnairePrivateInviteClaim,
@@ -279,11 +283,30 @@ function proxyAnswerKey(questionId: string, credentialIndex: number) {
   return `${questionId}:credential:${credentialIndex}`;
 }
 
+function credentialIndexFromBallotScope(scope: BallotScope | null | undefined) {
+  return Number.isFinite(scope?.credentialIndex)
+    ? Math.max(1, Math.floor(scope?.credentialIndex as number))
+    : 1;
+}
+
+function credentialIndexFromSubmission(key: string, submission: BallotSubmission) {
+  const scopedCredentialIndex = submission.credentialBundle
+    ?.map((proof) => credentialIndexFromBallotScope(proof.ballotScope))
+    .find((index) => index > 1);
+  if (scopedCredentialIndex) {
+    return scopedCredentialIndex;
+  }
+  const keyedCredentialIndex = key.match(/:c(\d+)(?::|$)/)?.[1];
+  return keyedCredentialIndex ? Math.max(1, Math.floor(Number(keyedCredentialIndex))) : 1;
+}
+
 function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
   return definition.questions.map((question) => ({
     questionId: question.questionId,
     required: question.required,
     prompt: question.prompt,
+    requiredScope: questionRequiredScope(question),
+    ballotGroup: normaliseQuestionnaireBallotGroup(question.ballotGroup),
     type: question.type,
     options: question.type === "multiple_choice" || question.type === "rank" ? question.options : undefined,
     multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
@@ -291,6 +314,18 @@ function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
     maxLength: question.type === "free_text" ? question.maxLength : undefined,
     encryptResponses: question.type === "free_text" ? Boolean(question.encryptResponses) : undefined,
   }));
+}
+
+function questionVisibleForBallotGroup(question: { requiredScope?: string | null; ballotGroup?: string | null }, activeBallotGroup: string | null) {
+  const requiredScope = questionRequiredScope(question);
+  return !requiredScope || allowedScopesForRequiredScope(activeBallotGroup).includes(requiredScope);
+}
+
+function filterQuestionsForBallotGroup<T extends { requiredScope?: string | null; ballotGroup?: string | null }>(
+  questions: T[],
+  activeBallotGroup: string | null,
+) {
+  return questions.filter((question) => questionVisibleForBallotGroup(question, activeBallotGroup));
 }
 
 function latestDefinitionFromEntries(entries: Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>) {
@@ -371,6 +406,15 @@ const AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS = 2_500;
 const PRIVATE_INVITE_STATUS_QUICK_CHECK_TIME_BUDGET_MS = 1_800;
 const PRIVATE_INVITE_STATUS_QUICK_CHECK_MAX_PAGES = 2;
 type BallotWaitRefreshMode = "manual" | "lifecycle" | "background";
+
+function SubmittedStateLabel({ children = "Submitted" }: { children?: string }) {
+  return (
+    <p className='simple-questionnaire-voter-requirement is-submitted'>
+      <UiIcon name='check' />
+      <span>{children}</span>
+    </p>
+  );
+}
 
 function getManualBallotResendAvailableAtMs(snapshot: VoterElectionLocalState | null | undefined) {
   if (!snapshot?.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
@@ -667,17 +711,24 @@ function formatBallotDetailValue(value: string | number | boolean | null | undef
 function scopedBallotScopeKey(scope: BallotScope | null | undefined) {
   const questionId = scope?.questionId?.trim() ?? "";
   const slotId = scope?.slotId?.trim() ?? "";
+  const ballotGroup = normaliseQuestionnaireBallotGroup(scope?.ballotGroup);
+  const allowedScopes = normaliseQuestionnaireAllowedScopes(scope?.allowedScopes, ballotGroup)
+    .filter((entry) => entry !== "0");
   const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
   const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 1;
   const credentialIndex = Number.isFinite(scope?.credentialIndex) ? Math.max(1, Math.floor(scope?.credentialIndex as number)) : 1;
   const credentialSuffix = credentialIndex > 1 ? `:c${credentialIndex}` : "";
-  if (!questionId && !slotId && !slotIndex && version === 1 && credentialIndex <= 1) {
+  const scopePrefix = allowedScopes.length > 0 ? `scopes:${allowedScopes.join("+")}:` : "";
+  if (!questionId && !slotId && !slotIndex && version === 1 && credentialIndex <= 1 && allowedScopes.length === 0) {
     return "__questionnaire__";
   }
-  if (slotIndex > 0) {
-    return `slot:${slotIndex}:v${version}${credentialSuffix}`;
+  if (!questionId && !slotId && !slotIndex && allowedScopes.length > 0) {
+    return `${scopePrefix}questionnaire${credentialSuffix}`;
   }
-  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}${credentialSuffix}`;
+  if (slotIndex > 0) {
+    return `${scopePrefix}slot:${slotIndex}:v${version}${credentialSuffix}`;
+  }
+  return `${scopePrefix}${questionId || slotId}:${slotId}:${slotIndex}:v${version}${credentialSuffix}`;
 }
 
 function withCredentialIndex(scope: BallotScope | null, credentialIndex: number): BallotScope | null {
@@ -695,9 +746,11 @@ function scopedBallotScopeForQuestion(
   definition: QuestionnaireDefinition | null | undefined,
   questionId: string,
   credentialIndex = 1,
+  ballotGroup?: string | null,
 ): BallotScope | null {
   if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
-    return withCredentialIndex(null, credentialIndex);
+    const group = normaliseQuestionnaireBallotGroup(ballotGroup);
+    return withCredentialIndex(group ? { allowedScopes: allowedScopesForRequiredScope(group) } : null, credentialIndex);
   }
   const index = definition.questions.findIndex((question) => question.questionId === questionId);
   const question = index >= 0 ? definition.questions[index] : null;
@@ -730,6 +783,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     questionId: string;
     required: boolean;
     prompt: string;
+    requiredScope?: string | null;
+    ballotGroup?: string | null;
     type: "yes_no" | "multiple_choice" | "rank" | "free_text";
     options?: Array<{ optionId: string; label: string }>;
     multiSelect?: boolean;
@@ -841,6 +896,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const currentDefinition = autoRequestDefinition
     ?? (questionnaireDefinition?.questionnaireId === currentQuestionnaireId ? questionnaireDefinition : null)
     ?? (currentQuestionnaireId ? readCachedQuestionnaireDefinition(currentQuestionnaireId) : null);
+  const activeBallotGroup = normaliseQuestionnaireBallotGroup(snapshot?.inviteMessage?.ballotGroup)
+    ?? normaliseQuestionnaireBallotGroup(activeInvite?.ballotGroup)
+    ?? normaliseQuestionnaireBallotGroup(inviteContext.invite?.ballotGroup)
+    ?? normaliseQuestionnaireBallotGroup(inviteContext.ballotGroup)
+    ?? normaliseQuestionnaireBallotGroup(snapshot?.privateInviteBallotGroup);
   const perQuestionMode = questionnaireUsesPerQuestionCredentials(currentDefinition);
   const proxyCredentialInvite = [
     snapshot?.inviteMessage,
@@ -849,7 +909,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     inviteContext.invite,
   ].find((invite) => inviteGrantsProxyCredential(invite, currentQuestionnaireId)) ?? null;
   const credentialCount = proxyCredentialInvite ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
-  const showProxyBallotsTogether = perQuestionMode && credentialCount > 1;
+  const showProxyBallotsTogether = credentialCount > 1;
   const credentialIndexes = useMemo(
     () => Array.from({ length: credentialCount }, (_, index) => index + 1),
     [credentialCount],
@@ -876,7 +936,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setSignedInNpub(next.invitedNpub);
     setRefreshNonce((value) => value + 1);
 
-    if (perQuestionMode && next.blindRequestSent && !next.submission) {
+    if (next.blindRequestSent && !next.credentialReady && !next.submission) {
       void runtime.requestBlindBallot({ forceResend: true }).then(() => {
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
@@ -886,7 +946,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }, [
     currentQuestionnaireId,
-    perQuestionMode,
     proxyCredentialInvite,
     runtime,
     snapshot?.electionId,
@@ -901,12 +960,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       settingsMode
       || !runtime
       || !snapshot?.loginVerified
-      || !perQuestionMode
       || !currentDefinition
       || !snapshot.blindRequestSent
       || snapshot.credentialReady
       || snapshot.submission
       || snapshot.electionId !== currentQuestionnaireId
+      || (!perQuestionMode && credentialIndexes.length <= 1 && !activeBallotGroup)
     ) {
       return;
     }
@@ -926,6 +985,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       snapshot.invitedNpub,
       currentDefinition.createdAt,
       credentialIndexes.join(","),
+      activeBallotGroup ?? "",
+      perQuestionMode ? "per_question" : "questionnaire",
     ].join(":");
     if (scopedCredentialRecoveryForRef.current[key]) {
       return;
@@ -940,6 +1001,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     });
   }, [
     credentialIndexes,
+    activeBallotGroup,
     currentDefinition,
     currentQuestionnaireId,
     perQuestionMode,
@@ -970,30 +1032,24 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ? acceptedQuestionKey.split("|").map((entry) => entry.split(":")[0]).filter(Boolean)
       : [],
   ), [acceptedQuestionKey]);
-  const activeQuestion = perQuestionMode ? questions[activeQuestionIndex] ?? null : null;
+  const activeQuestion = questions[activeQuestionIndex] ?? null;
   const activeQuestionScope = perQuestionMode && activeQuestion
-    ? scopedBallotScopeForQuestion(currentDefinition, activeQuestion.questionId, activeCredentialIndex)
+    ? scopedBallotScopeForQuestion(currentDefinition, activeQuestion.questionId, activeCredentialIndex, activeBallotGroup)
     : null;
   const activeQuestionScopeKey = perQuestionMode && activeQuestion
     ? scopedBallotScopeKey(activeQuestionScope)
     : "";
   const groupKeyForQuestionId = (questionId: string, credentialIndex = activeCredentialIndex) => (
-    scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, questionId, credentialIndex))
+    scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, questionId, credentialIndex, activeBallotGroup))
   );
   const answerKeyForQuestion = (questionId: string, credentialIndex = activeCredentialIndex) => (
     showProxyBallotsTogether ? proxyAnswerKey(questionId, credentialIndex) : questionId
   );
   const activeQuestionGroupEntries = useMemo(() => (
-    perQuestionMode && activeQuestion && activeQuestionScopeKey
-      ? questions
-        .map((question, index) => ({ question, index }))
-        .filter(({ question }) => (
-          scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, question.questionId, activeCredentialIndex)) === activeQuestionScopeKey
-        ))
-      : activeQuestion
-        ? [{ question: activeQuestion, index: activeQuestionIndex }]
-        : []
-  ), [activeCredentialIndex, activeQuestion, activeQuestionIndex, activeQuestionScopeKey, currentDefinition, perQuestionMode, questions]);
+    activeQuestion
+      ? [{ question: activeQuestion, index: activeQuestionIndex }]
+      : []
+  ), [activeQuestion, activeQuestionIndex]);
   const activeQuestionIds = useMemo(
     () => activeQuestionGroupEntries.map(({ question }) => question.questionId),
     [activeQuestionGroupEntries],
@@ -1260,10 +1316,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   ]);
 
   useEffect(() => {
-    if (!perQuestionMode) {
-      setActiveQuestionIndex(0);
-      return;
-    }
     setActiveQuestionIndex((current) => {
       if (questions.length === 0) {
         return 0;
@@ -1271,7 +1323,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return Math.min(Math.max(current, 0), questions.length - 1);
     });
     setActiveCredentialIndex((current) => Math.min(Math.max(current, 1), credentialCount));
-  }, [credentialCount, perQuestionMode, questions.length]);
+  }, [credentialCount, questions.length]);
 
   useEffect(() => {
     if (!perQuestionMode || questions.length === 0) {
@@ -1311,8 +1363,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     runtime.setBearerInviteCode(inviteContext.inviteCode, {
       credentialsPerVoter: inviteContext.credentialsPerVoter,
+      ballotGroup: inviteContext.ballotGroup,
     });
-  }, [runtime, inviteContext.inviteCode, inviteContext.credentialsPerVoter]);
+  }, [runtime, inviteContext.inviteCode, inviteContext.credentialsPerVoter, inviteContext.ballotGroup]);
 
   useEffect(() => {
     return () => {
@@ -1669,7 +1722,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setQuestionnaireTitle(localDefinition.title || "Questionnaire");
       setQuestionnaireDescription(localDefinition.description || "");
       setQuestionnaireDefinition(localDefinition);
-      setQuestions(mapDefinitionQuestions(localDefinition));
+      setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(localDefinition), activeBallotGroup));
     }
     let cancelled = false;
     const definitionRelays = mergeQuestionnaireRelayHints(
@@ -1693,13 +1746,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setQuestionnaireTitle(latest.title || "Questionnaire");
         setQuestionnaireDescription(latest.description || "");
         setQuestionnaireDefinition(latest);
-        setQuestions(mapDefinitionQuestions(latest));
+        setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(latest), activeBallotGroup));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [activeInvite, contextPendingInvites, electionId, inviteContext.invite, snapshot?.blindIssuance, snapshot?.inviteMessage]);
+  }, [activeBallotGroup, activeInvite, contextPendingInvites, electionId, inviteContext.invite, snapshot?.blindIssuance, snapshot?.inviteMessage]);
 
   useEffect(() => {
     const currentId = electionId.trim();
@@ -1849,18 +1902,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   ]);
 
   const answerableQuestions = useMemo(
-    () => (perQuestionMode ? activeQuestionGroupEntries.map(({ question }) => question) : questions),
-    [activeQuestionGroupEntries, perQuestionMode, questions],
+    () => activeQuestionGroupEntries.map(({ question }) => question),
+    [activeQuestionGroupEntries],
   );
   const visibleQuestionEntries = useMemo(
-    () => (
-      perQuestionMode
-        ? activeQuestion
-          ? [{ question: activeQuestion, index: activeQuestionIndex }]
-          : []
-        : questions.map((question, index) => ({ question, index }))
-    ),
-    [activeQuestion, activeQuestionIndex, perQuestionMode, questions],
+    () => activeQuestion ? [{ question: activeQuestion, index: activeQuestionIndex }] : [],
+    [activeQuestion, activeQuestionIndex],
   );
   const requiredQuestions = useMemo(
     () => answerableQuestions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
@@ -2350,7 +2397,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     });
   }
 
-  function publishCurrentProvisionalAnswers(questionIds = perQuestionMode ? activeQuestionIds : requiredQuestionIds) {
+  function publishCurrentProvisionalAnswers(questionIds = activeQuestionIds) {
     if (!runtime || questionIds.length === 0) {
       return false;
     }
@@ -2677,7 +2724,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function findAdjacentQuestionIndex(fromIndex: number, direction: -1 | 1) {
-    if (!perQuestionMode || questions.length === 0) {
+    if (questions.length === 0) {
       return -1;
     }
     const index = fromIndex + direction;
@@ -2716,15 +2763,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function findNextQuestionIndexInActiveGroup(fromIndex: number) {
-    if (!perQuestionMode || questions.length === 0 || !activeQuestionScopeKey) {
+    if (questions.length === 0) {
       return -1;
     }
-    for (let index = fromIndex + 1; index < questions.length; index += 1) {
-      if (groupKeyForQuestionId(questions[index].questionId) === activeQuestionScopeKey) {
-        return index;
-      }
-    }
-    return -1;
+    return findAdjacentQuestionIndex(fromIndex, 1);
   }
 
   function moveToNextProxyCredentialIfNeeded(justSubmittedQuestionIds: string[]) {
@@ -2763,7 +2805,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ? options?.submitAllQuestions
           ? questions.map((question) => question.questionId)
           : activeQuestionIds
-        : [];
+        : showProxyBallotsTogether
+          ? questions.map((question) => question.questionId)
+          : [];
       const submitQuestionIdSet = new Set(submitQuestionIds);
       const submitRequiredQuestionSourceIds = options?.submitAllQuestions
         ? requiredQuestionIdsForQuestionnaire
@@ -3561,17 +3605,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ))
       : questions.every((question) => Boolean(snapshotForAction?.blindIssuances?.[groupKeyForQuestionId(question.questionId, activeCredentialIndex)]))
   );
+  const questionnaireCredentialReady = perQuestionMode
+    ? allQuestionCredentialsReadyForQuestionnaire
+    : Boolean(snapshotForAction?.credentialReady);
+  const questionnaireHasAnyResponse = questions.some(questionHasResponse);
   const canSubmitNow = (
     perQuestionMode
       ? Boolean(snapshotForAction?.loginVerified && activeQuestionCredentialReady)
       : flags.canSubmitVote
   )
-    && requiredQuestionsAnsweredForAction
-    && answerableQuestionsHaveResponseForAction
+    && (perQuestionMode ? requiredQuestionsAnsweredForAction : allQuestionsAnsweredForQuestionnaire)
+    && (perQuestionMode ? answerableQuestionsHaveResponseForAction : questionnaireHasAnyResponse)
     && !responseSubmittedForCurrentQuestionnaire;
   const canAdvanceQuestion = perQuestionMode && responseSubmittedForCurrentQuestionnaire && !allQuestionResponsesSubmitted;
-  const nextQuestionIndexInActiveGroup = perQuestionMode ? findNextQuestionIndexInActiveGroup(activeQuestionIndex) : -1;
-  const canAdvanceQuestionBeforeSubmit = perQuestionMode
+  const nextQuestionIndexInActiveGroup = findNextQuestionIndexInActiveGroup(activeQuestionIndex);
+  const canAdvanceQuestionBeforeSubmit = questions.length > 1
     && !responseSubmittedForCurrentQuestionnaire
     && !canSubmitNow
     && (showProxyBallotsTogether ? proxyActiveQuestionHasResponse : activeQuestionHasResponse)
@@ -3579,19 +3627,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const canViewResults = perQuestionMode
     ? allQuestionResponsesSubmitted
     : Boolean(snapshot?.submission);
-  const previousQuestionIndex = perQuestionMode ? findAdjacentQuestionIndex(activeQuestionIndex, -1) : -1;
-  const nextQuestionIndex = perQuestionMode ? findAdjacentQuestionIndex(activeQuestionIndex, 1) : -1;
+  const previousQuestionIndex = findAdjacentQuestionIndex(activeQuestionIndex, -1);
+  const nextQuestionIndex = findAdjacentQuestionIndex(activeQuestionIndex, 1);
   const hasAdjacentQuestion = previousQuestionIndex >= 0 || nextQuestionIndex >= 0;
-  const isLastQuestionInQuestionNav = perQuestionMode
+  const isLastQuestionInQuestionNav = questions.length > 1
     && hasAdjacentQuestion
     && nextQuestionIndex < 0;
   const showSubmitFromQuestionNav = isLastQuestionInQuestionNav
     && allQuestionsAnsweredForQuestionnaire
     && !allQuestionResponsesSubmitted;
+  const showViewResultsFromQuestionNav = isLastQuestionInQuestionNav && canViewResults;
   const canSubmitFromQuestionNav = showSubmitFromQuestionNav
     && canSubmitNow
-    && allQuestionCredentialsReadyForQuestionnaire;
-  const questionNavForwardHighlighted = canSubmitFromQuestionNav || (nextQuestionIndex >= 0 && activeQuestionReadyForNavigation);
+    && questionnaireCredentialReady;
+  const questionNavForwardHighlighted = showViewResultsFromQuestionNav || canSubmitFromQuestionNav || (nextQuestionIndex >= 0 && activeQuestionReadyForNavigation);
   const activeQuestionProgressLabel = (() => {
     const questionPosition = Math.min(activeQuestionIndex + 1, Math.max(questions.length, 1));
     const questionCountLabel = questions.length > 0
@@ -3619,7 +3668,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (requiredQuestionsAnsweredForAction) {
       return "";
     }
-    if (perQuestionMode && activeQuestion && !showProxyBallotsTogether) {
+    if (activeQuestion && !showProxyBallotsTogether) {
       if (activeQuestion.type === "rank") {
         const key = answerKeyForQuestion(activeQuestion.questionId);
         const ranked = Array.isArray(answers[key]) ? (answers[key] as string[]) : [];
@@ -3653,13 +3702,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   });
   const questionNavSubmitStatus = canSubmitFromQuestionNav
     ? questionNavSubmitHint
-    : !allQuestionCredentialsReadyForQuestionnaire
+    : !questionnaireCredentialReady
       ? snapshotForAction?.blindRequestSent ? "2/3 Awaiting ballot" : "1/3 Requesting ballot"
       : formattedVoteActionButtonText;
   const voteActionButtonText = responseSubmittedForCurrentQuestionnaire || (perQuestionMode && allQuestionResponsesSubmitted) || submitInFlight
     ? formattedVoteActionButtonText
     : requiredAnswerPrompt || combinedProxySubmitLabel || formattedVoteActionButtonText;
-  const showVoteActionButton = !perQuestionMode || (submitInFlight && !canSubmitFromQuestionNav) || (canSubmitNow && !hasAdjacentQuestion) || canViewResults;
+  const showQuestionNavigation = questions.length > 1;
+  const showVoteActionButton = !showQuestionNavigation && (
+    !perQuestionMode
+    || (submitInFlight && !canSubmitFromQuestionNav)
+    || (canSubmitNow && !hasAdjacentQuestion)
+    || (canViewResults && !showViewResultsFromQuestionNav)
+  );
   useEffect(() => {
     if (showProxyBallotsTogether) {
       return;
@@ -3848,18 +3903,57 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? (!perQuestionMode ? snapshot?.responseNpub ?? "" : "");
   const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
   const submittedMarkerWords = submittedMarkerNpub ? deriveIdentityWords(submittedMarkerNpub) : "";
-  const receiptStatusLabel = snapshot?.submissionAccepted === true
-    ? "Accepted"
-    : snapshot?.submissionAccepted === false
-      ? "Rejected"
-      : "";
+  const receiptStatusLabel = snapshot?.submissionAccepted === false ? "Rejected" : "";
   const submittedAtLabel = displaySubmission?.submittedAt
     ? new Date(displaySubmission.submittedAt).toLocaleString()
     : "";
-  const receiptRows = [
-    { key: "submitted", label: "Submitted", value: submittedAtLabel || "Recorded locally" },
-    { key: "find", label: "Find your vote", value: submittedMarkerWords || "Not available" },
-  ];
+  const submittedMarkerWordsLabel = submittedMarkerWords || "Not available";
+  const proxyReceiptScopeKeys = new Set(
+    perQuestionMode
+      ? credentialIndexes.flatMap((credentialIndex) => (
+        activeQuestionIds.map((questionId) => groupKeyForQuestionId(questionId, credentialIndex))
+      ))
+      : [],
+  );
+  const seenOtherProxyReceiptSubmissionIds = new Set<string>();
+  const otherProxyReceiptSubmissions = credentialIndexes.length > 1 && displaySubmission && snapshot?.electionId === currentQuestionnaireId
+    ? Object.entries(snapshot.submissions ?? {})
+      .filter(([key, submission]) => {
+        if (submission.submissionId === displaySubmission.submissionId) {
+          return false;
+        }
+        if (seenOtherProxyReceiptSubmissionIds.has(submission.submissionId)) {
+          return false;
+        }
+        if (proxyReceiptScopeKeys.has(key)) {
+          seenOtherProxyReceiptSubmissionIds.add(submission.submissionId);
+          return true;
+        }
+        const proofs = Array.isArray(submission.credentialBundle) ? submission.credentialBundle : [];
+        if (proofs.some((proof) => proxyReceiptScopeKeys.has(scopedBallotScopeKey(proof.ballotScope)))) {
+          seenOtherProxyReceiptSubmissionIds.add(submission.submissionId);
+          return true;
+        }
+        const matchesActiveQuestion = submission.payload.responses.some((response) => activeQuestionIds.includes(response.questionId));
+        if (matchesActiveQuestion) {
+          seenOtherProxyReceiptSubmissionIds.add(submission.submissionId);
+        }
+        return matchesActiveQuestion;
+      })
+      .map(([key, submission]) => {
+        const npub = submission.responseNpub ?? submission.invitedNpub ?? "";
+        const credentialIndex = credentialIndexFromSubmission(key, submission);
+        return {
+          key: submission.submissionId,
+          credentialIndex,
+          submittedAt: submission.submittedAt ? new Date(submission.submittedAt).toLocaleString() : "Recorded locally",
+          npub,
+          npubLabel: npub ? deriveActorDisplayId(npub) : "Unknown",
+          words: npub ? deriveIdentityWords(npub) : "Not available",
+        };
+      })
+      .sort((left, right) => left.credentialIndex - right.credentialIndex)
+    : [];
   async function copyReceiptValue(value: string, key: string) {
     const trimmed = value.trim();
     if (!trimmed) {
@@ -3877,12 +3971,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const key = answerKeyForQuestion(question.questionId, credentialIndex);
     const value = answers[key];
     if (question.type === "yes_no") {
+      const selectedYes = value === "yes";
+      const selectedNo = value === "no";
       return (
         <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
           <UiButton
             icon='check'
-            className={`simple-voter-choice simple-voter-choice-yes${value === "yes" ? " is-active" : value === "no" ? " is-dimmed" : ""}`}
-            aria-pressed={value === "yes"}
+            className={[
+              "simple-voter-choice simple-voter-choice-yes",
+              selectedYes ? "is-active" : selectedNo ? "is-dimmed" : "",
+              questionSubmitted && selectedYes ? "is-submitted-selected" : "",
+              questionSubmitted && !selectedYes ? "is-submitted-unselected" : "",
+            ].filter(Boolean).join(" ")}
+            aria-pressed={selectedYes}
             isDisabled={questionSubmitted}
             onPress={() => {
               if (questionSubmitted) {
@@ -3895,8 +3996,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           </UiButton>
           <UiButton
             icon='cancel'
-            className={`simple-voter-choice simple-voter-choice-no${value === "no" ? " is-active" : value === "yes" ? " is-dimmed" : ""}`}
-            aria-pressed={value === "no"}
+            className={[
+              "simple-voter-choice simple-voter-choice-no",
+              selectedNo ? "is-active" : selectedYes ? "is-dimmed" : "",
+              questionSubmitted && selectedNo ? "is-submitted-selected" : "",
+              questionSubmitted && !selectedNo ? "is-submitted-unselected" : "",
+            ].filter(Boolean).join(" ")}
+            aria-pressed={selectedNo}
             isDisabled={questionSubmitted}
             onPress={() => {
               if (questionSubmitted) {
@@ -3917,7 +4023,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             const selected = Array.isArray(value) ? (value as string[]) : [];
             const checked = selected.includes(option.optionId);
             return (
-              <label key={option.optionId} className={`simple-questionnaire-choice-row${checked ? " is-selected" : ""}`}>
+              <label
+                key={option.optionId}
+                className={[
+                  "simple-questionnaire-choice-row",
+                  checked ? "is-selected" : "",
+                  questionSubmitted && checked ? "is-submitted-selected" : "",
+                  questionSubmitted && !checked ? "is-submitted-unselected" : "",
+                ].filter(Boolean).join(" ")}
+              >
                 <input
                   type={question.multiSelect ? "checkbox" : "radio"}
                   checked={checked}
@@ -4032,12 +4146,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 <UiButton
                   key={option.optionId}
                   icon={false}
-                  className='simple-voter-secondary simple-questionnaire-rank-add'
+                  className={`simple-voter-secondary simple-questionnaire-rank-add${questionSubmitted ? " is-response-locked" : ""}`}
                   onPress={() => addRankedAnswer(question.questionId, option.optionId, credentialIndex)}
                   isDisabled={questionSubmitted}
                 >
                   <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
-                  <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
+                  {questionSubmitted ? null : (
+                    <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
+                  )}
                 </UiButton>
               ))}
             </div>
@@ -4084,7 +4200,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
   const advancedReceiptRows = [
     { label: "Questionnaire ID", value: submittedQuestionnaireId },
-    { label: "Question ID", value: displaySubmissionQuestion?.questionId ?? null },
     { label: "Submission ID", value: displaySubmission?.submissionId ?? null },
     { label: "Anonymous identity npub", value: submittedMarkerNpub || null },
     { label: "Token commitment", value: displaySubmission?.tokenCommitment ?? null },
@@ -4391,7 +4506,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </p>
       ) : (
         <div className='simple-questionnaire-voter-list'>
-          {perQuestionMode ? (
+          {showQuestionNavigation ? (
             <div className='simple-questionnaire-question-stepper is-single-group' aria-label='Question progress'>
               <p className='simple-questionnaire-question-progress'>
                 {activeQuestionProgressLabel}
@@ -4424,7 +4539,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 </div>
                 {showProxyBallotsTogether ? (
                   questionSubmitted ? (
-                    <p className='simple-questionnaire-voter-requirement'>Submitted</p>
+                    <SubmittedStateLabel />
                   ) : null
                 ) : (() => {
                   const requirementLabel = questionAccepted
@@ -4433,9 +4548,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                       ? "Submitted"
                       : null;
                   return requirementLabel ? (
-                    <p className='simple-questionnaire-voter-requirement'>
-                      {requirementLabel}
-                    </p>
+                    <SubmittedStateLabel>{requirementLabel}</SubmittedStateLabel>
                   ) : null;
                 })()}
               </div>
@@ -4469,9 +4582,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                       >
                         <div className='simple-questionnaire-proxy-vote-heading'>
                           <strong>Separate vote {credentialIndex}</strong>
-                          <span className={`simple-questionnaire-voter-requirement${requirementClass}`}>
-                            {requirementLabel}
-                          </span>
+                          {requirementLabel === "Submitted" || requirementLabel === "Accepted" ? (
+                            <SubmittedStateLabel>{requirementLabel}</SubmittedStateLabel>
+                          ) : (
+                            <span className={`simple-questionnaire-voter-requirement${requirementClass}`}>
+                              {requirementLabel}
+                            </span>
+                          )}
                         </div>
                         {renderQuestionControls(question, credentialIndex, ballotSubmitted)}
                       </section>
@@ -4482,7 +4599,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             </article>
             );
           })}
-          {perQuestionMode && hasAdjacentQuestion ? (
+          {showQuestionNavigation ? (
             <div className='simple-questionnaire-question-stepper simple-questionnaire-question-nav' aria-label='Question navigation'>
               <UiButton
                 icon='chevronLeft'
@@ -4500,11 +4617,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 </span>
               </UiButton>
               <UiButton
-                icon={showSubmitFromQuestionNav ? submitInFlight ? "spinner" : "send" : "chevronRight"}
-                iconPosition={showSubmitFromQuestionNav ? "start" : "end"}
-                className={`simple-voter-secondary simple-questionnaire-stepper-button simple-questionnaire-stepper-button-next${questionNavForwardHighlighted ? " is-ready" : ""}${showSubmitFromQuestionNav ? " is-submit" : ""}`}
-                isDisabled={showSubmitFromQuestionNav ? submitInFlight || !canSubmitFromQuestionNav : nextQuestionIndex < 0}
+                icon={showViewResultsFromQuestionNav ? "view" : showSubmitFromQuestionNav ? submitInFlight ? "spinner" : "send" : "chevronRight"}
+                iconPosition={showViewResultsFromQuestionNav || showSubmitFromQuestionNav ? "start" : "end"}
+                className={`simple-voter-secondary simple-questionnaire-stepper-button simple-questionnaire-stepper-button-next${questionNavForwardHighlighted ? " is-ready" : ""}${showSubmitFromQuestionNav || showViewResultsFromQuestionNav ? " is-submit" : ""}`}
+                isDisabled={showViewResultsFromQuestionNav ? false : showSubmitFromQuestionNav ? submitInFlight || !canSubmitFromQuestionNav : nextQuestionIndex < 0}
                 onPress={() => {
+                  if (showViewResultsFromQuestionNav) {
+                    viewResults();
+                    return;
+                  }
                   if (showSubmitFromQuestionNav) {
                     if (!canSubmitFromQuestionNav) {
                       return;
@@ -4519,8 +4640,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 }}
               >
                 <span className='simple-questionnaire-stepper-copy'>
-                  <strong>{showSubmitFromQuestionNav ? submitInFlight ? "Submitting..." : "Submit" : "Next"}</strong>
-                  <small>{showSubmitFromQuestionNav ? questionNavSubmitStatus : nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
+                  <strong>{showViewResultsFromQuestionNav ? "View results" : showSubmitFromQuestionNav ? submitInFlight ? "Submitting..." : "Submit" : "Next"}</strong>
+                  <small>{showViewResultsFromQuestionNav ? "Questionnaire results" : showSubmitFromQuestionNav ? questionNavSubmitStatus : nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
                 </span>
               </UiButton>
             </div>
@@ -4541,8 +4662,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 return;
               }
               if (canAdvanceQuestionBeforeSubmit) {
-                const provisionalQuestionIds = perQuestionMode ? activeQuestionIds : requiredQuestionIds;
-                publishCurrentProvisionalAnswers(provisionalQuestionIds);
+                publishCurrentProvisionalAnswers(activeQuestionIds);
                 if (nextQuestionIndexInActiveGroup >= 0) {
                   setActiveQuestionIndex(nextQuestionIndexInActiveGroup);
                 }
@@ -4590,80 +4710,125 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       </div>
       ) : null}
       {displaySubmission ? (
-        <section className='simple-settings-card simple-submission-identity-card simple-vote-receipt-card' aria-label='Vote receipt'>
-          <div className='simple-submission-identity-header simple-vote-receipt-header'>
-            <div>
-              <h4 className='simple-voter-section-title'>Vote receipt</h4>
-            </div>
-            {receiptStatusLabel ? (
-              <span className={snapshot?.submissionAccepted === false ? "simple-vote-receipt-status is-rejected" : "simple-vote-receipt-status"}>
-                {receiptStatusLabel}
+        <details className='simple-auditor-dropdown simple-vote-receipt-dropdown'>
+          <summary className='simple-auditor-dropdown-head simple-vote-receipt-dropdown-head'>
+            <span className='simple-vote-receipt-dropdown-title'>
+              <span className='simple-voter-section-title' role='heading' aria-level={2}>Vote receipt</span>
+              {receiptStatusLabel ? (
+                <span className={snapshot?.submissionAccepted === false ? "simple-vote-receipt-status is-rejected" : "simple-vote-receipt-status"}>
+                  {receiptStatusLabel}
+                </span>
+              ) : null}
+            </span>
+          </summary>
+          <div className='simple-auditor-dropdown-body'>
+            <div className='simple-auditor-dropdown-body-inner simple-vote-receipt-dropdown-body-inner'>
+              <section className='simple-settings-card simple-submission-identity-card simple-vote-receipt-card' aria-label='Vote receipt details'>
+                <div className='simple-submission-identity-body simple-vote-receipt-body'>
+            <div className='simple-vote-receipt-finder'>
+              <span>Anonymous voting identity</span>
+              <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-words'>
+                <span className='simple-identity-words-badge'>{submittedMarkerWordsLabel}</span>
+                {submittedMarkerWords ? (
+                  <UiButton
+                    icon={isReceiptCopyActive("receipt-identity-words") ? "check" : "copy"}
+                    iconOnly
+                    className='simple-vote-receipt-copy-button'
+                    onPress={() => void copyReceiptValue(submittedMarkerWords, "receipt-identity-words")}
+                    aria-label={isReceiptCopyActive("receipt-identity-words") ? "Copied vote finder words" : "Copy vote finder words"}
+                    title={isReceiptCopyActive("receipt-identity-words") ? "Copied" : "Copy vote finder words"}
+                    data-copied={isReceiptCopyActive("receipt-identity-words") ? "true" : undefined}
+                  />
+                ) : null}
               </span>
-            ) : null}
-          </div>
-          <div className='simple-submission-identity-body simple-vote-receipt-body'>
+            </div>
             <div className='simple-vote-receipt-identity-panel'>
-              <div className='simple-vote-receipt-identity-copy'>
-                <span>Anonymous voting identity</span>
-                <div className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-identity'>
-                  <strong>{submittedMarkerLabel}</strong>
-                  {submittedMarkerNpub ? (
-                    <UiButton
-                      icon={isReceiptCopyActive("receipt-anonymous-identity") ? "check" : "copy"}
-                      iconOnly
-                      className='simple-vote-receipt-copy-button'
-                      onPress={() => void copyReceiptValue(submittedMarkerNpub, "receipt-anonymous-identity")}
-                      aria-label={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied anonymous voting identity" : "Copy anonymous voting identity"}
-                      title={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied" : "Copy anonymous voting identity"}
-                      data-copied={isReceiptCopyActive("receipt-anonymous-identity") ? "true" : undefined}
-                    />
-                  ) : null}
-                </div>
-              </div>
-              <div className='simple-submission-identity-visuals'>
+              <div className='simple-submission-identity-visuals simple-vote-receipt-marker'>
                 <TokenFingerprint
                   tokenId={submittedMarkerNpub}
                   label='Anonymous voting identity'
                   large
-                  showQr
+                  showQr={false}
                   hideMetadata
-                  fingerprintTitle='Visual marker for checking this vote receipt at a glance.'
-                  qrTitle='QR code: scan this to copy the full anonymous voting identity.'
                 />
-                <div className='simple-submission-identity-visual-labels'>
-                  <span data-tooltip='Visual marker for checking this vote receipt at a glance.'>Identity marker</span>
-                  <span data-tooltip='QR code: scan this to copy the full anonymous voting identity.'>QR code</span>
-                </div>
               </div>
-            </div>
-            <dl className='simple-vote-receipt-summary'>
-              {receiptRows.map((row) => (
-                <div key={row.key} className={row.key === "find" ? "is-identity-words" : ""}>
-                  <dt>
-                    <span className={`simple-vote-receipt-fact-icon is-${row.key}`} aria-hidden='true' />
-                    <span>{row.label}</span>
-                  </dt>
+              <dl className='simple-vote-receipt-marker-meta'>
+                <div>
+                  <dt>Submitted</dt>
+                  <dd>{submittedAtLabel || "Recorded locally"}</dd>
+                </div>
+                <div>
+                  <dt>Anonymous npub</dt>
                   <dd>
-                    {row.key === "find" ? (
-                      <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-words'>
-                        <span className='simple-identity-words-badge'>{row.value}</span>
-                        {row.value !== "Not available" ? (
-                          <UiButton
-                            icon={isReceiptCopyActive("receipt-identity-words") ? "check" : "copy"}
-                            iconOnly
-                            className='simple-vote-receipt-copy-button'
-                            onPress={() => void copyReceiptValue(row.value, "receipt-identity-words")}
-                            aria-label={isReceiptCopyActive("receipt-identity-words") ? "Copied vote finder words" : "Copy vote finder words"}
-                            title={isReceiptCopyActive("receipt-identity-words") ? "Copied" : "Copy vote finder words"}
-                            data-copied={isReceiptCopyActive("receipt-identity-words") ? "true" : undefined}
-                          />
-                        ) : null}
-                      </span>
-                    ) : row.value}
+                    <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-identity'>
+                      <strong>{submittedMarkerLabel}</strong>
+                      {submittedMarkerNpub ? (
+                        <UiButton
+                          icon={isReceiptCopyActive("receipt-anonymous-identity") ? "check" : "copy"}
+                          iconOnly
+                          className='simple-vote-receipt-copy-button'
+                          onPress={() => void copyReceiptValue(submittedMarkerNpub, "receipt-anonymous-identity")}
+                          aria-label={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied anonymous voting identity" : "Copy anonymous voting identity"}
+                          title={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied" : "Copy anonymous voting identity"}
+                          data-copied={isReceiptCopyActive("receipt-anonymous-identity") ? "true" : undefined}
+                        />
+                      ) : null}
+                    </span>
                   </dd>
                 </div>
-              ))}
-            </dl>
+              </dl>
+            </div>
+            {otherProxyReceiptSubmissions.length > 0 ? (
+              <div className='simple-vote-receipt-proxy-list' aria-label='Other proxy vote receipts'>
+                {otherProxyReceiptSubmissions.map((entry) => (
+                  <article key={entry.key} className='simple-vote-receipt-proxy-card'>
+                    <div className='simple-vote-receipt-proxy-card-heading'>
+                      <strong>Separate vote {entry.credentialIndex}</strong>
+                      <span>{entry.submittedAt}</span>
+                    </div>
+                    <div className='simple-vote-receipt-proxy-card-body'>
+                      <TokenFingerprint
+                        tokenId={entry.npub}
+                        label={`Separate vote ${entry.credentialIndex} anonymous identity`}
+                        compact
+                        showQr={false}
+                        hideMetadata
+                      />
+                      <div className='simple-vote-receipt-proxy-card-copy'>
+                        <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-words'>
+                          <span className='simple-identity-words-badge'>{entry.words}</span>
+                          {entry.words !== "Not available" ? (
+                            <UiButton
+                              icon={isReceiptCopyActive(`receipt-proxy-words-${entry.key}`) ? "check" : "copy"}
+                              iconOnly
+                              className='simple-vote-receipt-copy-button'
+                              onPress={() => void copyReceiptValue(entry.words, `receipt-proxy-words-${entry.key}`)}
+                              aria-label={isReceiptCopyActive(`receipt-proxy-words-${entry.key}`) ? "Copied proxy vote finder words" : "Copy proxy vote finder words"}
+                              title={isReceiptCopyActive(`receipt-proxy-words-${entry.key}`) ? "Copied" : "Copy proxy vote finder words"}
+                              data-copied={isReceiptCopyActive(`receipt-proxy-words-${entry.key}`) ? "true" : undefined}
+                            />
+                          ) : null}
+                        </span>
+                        <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-identity'>
+                          <strong>{entry.npubLabel}</strong>
+                          {entry.npub ? (
+                            <UiButton
+                              icon={isReceiptCopyActive(`receipt-proxy-npub-${entry.key}`) ? "check" : "copy"}
+                              iconOnly
+                              className='simple-vote-receipt-copy-button'
+                              onPress={() => void copyReceiptValue(entry.npub, `receipt-proxy-npub-${entry.key}`)}
+                              aria-label={isReceiptCopyActive(`receipt-proxy-npub-${entry.key}`) ? "Copied proxy anonymous voting identity" : "Copy proxy anonymous voting identity"}
+                              title={isReceiptCopyActive(`receipt-proxy-npub-${entry.key}`) ? "Copied" : "Copy proxy anonymous voting identity"}
+                              data-copied={isReceiptCopyActive(`receipt-proxy-npub-${entry.key}`) ? "true" : undefined}
+                            />
+                          ) : null}
+                        </span>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
             <details className='simple-vote-receipt-advanced'>
               <summary>Advanced details</summary>
               <dl className='simple-submission-identity-details simple-vote-receipt-advanced-grid'>
@@ -4675,8 +4840,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 ))}
               </dl>
             </details>
+                </div>
+              </section>
+            </div>
           </div>
-        </section>
+        </details>
       ) : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
     </div>

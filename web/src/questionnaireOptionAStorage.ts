@@ -15,6 +15,7 @@ import {
   type VoterElectionLocalState,
   type WhitelistEntry,
 } from "./questionnaireOptionA";
+import { normaliseQuestionnaireBallotGroup } from "./questionnaireProtocol";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 
 function getKey(key: string) {
@@ -133,8 +134,13 @@ export type AdmittedVoterRecord = {
   note?: string | null;
   autoApply?: boolean;
   proxyVoter?: boolean;
+  ballotGroup?: string | null;
   lastUpdatedAt: string;
 };
+
+function normaliseBallotGroup(value: unknown) {
+  return normaliseQuestionnaireBallotGroup(value);
+}
 
 function admittedVotersStorageKey(coordinatorNpub: string) {
   return `${ADMITTED_VOTERS_KEY}:${coordinatorNpub.trim()}`;
@@ -153,6 +159,7 @@ function normaliseAdmittedVoterRecord(record: AdmittedVoterRecord): AdmittedVote
     note: typeof record.note === "string" ? record.note : null,
     autoApply: record.autoApply !== false,
     proxyVoter: record.proxyVoter === true,
+    ballotGroup: normaliseBallotGroup(record.ballotGroup),
     lastUpdatedAt: record.lastUpdatedAt?.trim() || record.admittedAt?.trim() || now,
   };
 }
@@ -252,6 +259,7 @@ export function upsertAdmittedVoters(input: {
       note: existing?.note ?? null,
       autoApply: existing?.autoApply !== false,
       proxyVoter: existing?.proxyVoter === true,
+      ballotGroup: existing?.ballotGroup ?? null,
       lastUpdatedAt: now,
     };
   }
@@ -265,7 +273,7 @@ export function upsertAdmittedVoters(input: {
 export function updateAdmittedVoter(input: {
   coordinatorNpub: Npub;
   npub: Npub;
-  patch: Pick<Partial<AdmittedVoterRecord>, "note" | "autoApply" | "proxyVoter">;
+  patch: Pick<Partial<AdmittedVoterRecord>, "note" | "autoApply" | "proxyVoter" | "ballotGroup">;
 }) {
   const current = loadAdmittedVoters({ coordinatorNpub: input.coordinatorNpub });
   const npub = input.npub.trim();
@@ -280,6 +288,7 @@ export function updateAdmittedVoter(input: {
       note: typeof input.patch.note === "string" ? input.patch.note : existing.note ?? null,
       autoApply: typeof input.patch.autoApply === "boolean" ? input.patch.autoApply : existing.autoApply !== false,
       proxyVoter: typeof input.patch.proxyVoter === "boolean" ? input.patch.proxyVoter : existing.proxyVoter === true,
+      ballotGroup: input.patch.ballotGroup !== undefined ? normaliseBallotGroup(input.patch.ballotGroup) : existing.ballotGroup ?? null,
       lastUpdatedAt: new Date().toISOString(),
     },
   };
@@ -459,6 +468,8 @@ export function saveVoterState(input: {
   writeJson(keys.login, {
     loginVerified: input.state.loginVerified,
     loginVerifiedAt: input.state.loginVerifiedAt,
+    privateInviteCredentialsPerVoter: input.state.privateInviteCredentialsPerVoter ?? null,
+    privateInviteBallotGroup: input.state.privateInviteBallotGroup ?? null,
   });
   writeJson(keys.blindRequest, {
     blindRequest: input.state.blindRequest ? sanitiseBlindBallotRequest(input.state.blindRequest) : null,
@@ -498,9 +509,16 @@ export function loadVoterState(input: {
     electionId: input.electionId,
   });
   const inviteMessage = readJson<ElectionInviteMessage | null>(keys.invite, null);
-  const login = readJson<{ loginVerified: boolean; loginVerifiedAt?: string | null }>(keys.login, {
+  const login = readJson<{
+    loginVerified: boolean;
+    loginVerifiedAt?: string | null;
+    privateInviteCredentialsPerVoter?: VoterElectionLocalState["privateInviteCredentialsPerVoter"];
+    privateInviteBallotGroup?: string | null;
+  }>(keys.login, {
     loginVerified: false,
     loginVerifiedAt: null,
+    privateInviteCredentialsPerVoter: null,
+    privateInviteBallotGroup: null,
   });
   const requestPart = readJson<{
     blindRequest: BlindBallotRequest | null;
@@ -578,6 +596,8 @@ export function loadVoterState(input: {
     loginVerified: login.loginVerified,
     loginVerifiedAt: login.loginVerifiedAt ?? null,
     inviteMessage,
+    privateInviteCredentialsPerVoter: login.privateInviteCredentialsPerVoter ?? null,
+    privateInviteBallotGroup: normaliseBallotGroup(login.privateInviteBallotGroup),
     blindRequest: requestPart.blindRequest ? sanitiseBlindBallotRequest(requestPart.blindRequest) : null,
     blindRequests: sanitiseBlindBallotRequestRecordPreservingKeys(
       requestPart.blindRequests ?? (requestPart.blindRequest ? { __questionnaire__: requestPart.blindRequest } : {}),

@@ -144,6 +144,9 @@ import {
   fetchQuestionnaireSubmissionDecisions,
 } from "./questionnaireTransport";
 import {
+  allowedScopesForRequiredScope,
+  normaliseQuestionnaireAllowedScopes,
+  normaliseQuestionnaireBallotGroup,
   normaliseQuestionnaireCredentialsPerVoter,
   questionBallotCredentialScope,
   questionnaireCredentialsPerVoter,
@@ -549,17 +552,24 @@ function findIssuedBlindResponse(
 function ballotScopeKey(scope: BallotScope | null | undefined) {
   const questionId = scope?.questionId?.trim() ?? "";
   const slotId = scope?.slotId?.trim() ?? "";
+  const ballotGroup = normaliseQuestionnaireBallotGroup(scope?.ballotGroup);
+  const allowedScopes = normaliseQuestionnaireAllowedScopes(scope?.allowedScopes, ballotGroup)
+    .filter((entry) => entry !== "0");
   const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
   const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 1;
   const credentialIndex = Number.isFinite(scope?.credentialIndex) ? Math.max(1, Math.floor(scope?.credentialIndex as number)) : 1;
   const credentialSuffix = credentialIndex > 1 ? `:c${credentialIndex}` : "";
-  if (!questionId && !slotId && !slotIndex && version === 1 && credentialIndex <= 1) {
+  const scopePrefix = allowedScopes.length > 0 ? `scopes:${allowedScopes.join("+")}:` : "";
+  if (!questionId && !slotId && !slotIndex && version === 1 && credentialIndex <= 1 && allowedScopes.length === 0) {
     return "__questionnaire__";
   }
-  if (slotIndex > 0) {
-    return `slot:${slotIndex}:v${version}${credentialSuffix}`;
+  if (!questionId && !slotId && !slotIndex && version === 1 && allowedScopes.length > 0) {
+    return `${scopePrefix}questionnaire${credentialSuffix}`;
   }
-  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}${credentialSuffix}`;
+  if (slotIndex > 0) {
+    return `${scopePrefix}slot:${slotIndex}:v${version}${credentialSuffix}`;
+  }
+  return `${scopePrefix}${questionId || slotId}:${slotId}:${slotIndex}:v${version}${credentialSuffix}`;
 }
 
 function sameBallotScope(left: BallotScope | null | undefined, right: BallotScope | null | undefined) {
@@ -595,11 +605,30 @@ function voterCredentialsPerVoter(input: {
 }
 
 function voterUsesScopedBlindCredentials(input: {
-  invite?: Pick<ElectionInviteMessage, "credentialsPerVoter"> | null;
+  invite?: Pick<ElectionInviteMessage, "credentialsPerVoter" | "ballotGroup"> | null;
+  privateInviteCredentialsPerVoter?: QuestionnaireCredentialsPerVoter | null;
+  privateInviteBallotGroup?: string | null;
   definition?: Pick<QuestionnaireDefinition, "ballotCredentialMode" | "credentialsPerVoter"> | null;
 }) {
   return questionnaireUsesPerQuestionCredentials(input.definition)
-    || voterCredentialsPerVoter(input) > 1;
+    || voterCredentialsPerVoter(input) > 1
+    || Boolean(voterBallotGroup(input));
+}
+
+function voterBallotGroup(input: {
+  invite?: Pick<ElectionInviteMessage, "ballotGroup"> | null;
+  privateInviteBallotGroup?: string | null;
+}) {
+  return normaliseQuestionnaireBallotGroup(input.invite?.ballotGroup)
+    ?? normaliseQuestionnaireBallotGroup(input.privateInviteBallotGroup);
+}
+
+function ballotGroupScope(ballotGroup?: string | null): BallotScope | null {
+  const normalised = normaliseQuestionnaireBallotGroup(ballotGroup);
+  if (!normalised) {
+    return null;
+  }
+  return { allowedScopes: allowedScopesForRequiredScope(normalised) };
 }
 
 function voterShouldWaitForDefinitionBeforeBlindRequest(input: {
@@ -620,10 +649,12 @@ function voterShouldWaitForDefinitionBeforeBlindRequest(input: {
 function buildQuestionnaireCredentialScopes(
   definition: QuestionnaireDefinition | null | undefined,
   credentialsPerVoter = questionnaireCredentialsPerVoter(definition),
+  ballotGroup?: string | null,
 ): Array<BallotScope | null> {
   const credentialCount = normaliseQuestionnaireCredentialsPerVoter(credentialsPerVoter);
   if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
-    return Array.from({ length: credentialCount }, (_, index) => withCredentialIndex(null, index + 1));
+    const scope = ballotGroupScope(ballotGroup);
+    return Array.from({ length: credentialCount }, (_, index) => withCredentialIndex(scope, index + 1));
   }
   const scopes: BallotScope[] = [];
   const seen = new Set<string>();
@@ -649,6 +680,7 @@ function reconcileVoterCredentialReadyForDefinition(
   if (!voterUsesScopedBlindCredentials({
     invite: state.inviteMessage ?? null,
     privateInviteCredentialsPerVoter: state.privateInviteCredentialsPerVoter,
+    privateInviteBallotGroup: state.privateInviteBallotGroup,
     definition,
   })) {
     return state;
@@ -660,6 +692,10 @@ function reconcileVoterCredentialReadyForDefinition(
       privateInviteCredentialsPerVoter: state.privateInviteCredentialsPerVoter,
       definition,
     }),
+    voterBallotGroup({
+      invite: state.inviteMessage ?? null,
+      privateInviteBallotGroup: state.privateInviteBallotGroup,
+    }),
   );
   return {
     ...state,
@@ -667,9 +703,14 @@ function reconcileVoterCredentialReadyForDefinition(
   };
 }
 
-function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined, questionId: string, credentialIndex = 1): BallotScope | null {
+function scopeForQuestion(
+  definition: QuestionnaireDefinition | null | undefined,
+  questionId: string,
+  credentialIndex = 1,
+  ballotGroup?: string | null,
+): BallotScope | null {
   if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
-    return withCredentialIndex(null, credentialIndex);
+    return withCredentialIndex(ballotGroupScope(ballotGroup), credentialIndex);
   }
   const index = definition.questions.findIndex((question) => question.questionId === questionId);
   const question = index >= 0 ? definition.questions[index] : null;
@@ -950,6 +991,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private stopAcceptanceSubscription: (() => void) | null = null;
   private bearerInviteCode: string | null = null;
   private privateInviteCredentialsPerVoter: QuestionnaireCredentialsPerVoter | null = null;
+  private privateInviteBallotGroup: string | null = null;
 
   constructor(
     private readonly signer: SignerService,
@@ -974,17 +1016,28 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  setBearerInviteCode(code: string | null | undefined, options?: { credentialsPerVoter?: QuestionnaireCredentialsPerVoter | null }) {
+  setBearerInviteCode(code: string | null | undefined, options?: {
+    credentialsPerVoter?: QuestionnaireCredentialsPerVoter | null;
+    ballotGroup?: string | null;
+  }) {
     this.bearerInviteCode = normaliseQuestionnaireInviteCode(code) || null;
     if (options?.credentialsPerVoter !== undefined) {
       this.privateInviteCredentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(options.credentialsPerVoter);
     }
-    if (options?.credentialsPerVoter === undefined || !this.state) {
+    if (options?.ballotGroup !== undefined) {
+      this.privateInviteBallotGroup = normaliseQuestionnaireBallotGroup(options.ballotGroup);
+    }
+    if ((options?.credentialsPerVoter === undefined && options?.ballotGroup === undefined) || !this.state) {
       return;
     }
     this.state = {
       ...this.state,
-      privateInviteCredentialsPerVoter: normaliseQuestionnaireCredentialsPerVoter(options.credentialsPerVoter),
+      ...(options?.credentialsPerVoter !== undefined
+        ? { privateInviteCredentialsPerVoter: normaliseQuestionnaireCredentialsPerVoter(options.credentialsPerVoter) }
+        : {}),
+      ...(options?.ballotGroup !== undefined
+        ? { privateInviteBallotGroup: normaliseQuestionnaireBallotGroup(options.ballotGroup) }
+        : {}),
       lastUpdatedAt: nowIso(),
     };
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
@@ -1192,6 +1245,8 @@ export class QuestionnaireOptionAVoterRuntime {
 
     return {
       ...input.state,
+      privateInviteCredentialsPerVoter: input.state.privateInviteCredentialsPerVoter ?? persistedForKey.privateInviteCredentialsPerVoter ?? null,
+      privateInviteBallotGroup: input.state.privateInviteBallotGroup ?? persistedForKey.privateInviteBallotGroup ?? null,
       blindRequest: input.state.blindRequest ?? persistedBlindRequest,
       blindRequests,
       blindRequestSent: input.state.blindRequestSent || persistedForKey.blindRequestSent,
@@ -1516,6 +1571,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (voterUsesScopedBlindCredentials({
       invite: nextState.inviteMessage ?? null,
       privateInviteCredentialsPerVoter: nextState.privateInviteCredentialsPerVoter,
+      privateInviteBallotGroup: nextState.privateInviteBallotGroup,
       definition,
     })) {
       const scopes = buildQuestionnaireCredentialScopes(
@@ -1524,6 +1580,10 @@ export class QuestionnaireOptionAVoterRuntime {
           invite: nextState.inviteMessage ?? null,
           privateInviteCredentialsPerVoter: nextState.privateInviteCredentialsPerVoter,
           definition,
+        }),
+        voterBallotGroup({
+          invite: nextState.inviteMessage ?? null,
+          privateInviteBallotGroup: nextState.privateInviteBallotGroup,
         }),
       );
       nextState = {
@@ -1797,10 +1857,11 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!loggedIn.ok) {
       throw new OptionARuntimeError("invite_mismatch", "Login verification failed.");
     }
-    const loggedInState = this.privateInviteCredentialsPerVoter
+    const loggedInState = this.privateInviteCredentialsPerVoter || this.privateInviteBallotGroup
       ? {
         ...loggedIn.state,
-        privateInviteCredentialsPerVoter: this.privateInviteCredentialsPerVoter,
+        ...(this.privateInviteCredentialsPerVoter ? { privateInviteCredentialsPerVoter: this.privateInviteCredentialsPerVoter } : {}),
+        privateInviteBallotGroup: this.privateInviteBallotGroup,
       }
       : loggedIn.state;
 
@@ -1913,10 +1974,11 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!loggedIn.ok) {
       throw new OptionARuntimeError("invite_mismatch", "Login verification failed.");
     }
-    const loggedInState = this.privateInviteCredentialsPerVoter
+    const loggedInState = this.privateInviteCredentialsPerVoter || this.privateInviteBallotGroup
       ? {
         ...loggedIn.state,
-        privateInviteCredentialsPerVoter: this.privateInviteCredentialsPerVoter,
+        ...(this.privateInviteCredentialsPerVoter ? { privateInviteCredentialsPerVoter: this.privateInviteCredentialsPerVoter } : {}),
+        privateInviteBallotGroup: this.privateInviteBallotGroup,
       }
       : loggedIn.state;
 
@@ -2168,6 +2230,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const usesScopedBlindCredentials = voterUsesScopedBlindCredentials({
       invite: this.state.inviteMessage ?? null,
       privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
+      privateInviteBallotGroup: this.state.privateInviteBallotGroup,
       definition: cachedDefinition,
     });
     if (this.state.blindIssuance && !usesScopedBlindCredentials) {
@@ -2183,6 +2246,10 @@ export class QuestionnaireOptionAVoterRuntime {
           invite: this.state.inviteMessage ?? null,
           privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
           definition: cachedDefinition,
+        }),
+        voterBallotGroup({
+          invite: this.state.inviteMessage ?? null,
+          privateInviteBallotGroup: this.state.privateInviteBallotGroup,
         }),
       );
       const allIssued = scopes.every((scope) => Boolean(this.state?.blindIssuances?.[ballotScopeKey(scope)]));
@@ -2392,6 +2459,10 @@ export class QuestionnaireOptionAVoterRuntime {
         invite: this.state.inviteMessage ?? null,
         privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
         definition: input.cachedDefinition,
+      }),
+      voterBallotGroup({
+        invite: this.state.inviteMessage ?? null,
+        privateInviteBallotGroup: this.state.privateInviteBallotGroup,
       }),
     );
     let next: VoterElectionLocalState = {
@@ -2715,6 +2786,7 @@ export class QuestionnaireOptionAVoterRuntime {
         const activeRequestId = voterUsesScopedBlindCredentials({
           invite: this.state.inviteMessage ?? null,
           privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
+          privateInviteBallotGroup: this.state.privateInviteBallotGroup,
           definition: activeDefinition,
         })
           ? ""
@@ -2908,6 +2980,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (voterUsesScopedBlindCredentials({
       invite: next.inviteMessage ?? null,
       privateInviteCredentialsPerVoter: next.privateInviteCredentialsPerVoter,
+      privateInviteBallotGroup: next.privateInviteBallotGroup,
       definition: activeDefinition,
     })) {
       const scopes = buildQuestionnaireCredentialScopes(
@@ -2916,6 +2989,10 @@ export class QuestionnaireOptionAVoterRuntime {
           invite: next.inviteMessage ?? null,
           privateInviteCredentialsPerVoter: next.privateInviteCredentialsPerVoter,
           definition: activeDefinition,
+        }),
+        voterBallotGroup({
+          invite: next.inviteMessage ?? null,
+          privateInviteBallotGroup: next.privateInviteBallotGroup,
         }),
       );
       next = {
@@ -3002,11 +3079,16 @@ export class QuestionnaireOptionAVoterRuntime {
     const usesScopedBlindCredentials = voterUsesScopedBlindCredentials({
       invite: this.state.inviteMessage ?? null,
       privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
+      privateInviteBallotGroup: this.state.privateInviteBallotGroup,
       definition,
+    });
+    const activeBallotGroup = voterBallotGroup({
+      invite: this.state.inviteMessage ?? null,
+      privateInviteBallotGroup: this.state.privateInviteBallotGroup,
     });
     if (!usesPerQuestionCredentials) {
       const credentialIndex = Math.max(1, Math.floor(options?.credentialIndex ?? 1));
-      const scope = usesScopedBlindCredentials ? withCredentialIndex(null, credentialIndex) : null;
+      const scope = usesScopedBlindCredentials ? withCredentialIndex(ballotGroupScope(activeBallotGroup), credentialIndex) : null;
       const scopeKey = ballotScopeKey(scope);
       const issuance = usesScopedBlindCredentials
         ? this.state.blindIssuances?.[scopeKey] ?? (credentialIndex === 1 ? this.state.blindIssuance : null)
@@ -3054,7 +3136,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const proofByScopeKey = new Set<string>();
     const credentialIndex = Math.max(1, Math.floor(options?.credentialIndex ?? 1));
     for (const answer of responses) {
-      const scope = scopeForQuestion(definition, answer.questionId, credentialIndex);
+      const scope = scopeForQuestion(definition, answer.questionId, credentialIndex, activeBallotGroup);
       const scopeKey = ballotScopeKey(scope);
       if (proofByScopeKey.has(scopeKey)) {
         continue;
@@ -3112,11 +3194,16 @@ export class QuestionnaireOptionAVoterRuntime {
     const usesScopedBlindCredentials = voterUsesScopedBlindCredentials({
       invite: this.state.inviteMessage ?? null,
       privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
+      privateInviteBallotGroup: this.state.privateInviteBallotGroup,
       definition,
+    });
+    const activeBallotGroup = voterBallotGroup({
+      invite: this.state.inviteMessage ?? null,
+      privateInviteBallotGroup: this.state.privateInviteBallotGroup,
     });
     if (!usesPerQuestionCredentials) {
       const credentialIndex = Math.max(1, Math.floor(options?.credentialIndex ?? 1));
-      const scope = usesScopedBlindCredentials ? withCredentialIndex(null, credentialIndex) : null;
+      const scope = usesScopedBlindCredentials ? withCredentialIndex(ballotGroupScope(activeBallotGroup), credentialIndex) : null;
       const scopeKey = ballotScopeKey(scope);
       const tokenSecret = usesScopedBlindCredentials
         ? this.state.blindTokenSecrets?.[scopeKey] ?? (credentialIndex === 1 ? this.state.blindTokenSecret : null)
@@ -3135,7 +3222,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const seen = new Set<string>();
     const credentialIndex = Math.max(1, Math.floor(options?.credentialIndex ?? 1));
     for (const answer of responses) {
-      const scope = scopeForQuestion(definition, answer.questionId, credentialIndex);
+      const scope = scopeForQuestion(definition, answer.questionId, credentialIndex, activeBallotGroup);
       const scopeKey = ballotScopeKey(scope);
       if (seen.has(scopeKey)) {
         continue;
@@ -3174,12 +3261,16 @@ export class QuestionnaireOptionAVoterRuntime {
       ? this.state.draftResponses.filter((answer) => targetQuestionIdSet.has(answer.questionId))
       : this.state.draftResponses;
     const credentialIndex = options?.credentialIndex ?? 1;
+    const activeBallotGroup = voterBallotGroup({
+      invite: this.state.inviteMessage ?? null,
+      privateInviteBallotGroup: this.state.privateInviteBallotGroup,
+    });
     const targetSubmissionKeys = definition && targetQuestionIds.length > 0
-      ? [...new Set(targetQuestionIds.map((questionId) => ballotScopeKey(scopeForQuestion(definition, questionId, credentialIndex))))]
+      ? [...new Set(targetQuestionIds.map((questionId) => ballotScopeKey(scopeForQuestion(definition, questionId, credentialIndex, activeBallotGroup))))]
       : targetQuestionIds;
     const existingQuestionSubmissions = targetQuestionIds
       .map((questionId) => {
-        const scopedKey = definition ? ballotScopeKey(scopeForQuestion(definition, questionId, credentialIndex)) : questionId;
+        const scopedKey = definition ? ballotScopeKey(scopeForQuestion(definition, questionId, credentialIndex, activeBallotGroup)) : questionId;
         return this.state?.submissions?.[scopedKey]
           ?? (credentialIndex === 1 ? this.state?.submissions?.[questionId] ?? null : null);
       })
@@ -3286,6 +3377,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const includeCredentialBundle = voterUsesScopedBlindCredentials({
       invite: this.state.inviteMessage ?? null,
       privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
+      privateInviteBallotGroup: this.state.privateInviteBallotGroup,
       definition,
     });
     const responseSecretKey = await deriveDeterministicResponseSecretKey({
@@ -4157,7 +4249,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return privateKey;
   }
 
-  addWhitelistNpub(invitedNpub: string, options?: { credentialsPerVoter?: QuestionnaireCredentialsPerVoter }) {
+  addWhitelistNpub(invitedNpub: string, options?: {
+    credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
+    ballotGroup?: string | null;
+  }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
@@ -4166,21 +4261,25 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("invalid_submission", "Invite target npub is invalid.");
     }
     const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(options?.credentialsPerVoter);
+    const ballotGroup = normaliseQuestionnaireBallotGroup(options?.ballotGroup);
     const existing = this.state.whitelist[normalizedInvitedNpub];
     if (existing) {
-      if (options?.credentialsPerVoter !== undefined && (existing.credentialsPerVoter ?? 1) !== credentialsPerVoter) {
+      const credentialsChanged = options?.credentialsPerVoter !== undefined && (existing.credentialsPerVoter ?? 1) !== credentialsPerVoter;
+      const groupChanged = options?.ballotGroup !== undefined && (existing.ballotGroup ?? null) !== ballotGroup;
+      if (credentialsChanged || groupChanged) {
         this.state = {
           ...this.state,
           whitelist: {
             ...this.state.whitelist,
             [normalizedInvitedNpub]: {
               ...existing,
-              credentialsPerVoter,
+              ...(credentialsChanged ? { credentialsPerVoter } : {}),
+              ...(options?.ballotGroup !== undefined ? { ballotGroup } : {}),
             },
           },
           lastUpdatedAt: nowIso(),
         };
-        this.persistCoordinatorState("whitelist_credentials_updated", { force: true });
+        this.persistCoordinatorState("whitelist_settings_updated", { force: true });
       }
       return this.state;
     }
@@ -4189,6 +4288,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       invitedNpub: normalizedInvitedNpub,
       addedAt: nowIso(),
       credentialsPerVoter,
+      ballotGroup,
       claimState: "whitelisted",
     };
     const reduced = reduceCoordinatorEvent(this.state, {
@@ -4231,7 +4331,38 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return this.state;
   }
 
-  addWhitelistNpubs(invitedNpubs: string[], options?: { credentialsByNpub?: Record<string, QuestionnaireCredentialsPerVoter> }) {
+  setWhitelistBallotGroup(invitedNpub: string, ballotGroup: string | null) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const normalizedInvitedNpub = toNpub(invitedNpub);
+    const existing = normalizedInvitedNpub ? this.state.whitelist[normalizedInvitedNpub] : null;
+    if (!normalizedInvitedNpub || !existing) {
+      return this.state;
+    }
+    const nextBallotGroup = normaliseQuestionnaireBallotGroup(ballotGroup);
+    if ((existing.ballotGroup ?? null) === nextBallotGroup) {
+      return this.state;
+    }
+    this.state = {
+      ...this.state,
+      whitelist: {
+        ...this.state.whitelist,
+        [normalizedInvitedNpub]: {
+          ...existing,
+          ballotGroup: nextBallotGroup,
+        },
+      },
+      lastUpdatedAt: nowIso(),
+    };
+    this.persistCoordinatorState("whitelist_ballot_group_updated", { force: true });
+    return this.state;
+  }
+
+  addWhitelistNpubs(invitedNpubs: string[], options?: {
+    credentialsByNpub?: Record<string, QuestionnaireCredentialsPerVoter>;
+    ballotGroupsByNpub?: Record<string, string | null | undefined>;
+  }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
@@ -4258,14 +4389,22 @@ export class QuestionnaireOptionACoordinatorRuntime {
         const explicitCredentials = options?.credentialsByNpub && Object.prototype.hasOwnProperty.call(options.credentialsByNpub, normalizedInvitedNpub)
           ? normaliseQuestionnaireCredentialsPerVoter(options.credentialsByNpub[normalizedInvitedNpub])
           : null;
-        if (explicitCredentials && (existing.credentialsPerVoter ?? 1) !== explicitCredentials) {
+        const hasExplicitBallotGroup = Boolean(options?.ballotGroupsByNpub && Object.prototype.hasOwnProperty.call(options.ballotGroupsByNpub, normalizedInvitedNpub));
+        const explicitBallotGroup = hasExplicitBallotGroup
+          ? normaliseQuestionnaireBallotGroup(options?.ballotGroupsByNpub?.[normalizedInvitedNpub])
+          : existing.ballotGroup ?? null;
+        if (
+          (explicitCredentials && (existing.credentialsPerVoter ?? 1) !== explicitCredentials)
+          || (hasExplicitBallotGroup && (existing.ballotGroup ?? null) !== explicitBallotGroup)
+        ) {
           nextState = {
             ...nextState,
             whitelist: {
               ...nextState.whitelist,
               [normalizedInvitedNpub]: {
                 ...existing,
-                credentialsPerVoter: explicitCredentials,
+                ...(explicitCredentials ? { credentialsPerVoter: explicitCredentials } : {}),
+                ...(hasExplicitBallotGroup ? { ballotGroup: explicitBallotGroup } : {}),
               },
             },
             lastUpdatedAt: nowIso(),
@@ -4275,11 +4414,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
       const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(options?.credentialsByNpub?.[normalizedInvitedNpub]);
+      const ballotGroup = normaliseQuestionnaireBallotGroup(options?.ballotGroupsByNpub?.[normalizedInvitedNpub]);
       const entry: WhitelistEntry = {
         electionId: this.electionId,
         invitedNpub: normalizedInvitedNpub,
         addedAt,
         credentialsPerVoter,
+        ballotGroup,
         claimState: "whitelisted",
       };
       const reduced = reduceCoordinatorEvent(nextState, {
@@ -4304,7 +4445,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
     };
   }
 
-  addBearerInviteCode(codeHash: string, options?: { credentialsPerVoter?: QuestionnaireCredentialsPerVoter }) {
+  addBearerInviteCode(codeHash: string, options?: {
+    credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
+    ballotGroup?: string | null;
+  }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
@@ -4322,6 +4466,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
       createdAt: existing?.createdAt ?? nowIso(),
       state: existing?.state === "revoked" ? "revoked" : "available",
       credentialsPerVoter: normaliseQuestionnaireCredentialsPerVoter(options?.credentialsPerVoter ?? existing?.credentialsPerVoter),
+      ballotGroup: options?.ballotGroup !== undefined
+        ? normaliseQuestionnaireBallotGroup(options.ballotGroup)
+        : existing?.ballotGroup ?? null,
       note: existing?.note ?? null,
       autoRequestBallot: existing?.autoRequestBallot !== false,
       markedUsedAt: existing?.markedUsedAt ?? null,
@@ -4482,6 +4629,35 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return next;
   }
 
+  setBearerInviteCodeBallotGroup(codeHash: string, ballotGroup: string | null) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const normalisedHash = (codeHash ?? "").trim().toLowerCase();
+    const existing = this.state.bearerInviteCodes?.[normalisedHash] ?? null;
+    if (!existing) {
+      return null;
+    }
+    const nextBallotGroup = normaliseQuestionnaireBallotGroup(ballotGroup);
+    if ((existing.ballotGroup ?? null) === nextBallotGroup) {
+      return existing;
+    }
+    const next: BearerInviteCodeEntry = {
+      ...existing,
+      ballotGroup: nextBallotGroup,
+    };
+    this.state = {
+      ...this.state,
+      bearerInviteCodes: {
+        ...(this.state.bearerInviteCodes ?? {}),
+        [normalisedHash]: next,
+      },
+      lastUpdatedAt: nowIso(),
+    };
+    this.persistCoordinatorState("bearer_invite_code_ballot_group_updated", { force: true });
+    return next;
+  }
+
   private redeemBearerInviteCodeForRequest(
     state: CoordinatorElectionState,
     request: BlindBallotRequest,
@@ -4502,11 +4678,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
     const redeemedAt = codeEntry.redeemedAt ?? nowIso();
     const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(codeEntry.credentialsPerVoter);
+    const ballotGroup = normaliseQuestionnaireBallotGroup(codeEntry.ballotGroup);
     const existingWhitelistEntry = state.whitelist[request.invitedNpub] ?? null;
     const whitelistEntry: WhitelistEntry = existingWhitelistEntry
       ? {
         ...existingWhitelistEntry,
         credentialsPerVoter: existingWhitelistEntry.credentialsPerVoter === 2 || credentialsPerVoter === 2 ? 2 : 1,
+        ballotGroup: existingWhitelistEntry.ballotGroup ?? ballotGroup,
         inviteCodeHash: existingWhitelistEntry.inviteCodeHash ?? codeHash,
         inviteCodeRedeemedAt: existingWhitelistEntry.inviteCodeRedeemedAt ?? redeemedAt,
       }
@@ -4515,6 +4693,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         invitedNpub: request.invitedNpub,
         addedAt: redeemedAt,
         credentialsPerVoter,
+        ballotGroup,
         inviteCodeHash: codeHash,
         inviteCodeRedeemedAt: redeemedAt,
         claimState: "whitelisted",
@@ -4563,11 +4742,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return null;
   }
 
-  async authorizeRequester(invitedNpub: string, options?: { credentialsPerVoter?: QuestionnaireCredentialsPerVoter }) {
+  async authorizeRequester(invitedNpub: string, options?: {
+    credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
+    ballotGroup?: string | null;
+  }) {
     const normalizedInvitedNpub = toNpub(invitedNpub);
     optionAFlowLog("coordinator", "authorize_requester", { electionId: this.electionId, invitedNpub: normalizedInvitedNpub || invitedNpub });
-    this.addWhitelistNpub(normalizedInvitedNpub || invitedNpub, options?.credentialsPerVoter !== undefined
-      ? { credentialsPerVoter: options.credentialsPerVoter }
+    this.addWhitelistNpub(normalizedInvitedNpub || invitedNpub, options?.credentialsPerVoter !== undefined || options?.ballotGroup !== undefined
+      ? { credentialsPerVoter: options.credentialsPerVoter, ballotGroup: options.ballotGroup }
       : undefined);
     const pendingForVoter = [...(this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub] ?? [])];
     for (const request of pendingForVoter) {
@@ -4604,6 +4786,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("not_whitelisted", "Invite target is not whitelisted.");
     }
     const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(this.state.whitelist[normalizedInvitedNpub]?.credentialsPerVoter);
+    const ballotGroup = normaliseQuestionnaireBallotGroup(this.state.whitelist[normalizedInvitedNpub]?.ballotGroup);
     const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
     const definitionReference = cachedDefinition
       ? buildQuestionnaireDefinitionReference({
@@ -4649,6 +4832,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       invitedNpub: normalizedInvitedNpub,
       coordinatorNpub: this.coordinatorNpub,
       ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
+      ...(ballotGroup ? { ballotGroup } : {}),
       definitionReference,
       issueBlindTokensWorker,
       expiresAt: null,

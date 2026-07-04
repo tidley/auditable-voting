@@ -45,7 +45,7 @@ import {
 } from "./questionnaireNostr";
 import { fetchQuestionnaireResultPack } from "./questionnaireResultPack";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
-import { deriveActorDisplayId } from "./actorDisplay";
+import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDisplay";
 import { UiButton, UiSelect, UiTextField } from "./ui/DesignLayer";
 
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
@@ -938,7 +938,7 @@ export default function SimpleAuditorApp({
   }
 
   function formatRoundOptionLabel(entry: AuditorQuestionnaireEntry) {
-    return `${entry.title} · ${entry.questionnaireId}`;
+    return `${entry.title} · ${formatQuestionnaireDisplayId(entry.questionnaireId)}`;
   }
 
   function exportResults() {
@@ -1086,6 +1086,7 @@ export default function SimpleAuditorApp({
             closedAt: selectedLiveStateEvent?.createdAt ?? null,
             resultPublishedAt: selectedQuestionnaire.resultPublishedAt,
             state: selectedLiveState ?? selectedQuestionnaire.state,
+            resultPack: selectedResultSummary?.resultPack ?? null,
             questions: selectedQuestionnaire.questions,
           } : null}
           questionSummaries={displayedQuestionSummaries}

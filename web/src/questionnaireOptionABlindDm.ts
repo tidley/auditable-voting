@@ -257,6 +257,7 @@ export type WorkerElectionConfigSnapshot = {
   expectedInviteeCount?: number;
   whitelistNpubs?: string[];
   proxyVoterNpubs?: string[];
+  ballotGroupsByNpub?: Record<string, string>;
   bearerInviteCodes?: BearerInviteCodeEntry[];
   eligibilityRequired?: boolean;
   blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
@@ -1290,6 +1291,17 @@ function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConf
     if (
       snapshot.proxyVoterNpubs !== undefined
       && (!Array.isArray(snapshot.proxyVoterNpubs) || snapshot.proxyVoterNpubs.some((entry) => typeof entry !== "string"))
+    ) {
+      return null;
+    }
+    if (
+      snapshot.ballotGroupsByNpub !== undefined
+      && (
+        typeof snapshot.ballotGroupsByNpub !== "object"
+        || snapshot.ballotGroupsByNpub === null
+        || Array.isArray(snapshot.ballotGroupsByNpub)
+        || Object.entries(snapshot.ballotGroupsByNpub).some(([npub, group]) => typeof npub !== "string" || typeof group !== "string")
+      )
     ) {
       return null;
     }

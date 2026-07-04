@@ -137,8 +137,9 @@ import type {
   QuestionnaireAnswer,
   WhitelistClaimState,
 } from "./questionnaireOptionA";
-import type {
-  QuestionnaireResponsePayload,
+import {
+  normaliseQuestionnaireBallotGroup,
+  type QuestionnaireResponsePayload,
 } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import {
@@ -276,7 +277,77 @@ function ParticipantNoteField({
   );
 }
 
+function ParticipantBallotGroupSelect({
+  id,
+  value,
+  restoreFocus,
+  onCommit,
+  onFocusStateChange,
+}: {
+  id: string;
+  value: string;
+  restoreFocus?: boolean;
+  onCommit: (ballotGroup: string) => void;
+  onFocusStateChange: (id: string | null) => void;
+}) {
+  const selectRef = useRef<HTMLSelectElement | null>(null);
+  const focusedRef = useRef(false);
+  const [localValue, setLocalValue] = useState(value);
+
+  useEffect(() => {
+    if (focusedRef.current) {
+      return;
+    }
+    setLocalValue(value);
+  }, [value]);
+
+  useLayoutEffect(() => {
+    if (!restoreFocus) {
+      return;
+    }
+    const select = selectRef.current;
+    if (!select || document.activeElement === select) {
+      return;
+    }
+    select.focus({ preventScroll: true });
+  }, [restoreFocus]);
+
+  return (
+    <select
+      id={id}
+      ref={selectRef}
+      className='simple-admitted-voter-group-select'
+      aria-label='Ballot group'
+      value={localValue}
+      onFocus={() => {
+        focusedRef.current = true;
+        onFocusStateChange(id);
+      }}
+      onChange={(event) => {
+        const nextValue = event.currentTarget.value;
+        setLocalValue(nextValue);
+        onCommit(nextValue);
+        onFocusStateChange(id);
+      }}
+      onBlur={() => {
+        focusedRef.current = false;
+        onFocusStateChange(null);
+      }}
+    >
+      {BALLOT_GROUP_OPTIONS.map((option) => (
+        <option key={option.value || "main"} value={option.value}>{option.label}</option>
+      ))}
+    </select>
+  );
+}
+
 const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
+const BALLOT_GROUP_OPTIONS = [
+  { value: "", label: "Main" },
+  { value: "1", label: "1" },
+  { value: "2", label: "2" },
+  { value: "3", label: "3" },
+];
 const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
   { id: "answers", label: "Questions complete", shortLabel: "Done", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
@@ -584,6 +655,25 @@ function setPrivateInviteUrlAutoBallot(inviteUrl: string, autoRequestBallot: boo
     } else {
       url.searchParams.delete("request_ballot");
       url.searchParams.delete("auto_request");
+    }
+    return url.toString();
+  } catch {
+    return inviteUrl;
+  }
+}
+
+function setPrivateInviteUrlBallotGroup(inviteUrl: string, ballotGroup?: string | null) {
+  if (!inviteUrl.trim()) {
+    return "";
+  }
+  try {
+    const url = new URL(inviteUrl);
+    const normalised = normaliseQuestionnaireBallotGroup(ballotGroup);
+    if (normalised) {
+      url.searchParams.set("ballot_group", normalised);
+    } else {
+      url.searchParams.delete("ballot_group");
+      url.searchParams.delete("ballotGroup");
     }
     return url.toString();
   } catch {
@@ -1391,6 +1481,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isMobileCoordinatorViewport = useCallback(() => (
+    typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches
+  ), []);
   const [newRoundMode, setNewRoundMode] = useState(false);
   const [draftQuestionnaireId, setDraftQuestionnaireId] = useState("");
   const [questionnaireReadinessItems, setQuestionnaireReadinessItems] = useState<QuestionnaireReadinessItem[]>(DEFAULT_QUESTIONNAIRE_READINESS_ITEMS);
@@ -1459,6 +1552,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [coordinatorParticipantResponseDetails, setCoordinatorParticipantResponseDetails] = useState<QuestionnaireResultsDashboardResponseDetail[]>([]);
   const participantNoteDraftsRef = useRef<Record<string, string>>({});
   const participantNoteFocusRef = useRef<{ id: string; selectionStart: number | null; selectionEnd: number | null } | null>(null);
+  const participantBallotGroupFocusRef = useRef<string | null>(null);
   const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const [selectedImportedKnownVoterNpubs, setSelectedImportedKnownVoterNpubs] = useState<string[]>([]);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
@@ -1483,6 +1577,21 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   }, [signerNpub, keypair?.nsec]);
   const handleCoordinatorResponseDetailsChange = useCallback((responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => {
     setCoordinatorParticipantResponseDetails(responseDetails);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const mobileQuery = window.matchMedia("(max-width: 900px)");
+    const collapseOnMobile = () => {
+      if (mobileQuery.matches) {
+        setSidebarCollapsed(true);
+      }
+    };
+    collapseOnMobile();
+    mobileQuery.addEventListener("change", collapseOnMobile);
+    return () => mobileQuery.removeEventListener("change", collapseOnMobile);
   }, []);
 
   useEffect(() => () => {
@@ -1569,7 +1678,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   );
   const admittedVoterWorkerConfigKey = useMemo(
     () => admittedVoterEntries
-      .map((entry) => `${entry.npub.trim()}:${entry.autoApply === false ? "manual" : "auto"}:${entry.proxyVoter === true ? "proxy" : "single"}`)
+      .map((entry) => `${entry.npub.trim()}:${entry.autoApply === false ? "manual" : "auto"}:${entry.proxyVoter === true ? "proxy" : "single"}:${entry.ballotGroup ?? ""}`)
       .filter((entry) => entry.length > 0)
       .sort()
       .join("|"),
@@ -1656,7 +1765,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       .sort()
       .join("|");
     const privateInviteKey = privateInviteCodeEntries
-      .map((entry) => `${entry.codeHash}:${entry.state}:${entry.redeemedNpub ?? ""}:${entry.autoRequestBallot !== false}`)
+      .map((entry) => `${entry.codeHash}:${entry.state}:${entry.redeemedNpub ?? ""}:${entry.autoRequestBallot !== false}:${entry.ballotGroup ?? ""}:${entry.credentialsPerVoter === 2 ? "proxy" : "single"}`)
       .sort()
       .join("|");
     return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}:${admittedVoterWorkerConfigKey}`;
@@ -2071,12 +2180,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         && !isResultOnlyParticipant
         && (participant.admittedEntry || currentQuestionnaireEntry || pendingAuthorization),
       );
+      const isProxyPrivateInvite = Boolean(
+        privateInviteEntry?.credentialsPerVoter === 2
+        || (isPrivateInviteClaimant && currentQuestionnaireEntry?.credentialsPerVoter === 2),
+      );
       return {
         currentQuestionnaireEntry,
         pendingAuthorization,
         privateInviteEntry,
         responseIdentityWords: responseIdentityNpub ? deriveIdentityWords(responseIdentityNpub) : "",
         isUnclaimedPrivateInvite,
+        isPrivateInviteClaimant,
+        isProxyPrivateInvite,
         privateInviteUrl,
         privateInviteActive,
         canSharePrivateInvite,
@@ -2085,7 +2200,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         isResultOnlyParticipant,
         canUseCurrentInviteActions,
         canToggleProxyVoter,
-        proxyVoterEnabled: participant.admittedEntry?.proxyVoter === true || currentQuestionnaireEntry?.credentialsPerVoter === 2,
+        canSetBallotGroup: Boolean(participant.admittedEntry || privateInviteEntry || currentQuestionnaireEntry),
+        proxyVoterEnabled: participant.admittedEntry?.proxyVoter === true
+          || currentQuestionnaireEntry?.credentialsPerVoter === 2
+          || privateInviteEntry?.credentialsPerVoter === 2,
+        ballotGroupValue: normaliseQuestionnaireBallotGroup(
+          participant.admittedEntry?.ballotGroup
+          ?? privateInviteEntry?.ballotGroup
+          ?? currentQuestionnaireEntry?.ballotGroup,
+        ) ?? "",
         inviteButtonLabel: currentQuestionnaireEntry ? "Resend invite" : "Send invite",
         inviteInputId: privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "",
         noteInputId: privateInviteEntry
@@ -2110,11 +2233,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           const participant = row.original;
           const state = rowState(participant);
           const voterLabel = state.isUnclaimedPrivateInvite
-            ? "Private invite"
+            ? state.isProxyPrivateInvite ? "Proxy invite" : "Private invite"
             : state.isResultOnlyParticipant
               ? "Result only"
               : deriveActorDisplayId(participant.npub);
-          const fullIdentityLabel = state.isUnclaimedPrivateInvite ? "Unclaimed private link" : participant.npub;
+          const fullIdentityLabel = state.isUnclaimedPrivateInvite
+            ? state.isProxyPrivateInvite ? "Unclaimed proxy private link" : "Unclaimed private link"
+            : participant.npub;
           return (
             <div className='simple-admitted-voter-id-cell'>
               <div className='simple-admitted-voter-id-line'>
@@ -2227,6 +2352,31 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         },
       },
       {
+        id: "ballotGroup",
+        header: "Ballot",
+        meta: { className: "is-ballot-group", label: "Ballot" },
+        cell: ({ row }) => {
+          const participant = row.original;
+          const state = rowState(participant);
+          const ballotGroupSelectId = state.privateInviteEntry
+            ? `admitted-voter-ballot-private-${state.privateInviteEntry.codeHash}`
+            : `admitted-voter-ballot-${participant.npub}`;
+          return state.canSetBallotGroup ? (
+            <ParticipantBallotGroupSelect
+              id={ballotGroupSelectId}
+              value={state.ballotGroupValue}
+              restoreFocus={participantBallotGroupFocusRef.current === ballotGroupSelectId}
+              onCommit={(ballotGroup) => updateParticipantBallotGroup(participant, ballotGroup)}
+              onFocusStateChange={(id) => {
+                participantBallotGroupFocusRef.current = id;
+              }}
+            />
+          ) : (
+            <span className='simple-admitted-voter-empty-cell'>-</span>
+          );
+        },
+      },
+      {
         id: "proxyVoter",
         header: "Proxy voter",
         meta: { className: "is-toggle", label: "Proxy voter" },
@@ -2239,6 +2389,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               isSelected={state.proxyVoterEnabled}
               onChange={(selected) => updateParticipantProxyVoter(participant.npub, selected)}
             />
+          ) : state.isPrivateInviteClaimant ? (
+            <span className={`simple-admitted-voter-proxy-label${state.proxyVoterEnabled ? " is-proxy" : ""}`}>
+              {state.proxyVoterEnabled ? "2 votes" : "1 vote"}
+            </span>
           ) : (
             <span className='simple-admitted-voter-empty-cell'>-</span>
           );
@@ -2326,6 +2480,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     sharePrivateInviteCodeLink,
     tryWriteClipboard,
     updateAdmittedVoterDetails,
+    updateParticipantBallotGroup,
     updateParticipantProxyVoter,
     updatePrivateInviteCodeNote,
   ]);
@@ -2428,15 +2583,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       return;
     }
     try {
-      const result = optionACoordinatorRuntime.addWhitelistNpubs(admittedVoterNpubs);
-      if (result.addedCount > 0) {
+      const result = optionACoordinatorRuntime.addWhitelistNpubs(admittedVoterNpubs, {
+        credentialsByNpub: credentialsByAdmittedNpub(admittedVoterNpubs),
+        ballotGroupsByNpub: ballotGroupsByAdmittedNpub(admittedVoterNpubs),
+      });
+      if (result.addedCount > 0 || result.changed) {
         setKnownVoterInviteRefreshNonce((value) => value + 1);
         void syncActiveWorkerElectionConfig().catch(() => false);
       }
     } catch {
       // Runtime bootstrap/login will retry this projection on the next identity/questionnaire change.
     }
-  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, admittedVoterNpubKey]);
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, admittedVoterNpubKey, admittedVoterWorkerConfigKey]);
   const ticketObserveRecoveryAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS", SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS),
     [],
@@ -4774,7 +4932,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       return "";
     }
     const entry = optionACoordinatorRuntime?.getSnapshot()?.bearerInviteCodes[codeHash] ?? null;
-    return setPrivateInviteUrlAutoBallot(inviteUrl, entry?.autoRequestBallot !== false);
+    return setPrivateInviteUrlBallotGroup(
+      setPrivateInviteUrlAutoBallot(inviteUrl, entry?.autoRequestBallot !== false),
+      entry?.ballotGroup,
+    );
   }
 
   function normaliseInviteNpubList(values: string[]) {
@@ -4852,6 +5013,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     ) as Record<string, 1 | 2>;
   }
 
+  function ballotGroupsByAdmittedNpub(npubs: string[], voters = admittedVoters) {
+    return Object.fromEntries(
+      npubs
+        .map((npub) => [npub, normaliseQuestionnaireBallotGroup(voters[npub]?.ballotGroup)] as const)
+        .filter((entry): entry is readonly [string, string] => Boolean(entry[1])),
+    ) as Record<string, string>;
+  }
+
   function projectNpubsToQuestionnaire(npubs: string[], questionnaireId = optionAElectionId.trim(), voters = admittedVoters) {
     const electionId = questionnaireId.trim();
     const runtimeHandle = buildQuestionnaireRuntimeForProjection(electionId);
@@ -4861,6 +5030,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     try {
       const result = runtimeHandle.runtime.addWhitelistNpubs(npubs, {
         credentialsByNpub: credentialsByAdmittedNpub(npubs, voters),
+        ballotGroupsByNpub: ballotGroupsByAdmittedNpub(npubs, voters),
       });
       if (result.addedCount > 0 || result.changed) {
         setKnownVoterInviteRefreshNonce((value) => value + 1);
@@ -4878,7 +5048,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     return projectNpubsToQuestionnaire(npubs, optionAElectionId.trim(), voters);
   }
 
-  function updateAdmittedVoterDetails(npub: string, patch: { note?: string; autoApply?: boolean; proxyVoter?: boolean }) {
+  function updateAdmittedVoterDetails(npub: string, patch: { note?: string; autoApply?: boolean; proxyVoter?: boolean; ballotGroup?: string | null }) {
     if (!activeCoordinatorNpub.trim()) {
       return;
     }
@@ -4888,6 +5058,30 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       patch,
     });
     refreshAdmittedVoterRoster(next);
+  }
+
+  function updateParticipantBallotGroup(participant: ParticipantDisplayRow, ballotGroup: string | null) {
+    const nextBallotGroup = normaliseQuestionnaireBallotGroup(ballotGroup);
+    const coordinatorNpub = activeCoordinatorNpub.trim();
+    if (participant.admittedEntry && coordinatorNpub) {
+      const next = updateAdmittedVoter({
+        coordinatorNpub,
+        npub: participant.npub,
+        patch: { ballotGroup: nextBallotGroup },
+      });
+      refreshAdmittedVoterRoster(next);
+    }
+    if (participant.privateInviteEntry) {
+      optionACoordinatorRuntime?.setBearerInviteCodeBallotGroup(participant.privateInviteEntry.codeHash, nextBallotGroup);
+    }
+    if (optionACoordinatorRuntime && participant.npub.trim()) {
+      const hasWhitelistEntry = Boolean(optionACoordinatorRuntime.getSnapshot()?.whitelist?.[participant.npub]);
+      if (hasWhitelistEntry) {
+        optionACoordinatorRuntime.setWhitelistBallotGroup(participant.npub, nextBallotGroup);
+      }
+    }
+    setKnownVoterInviteRefreshNonce((value) => value + 1);
+    void syncActiveWorkerElectionConfig().catch(() => false);
   }
 
   function updateParticipantProxyVoter(npub: string, proxyVoter: boolean) {
@@ -5173,11 +5367,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (delegation.capabilities.includes("issue_blind_tokens") && !coordinatorState.blindSigningPrivateKey) {
       return null;
     }
-    const whitelistByNpub = new Map<string, 1 | 2>();
+    const whitelistByNpub = new Map<string, { credentialsPerVoter: 1 | 2; ballotGroup: string | null }>();
     for (const entry of Object.values(coordinatorState.whitelist ?? {})) {
       const npub = entry.invitedNpub.trim();
       if (npub) {
-        whitelistByNpub.set(npub, entry.credentialsPerVoter === 2 ? 2 : 1);
+        whitelistByNpub.set(npub, {
+          credentialsPerVoter: entry.credentialsPerVoter === 2 ? 2 : 1,
+          ballotGroup: normaliseQuestionnaireBallotGroup(entry.ballotGroup),
+        });
       }
     }
     if (electionId === optionAElectionId.trim()) {
@@ -5186,16 +5383,22 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         if (!normalized) {
           continue;
         }
-        whitelistByNpub.set(
-          normalized,
-          admittedVoters[normalized]?.proxyVoter === true ? 2 : (whitelistByNpub.get(normalized) ?? 1),
-        );
+        const existing = whitelistByNpub.get(normalized) ?? { credentialsPerVoter: 1 as const, ballotGroup: null };
+        whitelistByNpub.set(normalized, {
+          credentialsPerVoter: admittedVoters[normalized]?.proxyVoter === true ? 2 : existing.credentialsPerVoter,
+          ballotGroup: normaliseQuestionnaireBallotGroup(admittedVoters[normalized]?.ballotGroup) ?? existing.ballotGroup,
+        });
       }
     }
     const whitelistNpubs = [...whitelistByNpub.keys()];
     const proxyVoterNpubs = [...whitelistByNpub.entries()]
-      .filter(([, credentialsPerVoter]) => credentialsPerVoter === 2)
+      .filter(([, entry]) => entry.credentialsPerVoter === 2)
       .map(([npub]) => npub);
+    const ballotGroupsByNpub: Record<string, string> = Object.fromEntries(
+      [...whitelistByNpub.entries()]
+        .filter(([, entry]) => Boolean(entry.ballotGroup))
+        .map(([npub, entry]) => [npub, entry.ballotGroup as string] as const),
+    );
     const bearerInviteCodes = Object.values(coordinatorState.bearerInviteCodes ?? {});
     const workerBearerInviteCodes = bearerInviteCodes.map(({
       note: _note,
@@ -5232,6 +5435,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         expectedInviteeCount,
         whitelistNpubs,
         proxyVoterNpubs,
+        ballotGroupsByNpub,
         bearerInviteCodes: workerBearerInviteCodes,
         eligibilityRequired: delegation.capabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegation.capabilities.includes("issue_blind_tokens")
@@ -5279,7 +5483,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     });
   }, [activeCoordinatorNpub, currentQuestionnaireBlindRequestKey, optionAElectionId]);
 
-  async function createPrivateInviteCodeLink(options?: { credentialsPerVoter?: 1 | 2 }) {
+  async function createPrivateInviteCodeLink(options?: { credentialsPerVoter?: 1 | 2; ballotGroup?: string | null }) {
     const electionId = optionAElectionId.trim();
     if (!optionACoordinatorRuntime || !electionId) {
       setAdmittedVoterStatus("Publish or open a vote first.");
@@ -5288,9 +5492,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     try {
       await optionACoordinatorRuntime.ensureBlindSigningPublicKey();
       const credentialsPerVoter = options?.credentialsPerVoter === 2 ? 2 : 1;
+      const ballotGroup = normaliseQuestionnaireBallotGroup(options?.ballotGroup);
       const inviteCode = generateQuestionnaireInviteCode();
       const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
-      optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash, { credentialsPerVoter });
+      optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash, { credentialsPerVoter, ballotGroup });
       const inviteUrl = buildQuestionnaireInviteUrl({
         electionId,
         coordinatorNpub: activeCoordinatorNpub.trim() || undefined,
@@ -5301,6 +5506,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         login: false,
         autoRequestBallot: true,
         credentialsPerVoter: credentialsPerVoter === 2 ? 2 : undefined,
+        ballotGroup,
       });
       setPrivateInviteLinksByHash((current) => ({
         ...current,
@@ -5390,6 +5596,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         || admittedVoters[normalizedInvitedNpub]?.proxyVoter === true
         ? 2
         : undefined,
+      ballotGroup: normaliseQuestionnaireBallotGroup(whitelistEntry?.ballotGroup ?? admittedVoters[normalizedInvitedNpub]?.ballotGroup),
     });
   }
 
@@ -5587,7 +5794,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       admitVotersToRoster([invitedNpub], "manual", { silent: true });
       const roster = loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub });
       const credentialsPerVoter = roster[invitedNpub]?.proxyVoter === true ? 2 : 1;
-      optionACoordinatorRuntime.addWhitelistNpub(invitedNpub, { credentialsPerVoter });
+      const ballotGroup = normaliseQuestionnaireBallotGroup(roster[invitedNpub]?.ballotGroup);
+      optionACoordinatorRuntime.addWhitelistNpub(invitedNpub, { credentialsPerVoter, ballotGroup });
       const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Vote",
         description: "",
@@ -5846,7 +6054,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       admitVotersToRoster([invitedNpub], "manual", { silent: true });
       const roster = loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub });
       const credentialsPerVoter = roster[invitedNpub]?.proxyVoter === true ? 2 : 1;
-      await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter });
+      const ballotGroup = normaliseQuestionnaireBallotGroup(roster[invitedNpub]?.ballotGroup);
+      await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
       await syncActiveWorkerElectionConfig().catch(() => false);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       setInviteFeedbackStatus(`Authorised and invited ${deriveActorDisplayId(invitedNpub)}. Sending invite...`, options?.statusTarget);
@@ -6632,6 +6841,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 
   function selectTab(nextTab: CoordinatorTab) {
     setActiveTab(nextTab);
+    if (isMobileCoordinatorViewport()) {
+      setSidebarCollapsed(true);
+    }
   }
 
   const handleQuestionnaireReadinessChange = useCallback((items: QuestionnaireReadinessItem[]) => {
@@ -6749,10 +6961,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       if (nextTab === "configure") {
         setNewRoundMode(false);
         setActiveTab("configure");
+        if (window.matchMedia("(max-width: 900px)").matches) {
+          setSidebarCollapsed(true);
+        }
         return;
       }
       if (nextTab === "proxy" || nextTab === "participants" || nextTab === "messages" || nextTab === "settings") {
         setActiveTab(nextTab);
+        if (window.matchMedia("(max-width: 900px)").matches) {
+          setSidebarCollapsed(true);
+        }
       }
     };
     window.addEventListener(SIMPLE_COORDINATOR_MENU_NAV_EVENT, handleMenuNavigation);
@@ -8061,6 +8279,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           </div>
         </div>
       </aside>
+      {!sidebarCollapsed ? (
+        <button
+          type='button'
+          className='simple-coordinator-sidebar-backdrop'
+          aria-label='Close organiser menu'
+          onClick={() => setSidebarCollapsed(true)}
+        />
+      ) : null}
       <section className='simple-voter-page simple-coordinator-page'>
         {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}

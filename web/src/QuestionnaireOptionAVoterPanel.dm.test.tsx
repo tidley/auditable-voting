@@ -1951,14 +1951,17 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
     const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
-    expect(screen.getAllByLabelText(/Open Colour ID for token/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
+    expect(receiptRegion.querySelector(".simple-vote-receipt-title-icon .lucide-check")).toBeTruthy();
+    expect(within(receiptRegion).getByRole("img", { name: "Anonymous voting identity" })).toBeTruthy();
+    expect(within(receiptRegion).queryByLabelText(/Expand QR for token/i)).toBeNull();
+    expect(within(receiptRegion).queryByText("QR code")).toBeNull();
     expect(within(receiptRegion).getByText("Vote receipt")).toBeTruthy();
     expect(within(receiptRegion).queryByText(/Waiting for/i)).toBeNull();
-    expect(screen.getAllByText("Anonymous voting identity").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("rrr-rrr").length).toBeGreaterThan(0);
+    expect(within(receiptRegion).getByText("Anonymous npub")).toBeTruthy();
+    expect(within(receiptRegion).getByText("Submitted")).toBeTruthy();
+    expect(screen.getAllByText("RRR-RRR").length).toBeGreaterThan(0);
     expect(within(receiptRegion).queryByText("Identity words")).toBeNull();
-    expect(within(receiptRegion).getByText("Find your vote")).toBeTruthy();
+    expect(within(receiptRegion).getByText("Anonymous voting identity")).toBeTruthy();
     expect(within(receiptRegion).getByText(deriveIdentityWords("npub1" + "r".repeat(58)))).toBeTruthy();
     expect(within(receiptRegion).getByText("Advanced details")).toBeTruthy();
     await userEvent.click(within(receiptRegion).getByText("Advanced details"));
@@ -1968,6 +1971,138 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(within(receiptRegion).getByText("submission_submitted_marker")).toBeTruthy();
     expect(within(receiptRegion).getByText("Anonymous identity npub")).toBeTruthy();
     expect(within(receiptRegion).getByText("npub1" + "r".repeat(58))).toBeTruthy();
+  });
+
+  it("shows the other proxy vote receipt underneath", async () => {
+    const localVoterNpub = "npub1" + "p".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const firstResponseNpub = "npub1" + "f".repeat(58);
+    const secondResponseNpub = "npub1" + "s".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      questionnaireId: "q_proxy_receipt",
+      title: "Proxy receipt",
+      description: "",
+      createdAt: 1781540000,
+      openAt: 1781540000,
+      closeAt: 1781543600,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseMode: "blind_token" as const,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question" as const,
+      credentialsPerVoter: 2 as const,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1" as const,
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no" as const,
+        prompt: "Approve proxy item?",
+        required: true,
+        ballotSlot: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+      }],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_proxy_receipt",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      loginVerified: true,
+      loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+      inviteMessage: {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_proxy_receipt",
+        title: "Proxy receipt",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_proxy_receipt",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: definition.blindSigningPublicKey,
+        definition,
+        credentialsPerVoter: 2,
+        expiresAt: null,
+      },
+      blindRequest: null,
+      blindRequests: {},
+      blindRequestSent: true,
+      blindIssuance: null,
+      blindIssuances: {},
+      blindTokenSecrets: {},
+      credentialReady: true,
+      draftResponses: [],
+      submissions: {
+        "slot:1:v1": {
+          type: "ballot_submission",
+          schemaVersion: 1,
+          electionId: "q_proxy_receipt",
+          submissionId: "submission_proxy_1",
+          invitedNpub: localVoterNpub,
+          responseNpub: firstResponseNpub,
+          tokenCommitment: "commitment_proxy_1",
+          blindSigningKeyId: "blind_key",
+          credential: "sig_proxy_1",
+          nullifier: "nullifier_proxy_1",
+          credentialBundle: [{
+            questionId: "q1",
+            tokenCommitment: "commitment_proxy_1",
+            blindSigningKeyId: "blind_key",
+            credential: "sig_proxy_1",
+            nullifier: "nullifier_proxy_1",
+            ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+          }],
+          payload: {
+            electionId: "q_proxy_receipt",
+            responses: [{ questionId: "q1", type: "yes_no", answer: "yes" }],
+          },
+          submittedAt: "2026-06-15T23:01:00.000Z",
+        },
+        "slot:1:v1:c2": {
+          type: "ballot_submission",
+          schemaVersion: 1,
+          electionId: "q_proxy_receipt",
+          submissionId: "submission_proxy_2",
+          invitedNpub: localVoterNpub,
+          responseNpub: secondResponseNpub,
+          tokenCommitment: "commitment_proxy_2",
+          blindSigningKeyId: "blind_key",
+          credential: "sig_proxy_2",
+          nullifier: "nullifier_proxy_2",
+          credentialBundle: [{
+            questionId: "q1",
+            tokenCommitment: "commitment_proxy_2",
+            blindSigningKeyId: "blind_key",
+            credential: "sig_proxy_2",
+            nullifier: "nullifier_proxy_2",
+            ballotScope: { slotId: "proxy-item", slotIndex: 1, version: 1, credentialIndex: 2 },
+          }],
+          payload: {
+            electionId: "q_proxy_receipt",
+            responses: [{ questionId: "q1", type: "yes_no", answer: "no" }],
+          },
+          submittedAt: "2026-06-15T23:02:00.000Z",
+        },
+      },
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      submissionDecisions: {},
+      lastUpdatedAt: "2026-06-15T23:02:00.000Z",
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_proxy_receipt"]} localVoterNpub={localVoterNpub} />);
+
+    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
+    const otherReceipts = within(receiptRegion).getByLabelText("Other proxy vote receipts");
+    expect(within(otherReceipts).getByText("Separate vote 2")).toBeTruthy();
+    expect(within(otherReceipts).getByText(deriveIdentityWords(secondResponseNpub))).toBeTruthy();
+    expect(within(otherReceipts).getByText("SSS-SSS")).toBeTruthy();
+    expect(within(receiptRegion).getByText(deriveIdentityWords(firstResponseNpub))).toBeTruthy();
   });
 
   it("shows one question at a time for grouped ballot questions", async () => {
@@ -2089,7 +2224,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
     expect(within(receiptRegion).queryByText("Q2: Second grouped question")).toBeNull();
     expect(within(receiptRegion).getByText("Submitted")).toBeTruthy();
-    expect(within(receiptRegion).getByText("Find your vote")).toBeTruthy();
+    expect(within(receiptRegion).getByText("Anonymous voting identity")).toBeTruthy();
   });
 
   it("advances answered grouped ballot questions before showing the final required gate", async () => {

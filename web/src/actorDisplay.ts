@@ -10,7 +10,11 @@ export function deriveActorDisplayId(value: string) {
     displaySource = trimmed.slice(4);
   }
   if (displaySource.length <= 6) {
-    return displaySource;
+    return displaySource.toUpperCase();
   }
-  return `${displaySource.slice(0, 3)}-${displaySource.slice(-3)}`;
+  return `${displaySource.slice(0, 3)}-${displaySource.slice(-3)}`.toUpperCase();
+}
+
+export function formatQuestionnaireDisplayId(value: string) {
+  return value.trim().toUpperCase();
 }

@@ -1,4 +1,6 @@
 import {
+  normaliseQuestionnaireAllowedScopes,
+  normaliseQuestionnaireBallotGroup,
   questionBallotScopeKey,
   type QuestionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
@@ -24,6 +26,9 @@ export interface BallotScope {
   slotIndex?: number | null;
   version?: number | null;
   credentialIndex?: number | null;
+  allowedScopes?: string[] | null;
+  /** Legacy alias for allowedScopes. */
+  ballotGroup?: string | null;
 }
 
 export type ElectionState = "draft" | "published" | "open" | "closed" | "counted";
@@ -76,6 +81,7 @@ export interface WhitelistEntry {
   invitedNpub: Npub;
   addedAt: IsoTime;
   credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
+  ballotGroup?: string | null;
   inviteSentAt?: IsoTime | null;
   inviteEventId?: EventId | null;
   inviteCodeHash?: Hex | null;
@@ -93,6 +99,7 @@ export interface BearerInviteCodeEntry {
   createdAt: IsoTime;
   state: BearerInviteCodeState;
   credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
+  ballotGroup?: string | null;
   note?: string | null;
   autoRequestBallot?: boolean;
   markedUsedAt?: IsoTime | null;
@@ -111,6 +118,7 @@ export interface ElectionInviteMessage {
   invitedNpub: Npub;
   coordinatorNpub: Npub;
   credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
+  ballotGroup?: string | null;
   definitionReference?: QuestionnaireDefinitionReference | null;
   /**
    * Legacy invites embedded enough round data for offline bootstrap. New invites carry
@@ -228,6 +236,7 @@ export interface VoterElectionLocalState {
   loginVerifiedAt?: IsoTime | null;
   inviteMessage?: ElectionInviteMessage | null;
   privateInviteCredentialsPerVoter?: QuestionnaireCredentialsPerVoter | null;
+  privateInviteBallotGroup?: string | null;
   blindRequest?: BlindBallotRequest | null;
   blindRequestSent: boolean;
   blindRequestSentAt?: IsoTime | null;
@@ -408,6 +417,18 @@ function sanitiseBallotScope(scope: BallotScope | null | undefined): BallotScope
   } else if (scope.credentialIndex === null) {
     next.credentialIndex = null;
   }
+  const ballotGroup = normaliseQuestionnaireBallotGroup(scope.ballotGroup);
+  const allowedScopes = normaliseQuestionnaireAllowedScopes(scope.allowedScopes, ballotGroup);
+  if (Array.isArray(scope.allowedScopes) || ballotGroup) {
+    next.allowedScopes = allowedScopes;
+  } else if (scope.allowedScopes === null) {
+    next.allowedScopes = null;
+  }
+  if (ballotGroup) {
+    next.ballotGroup = ballotGroup;
+  } else if (scope.ballotGroup === null) {
+    next.ballotGroup = null;
+  }
   return Object.keys(next).length > 0 ? next : null;
 }
 
@@ -519,17 +540,24 @@ function findIssuanceByNpub(
 function ballotScopeKey(scope: BallotScope | null | undefined) {
   const questionId = scope?.questionId?.trim() ?? "";
   const slotId = scope?.slotId?.trim() ?? "";
+  const ballotGroup = normaliseQuestionnaireBallotGroup(scope?.ballotGroup);
+  const allowedScopes = normaliseQuestionnaireAllowedScopes(scope?.allowedScopes, ballotGroup)
+    .filter((entry) => entry !== "0");
   const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 0;
   const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
   const credentialIndex = Number.isFinite(scope?.credentialIndex) ? Math.max(1, Math.floor(scope?.credentialIndex as number)) : 1;
   const credentialSuffix = credentialIndex > 1 ? `:c${credentialIndex}` : "";
-  if (!questionId && !slotId && !version && !slotIndex && credentialIndex <= 1) {
+  const scopePrefix = allowedScopes.length > 0 ? `scopes:${allowedScopes.join("+")}:` : "";
+  if (!questionId && !slotId && !version && !slotIndex && credentialIndex <= 1 && allowedScopes.length === 0) {
     return "__questionnaire__";
   }
-  if (slotIndex > 0) {
-    return `slot:${slotIndex}:v${version || 1}${credentialSuffix}`;
+  if (!questionId && !slotId && !version && !slotIndex && allowedScopes.length > 0) {
+    return `${scopePrefix}questionnaire${credentialSuffix}`;
   }
-  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version || 1}${credentialSuffix}`;
+  if (slotIndex > 0) {
+    return `${scopePrefix}slot:${slotIndex}:v${version || 1}${credentialSuffix}`;
+  }
+  return `${scopePrefix}${questionId || slotId}:${slotId}:${slotIndex}:v${version || 1}${credentialSuffix}`;
 }
 
 function sameBallotScope(left: BallotScope | null | undefined, right: BallotScope | null | undefined) {
@@ -700,6 +728,7 @@ export function createEmptyVoterElectionLocalState(input: {
     loginVerified: false,
     loginVerifiedAt: null,
     inviteMessage: null,
+    privateInviteBallotGroup: null,
     blindRequest: null,
     blindRequestSent: false,
     blindRequestSentAt: null,

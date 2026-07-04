@@ -126,4 +126,22 @@ describe("questionnaireBlindToken", () => {
       ballotScope: secondScope,
     }));
   });
+
+  it("binds blind-token messages to allowed ballot scopes", () => {
+    const scopedMessage = buildQuestionnaireBlindTokenSignedMessage({
+      questionnaireId: "agm-1",
+      tokenSecretCommitment: "commitment-a",
+      ballotScope: { allowedScopes: ["0", "1"] },
+    });
+    const differentScopeMessage = buildQuestionnaireBlindTokenSignedMessage({
+      questionnaireId: "agm-1",
+      tokenSecretCommitment: "commitment-a",
+      ballotScope: { allowedScopes: ["0", "2"] },
+    });
+
+    expect(JSON.parse(scopedMessage).ballot_scope).toEqual({
+      allowed_scopes: ["0", "1"],
+    });
+    expect(scopedMessage).not.toBe(differentScopeMessage);
+  });
 });

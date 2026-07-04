@@ -231,21 +231,20 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const idInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
-    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
     const workerNpubInput = screen.getByLabelText("Audit proxy npub") as HTMLInputElement;
     const previousId = idInput.value;
-    const previousWorkerNsec = workerNsecInput.value;
-    const previousWorkerNpub = workerNpubInput.value;
+
+    expect(screen.queryByLabelText("Generated audit proxy nsec (store securely)")).toBeNull();
+    expect(workerNpubInput.value).toBe("");
 
     fireEvent(window, new Event("auditable-voting:coordinator-new"));
 
     expect(idInput.value).toMatch(/^q_[a-f0-9]+$/);
     expect(idInput.value).not.toBe(previousId);
+    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
     await waitFor(() => {
       expect(workerNsecInput.value).toMatch(/^nsec1/);
-      expect(workerNsecInput.value).not.toBe(previousWorkerNsec);
       expect(workerNpubInput.value).toMatch(/^npub1/);
-      expect(workerNpubInput.value).not.toBe(previousWorkerNpub);
     });
   });
 
@@ -285,7 +284,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect((document.querySelector("#delegated-worker-relays") as HTMLTextAreaElement | null)?.value).toContain("wss://relay.nostr.net");
   });
 
-  it("auto-generates a proxy account on the setup page when only a stale npub is stored", async () => {
+  it("does not replace a stored proxy npub just because the setup page is opened", async () => {
     const staleWorkerNpub = nip19.npubEncode("2".repeat(64));
     window.localStorage.setItem(
       buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
@@ -309,16 +308,39 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
 
     const workerNpubInput = await screen.findByLabelText("Audit proxy npub") as HTMLInputElement;
-    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
     await waitFor(() => {
-      expect(workerNpubInput.value).toMatch(/^npub1/);
-      expect(workerNpubInput.value).not.toBe(staleWorkerNpub);
-      expect(workerNsecInput.value).toMatch(/^nsec1/);
+      expect(workerNpubInput.value).toBe(staleWorkerNpub);
     });
+    expect(screen.queryByLabelText("Generated audit proxy nsec (store securely)")).toBeNull();
 
     const quickStart = screen.getByLabelText("Quick start command") as HTMLTextAreaElement;
-    expect(quickStart.value).toContain(`WORKER_NSEC=${workerNsecInput.value}`);
+    expect(quickStart.value).toContain("WORKER_NSEC=nsec1...");
     expect(quickStart.value).toContain("WORKER_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net");
+  });
+
+  it("keeps a manually generated proxy account when the setup page is reopened", async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate new account" }));
+
+    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
+    const workerNpubInput = screen.getByLabelText("Audit proxy npub") as HTMLInputElement;
+    const generatedWorkerNsec = workerNsecInput.value;
+    const generatedWorkerNpub = workerNpubInput.value;
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1")) ?? "{}",
+      ) as { generatedWorkerNsec?: string; generatedWorkerNpub?: string };
+      expect(stored.generatedWorkerNsec).toBe(generatedWorkerNsec);
+      expect(stored.generatedWorkerNpub).toBe(generatedWorkerNpub);
+    });
+
+    cleanup();
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
+
+    const restoredWorkerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
+    expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(generatedWorkerNpub);
+    expect(restoredWorkerNsecInput.value).toBe(generatedWorkerNsec);
   });
 
   it("shows separate public and private DM relay lists in the worker quick start command", async () => {

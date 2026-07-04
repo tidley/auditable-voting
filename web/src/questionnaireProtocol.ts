@@ -18,6 +18,9 @@ export type QuestionnaireQuestionBase = {
   prompt: string;
   required: boolean;
   ballotSlot?: QuestionnaireBallotSlot | null;
+  requiredScope?: string | null;
+  /** Legacy alias for requiredScope. */
+  ballotGroup?: string | null;
 };
 
 export type QuestionnaireBallotCredentialMode = "questionnaire" | "per_question";
@@ -29,6 +32,62 @@ export type QuestionnaireBallotSlot = {
 };
 
 export type QuestionnaireCredentialsPerVoter = 1 | 2;
+
+export function normaliseQuestionnaireScope(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalised = value.trim().toLowerCase();
+  if (!normalised || normalised === "main" || normalised === "0") {
+    return null;
+  }
+  if (normalised === "a") {
+    return "1";
+  }
+  if (normalised === "b") {
+    return "2";
+  }
+  if (normalised === "c") {
+    return "3";
+  }
+  return /^[1-3]$/.test(normalised) ? normalised : null;
+}
+
+export const normaliseQuestionnaireBallotGroup = normaliseQuestionnaireScope;
+
+export function questionRequiredScope(question: Pick<QuestionnaireQuestionBase, "requiredScope" | "ballotGroup">): string | null {
+  return normaliseQuestionnaireScope(question.requiredScope ?? question.ballotGroup);
+}
+
+export function allowedScopesForRequiredScope(requiredScope?: string | null): string[] {
+  const normalised = normaliseQuestionnaireScope(requiredScope);
+  return normalised ? ["0", normalised] : ["0"];
+}
+
+export function normaliseQuestionnaireAllowedScopes(value: unknown, fallbackRequiredScope?: string | null): string[] {
+  const scopes = new Set<string>(["0"]);
+  const entries = Array.isArray(value) ? value : [];
+  for (const entry of entries) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const normalised = normaliseQuestionnaireScope(entry);
+    scopes.add(normalised ?? "0");
+  }
+  const fallback = normaliseQuestionnaireScope(fallbackRequiredScope);
+  if (fallback) {
+    scopes.add(fallback);
+  }
+  return [...scopes].sort((left, right) => {
+    if (left === "0") {
+      return -1;
+    }
+    if (right === "0") {
+      return 1;
+    }
+    return left.localeCompare(right);
+  });
+}
 
 export type QuestionnaireYesNoQuestion = QuestionnaireQuestionBase & {
   type: "yes_no";
@@ -305,10 +364,12 @@ export function normaliseQuestionBallotSlot(question: QuestionnaireQuestion, ind
 
 export function questionBallotScopeKey(question: QuestionnaireQuestion, index: number, credentialIndex = 1) {
   const slot = normaliseQuestionBallotSlot(question, index);
+  const requiredScope = questionRequiredScope(question);
+  const scopePrefix = requiredScope ? `scope:${requiredScope}:` : "";
   const credentialSuffix = Number.isFinite(credentialIndex) && Math.floor(credentialIndex) > 1
     ? `:c${Math.floor(credentialIndex)}`
     : "";
-  return `slot:${slot.slotIndex}:v${slot.version}${credentialSuffix}`;
+  return `${scopePrefix}slot:${slot.slotIndex}:v${slot.version}${credentialSuffix}`;
 }
 
 export function questionBallotCredentialScope(question: QuestionnaireQuestion, index: number, credentialIndex = 1) {
@@ -316,9 +377,11 @@ export function questionBallotCredentialScope(question: QuestionnaireQuestion, i
   const normalizedCredentialIndex = Number.isFinite(credentialIndex)
     ? Math.max(1, Math.floor(credentialIndex))
     : 1;
+  const requiredScope = questionRequiredScope(question);
   return {
     slotIndex: slot.slotIndex,
     version: slot.version,
+    ...(requiredScope ? { allowedScopes: allowedScopesForRequiredScope(requiredScope) } : {}),
     ...(normalizedCredentialIndex > 1 ? { credentialIndex: normalizedCredentialIndex } : {}),
   };
 }
@@ -421,6 +484,12 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
         errors.push(`question_id_duplicate:${question.questionId}`);
       }
       questionIds.add(question.questionId);
+      if (question.requiredScope !== undefined && question.requiredScope !== null && !normaliseQuestionnaireScope(question.requiredScope)) {
+        errors.push(`required_scope_invalid:${question.questionId}`);
+      }
+      if (question.ballotGroup !== undefined && question.ballotGroup !== null && !normaliseQuestionnaireScope(question.ballotGroup)) {
+        errors.push(`ballot_group_invalid:${question.questionId}`);
+      }
       if (input.ballotCredentialMode === "per_question") {
         const slot = normaliseQuestionBallotSlot(question, index);
         if (!isNonEmpty(slot.slotId)) {

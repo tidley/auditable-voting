@@ -220,6 +220,14 @@ fn get_scope_string(scope: &serde_json::Value, camel_key: &str, snake_key: &str)
         .map(str::to_string)
 }
 
+fn get_scope_value<'a>(
+    scope: &'a serde_json::Value,
+    camel_key: &str,
+    snake_key: &str,
+) -> Option<&'a serde_json::Value> {
+    scope.get(camel_key).or_else(|| scope.get(snake_key))
+}
+
 fn get_scope_positive_integer(
     scope: &serde_json::Value,
     camel_key: &str,
@@ -241,18 +249,78 @@ fn get_scope_positive_integer(
     (as_integer >= 1).then_some(as_integer)
 }
 
+fn normalize_scope_label(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized == "main" || normalized == "0" {
+        return Some("0".to_string());
+    }
+    match normalized.as_str() {
+        "a" => Some("1".to_string()),
+        "b" => Some("2".to_string()),
+        "c" => Some("3".to_string()),
+        "1" | "2" | "3" => Some(normalized),
+        _ => None,
+    }
+}
+
+fn normalize_allowed_scopes(
+    value: Option<&serde_json::Value>,
+    fallback_scope: Option<&str>,
+) -> Vec<String> {
+    let mut scopes = vec!["0".to_string()];
+    if let Some(entries) = value.and_then(|entry| entry.as_array()) {
+        for entry in entries {
+            let Some(scope) = entry.as_str().and_then(normalize_scope_label) else {
+                continue;
+            };
+            if !scopes.contains(&scope) {
+                scopes.push(scope);
+            }
+        }
+    }
+    if let Some(scope) = fallback_scope.and_then(normalize_ballot_group) {
+        if !scopes.contains(&scope) {
+            scopes.push(scope);
+        }
+    }
+    scopes[1..].sort();
+    scopes
+}
+
+fn scope_allowed_scopes(scope: &Option<serde_json::Value>) -> Vec<String> {
+    let Some(scope) = scope.as_ref() else {
+        return vec!["0".to_string()];
+    };
+    let fallback = get_scope_string(scope, "ballotGroup", "ballot_group");
+    normalize_allowed_scopes(
+        get_scope_value(scope, "allowedScopes", "allowed_scopes"),
+        fallback.as_deref(),
+    )
+}
+
 fn normalise_blind_token_scope(scope: Option<&serde_json::Value>) -> Option<serde_json::Value> {
     let scope = scope?;
     let question_id = get_scope_string(scope, "questionId", "question_id");
     let slot_id = get_scope_string(scope, "slotId", "slot_id");
+    let ballot_group = get_scope_string(scope, "ballotGroup", "ballot_group")
+        .and_then(|value| normalize_ballot_group(&value));
+    let allowed_scopes = normalize_allowed_scopes(
+        get_scope_value(scope, "allowedScopes", "allowed_scopes"),
+        ballot_group.as_deref(),
+    );
+    let include_allowed_scopes = get_scope_value(scope, "allowedScopes", "allowed_scopes")
+        .is_some()
+        || ballot_group.is_some();
     let slot_index = get_scope_positive_integer(scope, "slotIndex", "slot_index");
     let version = get_scope_positive_integer(scope, "version", "version");
     let credential_index = get_scope_positive_integer(scope, "credentialIndex", "credential_index");
     if question_id.is_none()
         && slot_id.is_none()
+        && ballot_group.is_none()
         && slot_index.is_none()
         && version.is_none()
         && credential_index.is_none()
+        && !include_allowed_scopes
     {
         return None;
     }
@@ -262,6 +330,17 @@ fn normalise_blind_token_scope(scope: Option<&serde_json::Value>) -> Option<serd
     }
     if let Some(value) = slot_id {
         map.insert("slot_id".to_string(), serde_json::Value::String(value));
+    }
+    if include_allowed_scopes {
+        map.insert(
+            "allowed_scopes".to_string(),
+            serde_json::Value::Array(
+                allowed_scopes
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
     }
     if let Some(value) = slot_index {
         map.insert(
@@ -522,6 +601,17 @@ fn apply_worker_election_config(
             .filter(|entry| !entry.is_empty())
             .collect();
     }
+    if let Some(ballot_groups_by_npub) = &snapshot.ballot_groups_by_npub {
+        election.ballot_groups_by_npub = ballot_groups_by_npub
+            .iter()
+            .filter_map(|(npub, group)| {
+                let npub = npub.trim();
+                normalize_ballot_group(group)
+                    .map(|normalised_group| (npub.to_string(), normalised_group))
+            })
+            .filter(|(npub, _)| !npub.is_empty())
+            .collect();
+    }
     if let Some(codes) = &snapshot.bearer_invite_codes {
         merge_bearer_invite_codes(election, codes);
     }
@@ -664,6 +754,77 @@ fn verify_blind_response_proofs(
         .all(|proof| verify_blind_response_proof(&public_key, submission, proof))
 }
 
+fn answer_question_ids(submission: &QuestionnaireBlindResponseEvent) -> Vec<String> {
+    submission
+        .answers
+        .iter()
+        .filter_map(|answer| answer.get("questionId").and_then(|entry| entry.as_str()))
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn definition_question_required_scope(
+    definition: &serde_json::Value,
+    question_id: &str,
+) -> Option<Option<String>> {
+    definition
+        .get("questions")?
+        .as_array()?
+        .iter()
+        .find(|question| {
+            question
+                .get("questionId")
+                .and_then(|entry| entry.as_str())
+                .map(str::trim)
+                == Some(question_id)
+        })
+        .map(|question| {
+            question
+                .get("requiredScope")
+                .or_else(|| question.get("required_scope"))
+                .or_else(|| question.get("ballotGroup"))
+                .and_then(|entry| entry.as_str())
+                .and_then(normalize_ballot_group)
+        })
+}
+
+fn allowed_scopes_allow_question(allowed_scopes: &[String], required_scope: Option<&str>) -> bool {
+    let required = required_scope
+        .and_then(normalize_ballot_group)
+        .unwrap_or_else(|| "0".to_string());
+    required == "0" || allowed_scopes.iter().any(|entry| entry == &required)
+}
+
+fn submission_answers_authorized_for_proofs(
+    election: &ElectionRuntimeState,
+    submission: &QuestionnaireBlindResponseEvent,
+) -> bool {
+    let Some(definition) = election.definition.as_ref() else {
+        return false;
+    };
+    let proof_allowed_scopes = blind_response_proofs(submission)
+        .into_iter()
+        .map(|proof| scope_allowed_scopes(&proof.ballot_scope))
+        .collect::<Vec<_>>();
+    if proof_allowed_scopes.is_empty() {
+        return false;
+    }
+    for question_id in answer_question_ids(submission) {
+        let Some(required_scope) = definition_question_required_scope(definition, &question_id)
+        else {
+            return false;
+        };
+        if !proof_allowed_scopes.iter().any(|allowed_scopes| {
+            allowed_scopes_allow_question(allowed_scopes, required_scope.as_deref())
+        }) {
+            return false;
+        }
+    }
+    true
+}
+
 fn blind_response_token_commitments(submission: &QuestionnaireBlindResponseEvent) -> Vec<String> {
     blind_response_proofs(submission)
         .into_iter()
@@ -719,6 +880,20 @@ fn normalize_invite_code_hash(value: &str) -> Option<String> {
     Some(normalized)
 }
 
+fn normalize_ballot_group(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized == "main" || normalized == "0" {
+        return None;
+    }
+    match normalized.as_str() {
+        "a" => Some("1".to_string()),
+        "b" => Some("2".to_string()),
+        "c" => Some("3".to_string()),
+        "1" | "2" | "3" => Some(normalized),
+        _ => None,
+    }
+}
+
 fn merge_bearer_invite_codes(election: &mut ElectionRuntimeState, codes: &[BearerInviteCodeEntry]) {
     for incoming in codes {
         let Some(code_hash) = normalize_invite_code_hash(&incoming.code_hash) else {
@@ -730,10 +905,15 @@ fn merge_bearer_invite_codes(election: &mut ElectionRuntimeState, codes: &[Beare
         let existing = election.bearer_invite_codes.get(&code_hash).cloned();
         let next = match (existing, incoming.state.as_str()) {
             (Some(existing), _) if existing.state == "redeemed" => existing,
-            (_, "available" | "redeemed" | "revoked") => BearerInviteCodeEntry {
-                code_hash: code_hash.clone(),
-                ..incoming.clone()
-            },
+            (_, "available" | "redeemed" | "revoked") => {
+                let mut next = incoming.clone();
+                next.code_hash = code_hash.clone();
+                next.ballot_group = next
+                    .ballot_group
+                    .as_deref()
+                    .and_then(normalize_ballot_group);
+                next
+            }
             _ => continue,
         };
         election.bearer_invite_codes.insert(code_hash, next);
@@ -1050,6 +1230,9 @@ fn authorize_blind_request(
     request: &BlindBallotRequest,
 ) -> BlindRequestAuthorization {
     if election.whitelist_npubs.contains(&request.invited_npub) {
+        if !blind_request_ballot_group_authorized(election, request) {
+            return BlindRequestAuthorization::Rejected;
+        }
         return BlindRequestAuthorization::Authorized {
             state_changed: false,
         };
@@ -1063,6 +1246,11 @@ fn authorize_blind_request(
         let Some(entry) = election.bearer_invite_codes.get_mut(&code_hash) else {
             return BlindRequestAuthorization::Deferred;
         };
+        let expected_ballot_group = entry.ballot_group.as_deref();
+        let requested_ballot_group = ballot_scope_group(&request.ballot_scope);
+        if !allowed_scope_request_matches(expected_ballot_group, &request.ballot_scope) {
+            return BlindRequestAuthorization::Rejected;
+        }
         match entry.state.as_str() {
             "available" => {
                 let redeemed_at = now_iso();
@@ -1072,6 +1260,11 @@ fn authorize_blind_request(
                 election
                     .whitelist_npubs
                     .insert(request.invited_npub.clone());
+                if let Some(ballot_group) = requested_ballot_group.clone() {
+                    election
+                        .ballot_groups_by_npub
+                        .insert(request.invited_npub.clone(), ballot_group);
+                }
                 if entry.credentials_per_voter.unwrap_or(1) >= 2 {
                     election
                         .proxy_voter_npubs
@@ -1085,6 +1278,14 @@ fn authorize_blind_request(
                 let inserted = election
                     .whitelist_npubs
                     .insert(request.invited_npub.clone());
+                let group_inserted = if let Some(ballot_group) = requested_ballot_group.clone() {
+                    election
+                        .ballot_groups_by_npub
+                        .insert(request.invited_npub.clone(), ballot_group)
+                        .is_none()
+                } else {
+                    false
+                };
                 let proxy_inserted = if entry.credentials_per_voter.unwrap_or(1) >= 2 {
                     election
                         .proxy_voter_npubs
@@ -1093,7 +1294,7 @@ fn authorize_blind_request(
                     false
                 };
                 return BlindRequestAuthorization::Authorized {
-                    state_changed: inserted || proxy_inserted,
+                    state_changed: inserted || proxy_inserted || group_inserted,
                 };
             }
             _ => return BlindRequestAuthorization::Rejected,
@@ -1163,6 +1364,10 @@ fn ballot_scope_key(scope: &Option<serde_json::Value>) -> String {
     };
     let question_id = get_scope_string(scope, "questionId", "question_id").unwrap_or_default();
     let slot_id = get_scope_string(scope, "slotId", "slot_id").unwrap_or_default();
+    let allowed_scopes = scope_allowed_scopes(&Some(scope.clone()))
+        .into_iter()
+        .filter(|entry| entry != "0")
+        .collect::<Vec<_>>();
     let version = get_scope_positive_integer(scope, "version", "version").unwrap_or(0);
     let slot_index = get_scope_positive_integer(scope, "slotIndex", "slot_index").unwrap_or(0);
     let credential_index =
@@ -1172,24 +1377,38 @@ fn ballot_scope_key(scope: &Option<serde_json::Value>) -> String {
     } else {
         String::new()
     };
+    let scope_prefix = if allowed_scopes.is_empty() {
+        String::new()
+    } else {
+        format!("scopes:{}:", allowed_scopes.join("+"))
+    };
     if question_id.is_empty()
         && slot_id.is_empty()
         && version == 0
         && slot_index == 0
         && credential_index <= 1
+        && allowed_scopes.is_empty()
     {
         return "__questionnaire__".to_string();
     }
+    if question_id.is_empty()
+        && slot_id.is_empty()
+        && version == 0
+        && slot_index == 0
+        && !allowed_scopes.is_empty()
+    {
+        return format!("{scope_prefix}questionnaire{credential_suffix}");
+    }
     if slot_index > 0 {
         return format!(
-            "slot:{}:v{}{}",
+            "{scope_prefix}slot:{}:v{}{}",
             slot_index,
             if version == 0 { 1 } else { version },
             credential_suffix
         );
     }
     format!(
-        "{}:{}:{}:v{}{}",
+        "{scope_prefix}{}:{}:{}:v{}{}",
         if question_id.is_empty() {
             &slot_id
         } else {
@@ -1207,6 +1426,34 @@ fn ballot_scope_credential_index(scope: &Option<serde_json::Value>) -> u64 {
         .as_ref()
         .and_then(|entry| get_scope_positive_integer(entry, "credentialIndex", "credential_index"))
         .unwrap_or(1)
+}
+
+fn ballot_scope_group(scope: &Option<serde_json::Value>) -> Option<String> {
+    scope_allowed_scopes(scope)
+        .into_iter()
+        .find(|entry| entry != "0")
+}
+
+fn expected_allowed_scopes(expected: Option<&str>) -> Vec<String> {
+    normalize_allowed_scopes(None, expected)
+}
+
+fn allowed_scope_request_matches(
+    expected: Option<&str>,
+    requested_scope: &Option<serde_json::Value>,
+) -> bool {
+    expected_allowed_scopes(expected) == scope_allowed_scopes(requested_scope)
+}
+
+fn blind_request_ballot_group_authorized(
+    election: &ElectionRuntimeState,
+    request: &BlindBallotRequest,
+) -> bool {
+    let expected = election
+        .ballot_groups_by_npub
+        .get(&request.invited_npub)
+        .map(String::as_str);
+    allowed_scope_request_matches(expected, &request.ballot_scope)
 }
 
 fn blind_request_issuance_scope_key(request: &BlindBallotRequest) -> String {
@@ -2733,6 +2980,9 @@ impl WorkerRuntime {
             } else if !verify_blind_response_proofs(election, &submission) {
                 accepted = false;
                 reason = "invalid_token_proof".to_string();
+            } else if !submission_answers_authorized_for_proofs(election, &submission) {
+                accepted = false;
+                reason = "invalid_ballot_group".to_string();
             } else if nullifiers
                 .iter()
                 .any(|nullifier| election.accepted_nullifiers.contains(nullifier))
@@ -3701,6 +3951,8 @@ impl WorkerRuntime {
             existing.issued_invited_npubs.clear();
             existing.issued_invited_scope_keys.clear();
             existing.whitelist_npubs.clear();
+            existing.proxy_voter_npubs.clear();
+            existing.ballot_groups_by_npub.clear();
             existing.bearer_invite_codes.clear();
             existing.eligibility_configured = false;
             existing.eligibility_required = false;
@@ -4380,6 +4632,7 @@ mod tests {
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
             proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
             bearer_invite_codes: Some(vec![BearerInviteCodeEntry {
                 election_id: "q_worker_definition".to_string(),
                 code_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -4387,6 +4640,7 @@ mod tests {
                 created_at: now_iso(),
                 state: "available".to_string(),
                 credentials_per_voter: None,
+                ballot_group: None,
                 redeemed_at: None,
                 redeemed_npub: None,
                 revoked_at: None,
@@ -4432,6 +4686,7 @@ mod tests {
             expected_invitee_count: Some(1),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
             proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
@@ -4711,6 +4966,7 @@ mod tests {
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
             proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -4755,6 +5011,7 @@ mod tests {
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
             proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -4811,6 +5068,7 @@ mod tests {
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
             proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -4842,6 +5100,7 @@ mod tests {
             expected_invitee_count: Some(3),
             whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
             proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
@@ -4891,6 +5150,7 @@ mod tests {
             expected_invitee_count: Some(0),
             whitelist_npubs: Some(vec![]),
             proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(false),
             blind_signing_private_key: None,
@@ -5179,6 +5439,105 @@ mod tests {
         let _ = fs::remove_dir_all(state_dir);
     }
 
+    #[tokio::test]
+    async fn handle_submission_rejects_answers_outside_required_scope() {
+        let questionnaire_id = "q_handle_grouped_submission";
+        let (mut definition, keypair) = test_definition_and_keypair(questionnaire_id);
+        definition["questions"] = json!([
+            {
+                "questionId": "q1",
+                "prompt": "Main question",
+                "type": "yes_no",
+                "required": true
+            },
+            {
+                "questionId": "q_a",
+                "prompt": "Scope 1 question",
+                "type": "yes_no",
+                "required": true,
+                "requiredScope": "1"
+            }
+        ]);
+        let coordinator_keys = Keys::generate();
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            questionnaire_id.to_string(),
+            ElectionRuntimeState {
+                election_id: questionnaire_id.to_string(),
+                delegation_id: "delegation_grouped_submission".to_string(),
+                definition: Some(definition),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+
+        let wrong_scope = json!({ "allowedScopes": ["0", "2"] });
+        let mut wrong_group = signed_submission(
+            &keypair,
+            questionnaire_id,
+            "response_wrong_group",
+            "commitment_wrong_group",
+            "nullifier_wrong_group",
+        );
+        wrong_group.token_proof.signature = sign_test_token(
+            &keypair,
+            questionnaire_id,
+            "commitment_wrong_group",
+            Some(&wrong_scope),
+        );
+        wrong_group.token_proof.ballot_scope = Some(wrong_scope);
+        wrong_group.answers = vec![json!({
+            "questionId": "q_a",
+            "answerType": "yes_no",
+            "answer": "yes"
+        })];
+        assert!(runtime
+            .handle_submission(wrong_group)
+            .await
+            .expect("handle wrong group"));
+
+        let right_scope = json!({ "allowedScopes": ["0", "1"] });
+        let mut right_group = signed_submission(
+            &keypair,
+            questionnaire_id,
+            "response_right_group",
+            "commitment_right_group",
+            "nullifier_right_group",
+        );
+        right_group.token_proof.signature = sign_test_token(
+            &keypair,
+            questionnaire_id,
+            "commitment_right_group",
+            Some(&right_scope),
+        );
+        right_group.token_proof.ballot_scope = Some(right_scope);
+        right_group.answers = vec![
+            json!({
+                "questionId": "q1",
+                "answerType": "yes_no",
+                "answer": "yes"
+            }),
+            json!({
+                "questionId": "q_a",
+                "answerType": "yes_no",
+                "answer": "yes"
+            }),
+        ];
+        assert!(runtime
+            .handle_submission(right_group)
+            .await
+            .expect("handle right group"));
+
+        {
+            let state = runtime.state.lock().await;
+            let election = state.elections.get(questionnaire_id).expect("election");
+            assert_eq!(election.accepted_response_count, 1);
+            assert_eq!(election.rejected_response_count, 1);
+        }
+
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
     #[test]
     fn status_active_election_ignores_completed_rounds() {
         let mut completed_round = active_public_submission_election();
@@ -5238,6 +5597,7 @@ mod tests {
                     created_at: now_iso(),
                     state: "available".to_string(),
                     credentials_per_voter: None,
+                    ballot_group: None,
                     redeemed_at: None,
                     redeemed_npub: None,
                     revoked_at: None,
@@ -5295,6 +5655,7 @@ mod tests {
                     created_at: now_iso(),
                     state: "available".to_string(),
                     credentials_per_voter: Some(2),
+                    ballot_group: None,
                     redeemed_at: None,
                     redeemed_npub: None,
                     revoked_at: None,
@@ -5312,18 +5673,26 @@ mod tests {
                 state_changed: true
             }
         );
-        assert!(election.whitelist_npubs.contains(&first_request.invited_npub));
-        assert!(election.proxy_voter_npubs.contains(&first_request.invited_npub));
+        assert!(election
+            .whitelist_npubs
+            .contains(&first_request.invited_npub));
+        assert!(election
+            .proxy_voter_npubs
+            .contains(&first_request.invited_npub));
 
         let mut second_credential_request = first_request.clone();
-        second_credential_request.request_id = "request_worker_definition_proxy_private".to_string();
+        second_credential_request.request_id =
+            "request_worker_definition_proxy_private".to_string();
         second_credential_request.ballot_scope = Some(json!({
             "slotIndex": 1,
             "version": 1,
             "credentialIndex": 2
         }));
 
-        assert!(blind_request_proxy_authorized(&election, &second_credential_request));
+        assert!(blind_request_proxy_authorized(
+            &election,
+            &second_credential_request
+        ));
     }
 
     #[test]
@@ -5842,6 +6211,39 @@ mod tests {
             .insert(second_request.invited_npub.clone());
 
         assert!(blind_request_proxy_authorized(&election, &second_request));
+    }
+
+    #[test]
+    fn whitelist_allowed_scope_restricts_blind_request_scope() {
+        let mut election = ElectionRuntimeState::default();
+        election.whitelist_npubs.insert("npub1voter".to_string());
+        election
+            .ballot_groups_by_npub
+            .insert("npub1voter".to_string(), "1".to_string());
+
+        let mut request = sample_request();
+        request.invited_npub = "npub1voter".to_string();
+        request.ballot_scope = Some(json!({ "allowedScopes": ["0", "1"] }));
+        assert!(matches!(
+            authorize_blind_request(&mut election, &request),
+            BlindRequestAuthorization::Authorized { .. }
+        ));
+
+        let mut wrong_group_request = request.clone();
+        wrong_group_request.request_id = "request_wrong_group".to_string();
+        wrong_group_request.ballot_scope = Some(json!({ "allowedScopes": ["0", "2"] }));
+        assert!(matches!(
+            authorize_blind_request(&mut election, &wrong_group_request),
+            BlindRequestAuthorization::Rejected
+        ));
+
+        let mut unscoped_request = request.clone();
+        unscoped_request.request_id = "request_unscoped_group".to_string();
+        unscoped_request.ballot_scope = None;
+        assert!(matches!(
+            authorize_blind_request(&mut election, &unscoped_request),
+            BlindRequestAuthorization::Rejected
+        ));
     }
 
     #[test]

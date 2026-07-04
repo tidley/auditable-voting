@@ -14,7 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import TokenFingerprint from "./TokenFingerprint";
-import { deriveActorDisplayId } from "./actorDisplay";
+import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDisplay";
 import { deriveIdentityWords } from "./identityWords";
 import { UiButton, UiDataTable, UiSwitch, UiTextField } from "./ui/DesignLayer";
 import {
@@ -24,6 +24,7 @@ import {
 import type {
   QuestionnaireQuestion,
   QuestionnaireResponseAnswer,
+  QuestionnaireResultPackReference,
   QuestionnaireResultQuestionSummary,
 } from "./questionnaireProtocol";
 
@@ -88,6 +89,7 @@ export type QuestionnaireResultsDashboardQuestionnaire = {
   closedAt?: number | null;
   resultPublishedAt?: number | null;
   state?: string | null;
+  resultPack?: QuestionnaireResultPackReference | null;
   questions: QuestionnaireQuestion[];
 };
 
@@ -840,7 +842,7 @@ export default function QuestionnaireResultsDashboard({
                 headClassName='simple-auditor-summary-island-head'
                 title={(
                   <span className='simple-voter-section-title' role='heading' aria-level={2}>
-                    {questionnaire.questionnaireId}
+                    {formatQuestionnaireDisplayId(questionnaire.questionnaireId)}
                   </span>
                 )}
               >
@@ -915,6 +917,24 @@ export default function QuestionnaireResultsDashboard({
                     </div>
                   </div>
                 </section>
+                {questionnaire.resultPack?.url ? (
+                  <section className='simple-auditor-status-card simple-auditor-status-card-wide'>
+                    <div className='simple-auditor-status-detail-row'>
+                      <span className='simple-auditor-status-icon' aria-hidden='true'><FileText /></span>
+                      <div>
+                        <p className='simple-auditor-summary-label'>Result pack</p>
+                        <div className='simple-auditor-result-pack-links'>
+                          <a href={questionnaire.resultPack.url} target='_blank' rel='noreferrer'>Download</a>
+                          {(questionnaire.resultPack.mirrors ?? []).slice(0, 3).map((mirror, index) => (
+                            <a key={mirror.url} href={mirror.url} target='_blank' rel='noreferrer'>
+                              Mirror {index + 1}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
               </AuditorDropdown>
             ) : null}
 

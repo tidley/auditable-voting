@@ -579,7 +579,7 @@
           <li>Course-feedback organiser mode now bypasses legacy live-round, blind-key, and ticket queue gating when accepting questionnaire responses</li>
           <li>Course-feedback harness runs now use batch-gated enrolment/submission waves (`LIVE_BATCH_SIZE`, default 5) with checkpointed progress instead of all-voter cold-start fanout</li>
           <li>Organiser questionnaire response observation now falls back to bounded kind-only reads plus local questionnaire-id filtering when tag-indexed relay reads are unreliable</li>
-          <li>Voter questionnaire submissions now spend RSABSSA blind-signed credentials from a fresh ephemeral response npub; new questionnaires use one internal response group, or two credentials for voters marked as proxy voters</li>
+          <li>Voter questionnaire submissions now spend RSABSSA blind-signed credentials from a fresh ephemeral response npub; new questionnaires sign credential allowed scopes, and proxy voters receive a second independent credential with the same scopes</li>
           <li>Voter mailbox reads now key by `request_id` with immutable per-request mailbox bindings, plus read/backfill mailbox consistency diagnostics</li>
           <li>Backup/restore now uses encrypted full-state namespace snapshots for questionnaire definitions, drafts, invites, responses, relay/proxy settings, and actor state</li>
           <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>

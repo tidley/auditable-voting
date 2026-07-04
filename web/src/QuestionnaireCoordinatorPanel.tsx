@@ -5,6 +5,8 @@ import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, par
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
   calculateRankQuestionScores,
+  normaliseQuestionnaireBallotGroup,
+  questionRequiredScope,
   normaliseRankedOptionIds,
   validateQuestionnaireDefinition,
   questionnaireCredentialsPerVoter,
@@ -199,12 +201,29 @@ const QUESTION_TYPE_OPTIONS: Array<{ value: QuestionnaireQuestionDraft["type"]; 
   { value: "free_text", label: "Free text" },
 ];
 
+const QUESTION_BALLOT_GROUP_OPTIONS = [
+  { value: "", label: "Main" },
+  { value: "1", label: "Scope 1" },
+  { value: "2", label: "Scope 2" },
+  { value: "3", label: "Scope 3" },
+];
+
+function withNormalisedQuestionBallotGroup(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
+  const requiredScope = questionRequiredScope(question);
+  return {
+    ...question,
+    requiredScope,
+    ballotGroup: requiredScope,
+  };
+}
+
 function createYesNoQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
   return {
     questionId,
     type: "yes_no",
     prompt,
     required,
+    ballotGroup: null,
   };
 }
 
@@ -270,6 +289,7 @@ function createMultipleChoiceQuestion(questionId: string, prompt = "", required 
     prompt,
     required,
     multiSelect: false,
+    ballotGroup: null,
     options: [
       { optionId: "option_1", label: "Option 1" },
       { optionId: "option_2", label: "Option 2" },
@@ -284,6 +304,7 @@ function createRankQuestion(questionId: string, prompt = "", minimumRanked = 0):
     prompt,
     required: minimumRanked > 0,
     minimumRanked,
+    ballotGroup: null,
     options: [
       { optionId: "option_1", label: "Option 1" },
       { optionId: "option_2", label: "Option 2" },
@@ -306,14 +327,18 @@ function createFreeTextQuestion(questionId: string, prompt = "", required = fals
     type: "free_text",
     prompt,
     required,
+    ballotGroup: null,
     maxLength: 500,
     encryptResponses: false,
   };
 }
 
 function clearQuestionDraft(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
+  const requiredScope = questionRequiredScope(question);
   const resetSlot = (next: QuestionnaireQuestionDraft) => ({
     ...next,
+    requiredScope,
+    ballotGroup: requiredScope,
     ballotSlot: question.ballotSlot
       ? {
           ...question.ballotSlot,
@@ -441,6 +466,8 @@ type StoredQuestionnaireDraft = {
   delegatedWorkerExpiryEnabled?: boolean;
   delegatedWorkerExpiryMinutes?: string;
   delegatedWorkerCapabilities?: WorkerCapability[];
+  generatedWorkerNsec?: string;
+  generatedWorkerNpub?: string;
 };
 
 const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
@@ -501,29 +528,33 @@ function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] 
       && typeof (entry as { prompt?: unknown }).prompt === "string"
     ))
     .map((entry) => {
+      const withStoredGroup = (question: QuestionnaireQuestionDraft) => withNormalisedQuestionBallotGroup({
+        ...question,
+        ballotGroup: normaliseQuestionnaireBallotGroup(entry.requiredScope ?? entry.ballotGroup),
+      });
       if (entry.type === "free_text") {
-        return {
+        return withStoredGroup({
           ...entry,
           maxLength: Number.isFinite(entry.maxLength) && entry.maxLength > 0
             ? Math.floor(entry.maxLength)
             : 500,
           encryptResponses: Boolean(entry.encryptResponses),
-        };
+        });
       }
       if (entry.type !== "rank") {
-        return entry;
+        return withStoredGroup(entry);
       }
       if (!Array.isArray(entry.options) || entry.options.length < 2) {
-        return createRankQuestion(entry.questionId, entry.prompt, 0);
+        return withStoredGroup(createRankQuestion(entry.questionId, entry.prompt, 0));
       }
       const minimumRanked = Number.isFinite(entry.minimumRanked)
         ? Math.min(entry.options.length, Math.max(0, Math.floor(entry.minimumRanked)))
         : 0;
-      return {
+      return withStoredGroup({
         ...entry,
         minimumRanked,
         required: minimumRanked > 0,
-      };
+      });
     });
   return entries.length > 0 ? alignQuestionBallotGroups(entries) : [createYesNoQuestion("q1")];
 }
@@ -568,6 +599,11 @@ function sortQuestionnaireIdsBySessionOrder(ids: Iterable<string>, eventCreatedA
   });
 }
 
+function deriveWorkerNpubFromNsec(value: string) {
+  const secretKey = decodeNsec(value);
+  return secretKey ? nip19.npubEncode(getPublicKey(secretKey)) : "";
+}
+
 function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
   const fallbackId = readStoredQuestionnaireDraftId();
   if (typeof window === "undefined") {
@@ -593,6 +629,13 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       };
     }
     const parsed = JSON.parse(raw) as Partial<StoredQuestionnaireDraft>;
+    const parsedGeneratedWorkerNsec = typeof parsed.generatedWorkerNsec === "string" ? parsed.generatedWorkerNsec.trim() : "";
+    const generatedWorkerNpubFromNsec = parsedGeneratedWorkerNsec
+      ? deriveWorkerNpubFromNsec(parsedGeneratedWorkerNsec)
+      : "";
+    const parsedGeneratedWorkerNpub = normaliseWorkerNpub(
+      typeof parsed.generatedWorkerNpub === "string" ? parsed.generatedWorkerNpub : "",
+    );
     return {
       questionnaireId: typeof parsed.questionnaireId === "string" && parsed.questionnaireId.trim()
         ? parsed.questionnaireId.trim()
@@ -616,6 +659,8 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
           CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES.includes(entry as WorkerCapability)
         ))
         : [...CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES],
+      generatedWorkerNsec: generatedWorkerNpubFromNsec ? parsedGeneratedWorkerNsec : "",
+      generatedWorkerNpub: generatedWorkerNpubFromNsec || parsedGeneratedWorkerNpub,
     };
   } catch {
     return {
@@ -1474,10 +1519,10 @@ function buildDefinition(input: {
     responseVisibility: "private",
     eligibilityMode: "open",
     allowMultipleResponsesPerPubkey: false,
-    ballotCredentialMode: "per_question",
+    ballotCredentialMode: "questionnaire",
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     ...(input.questionnaireRelays?.length ? { questionnaireRelays: input.questionnaireRelays } : {}),
-    questions: alignQuestionBallotGroups(input.questions),
+    questions: alignQuestionBallotGroups(input.questions).map(withNormalisedQuestionBallotGroup),
   };
 }
 
@@ -1547,8 +1592,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [workerMoreOptionsCollapsed, setWorkerMoreOptionsCollapsed] = useState(true);
   const [auditProxyExpandSignal, setAuditProxyExpandSignal] = useState(0);
   const [selectedWorkerDownloadTarget, setSelectedWorkerDownloadTarget] = useState<WorkerLauncherTargetKey>("linuxX64");
-  const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState("");
-  const [generatedWorkerNpub, setGeneratedWorkerNpub] = useState("");
+  const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState(storedDraft.generatedWorkerNsec ?? "");
+  const [generatedWorkerNpub, setGeneratedWorkerNpub] = useState(storedDraft.generatedWorkerNpub ?? "");
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
@@ -2816,6 +2861,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       delegatedWorkerExpiryEnabled,
       delegatedWorkerExpiryMinutes,
       delegatedWorkerCapabilities,
+      generatedWorkerNsec,
+      generatedWorkerNpub,
       questionnaireRelays: questionnaireRelaysInput,
     };
     window.localStorage.setItem(
@@ -2833,6 +2880,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     delegatedWorkerNpub,
     delegationMode,
     description,
+    generatedWorkerNpub,
+    generatedWorkerNsec,
     questionnaireRelaysInput,
     questionnaireId,
     questions,
@@ -2884,6 +2933,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       const required = entry.required;
       const carrySlot = (next: QuestionnaireQuestionDraft) => bumpQuestionBallotSlotVersion({
         ...next,
+        ballotGroup: normaliseQuestionnaireBallotGroup(entry.requiredScope ?? entry.ballotGroup),
         ballotSlot: entry.ballotSlot ?? null,
       });
       if (type === "multiple_choice") {
@@ -2913,6 +2963,15 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       };
       return alignQuestionBallotGroups([...current.slice(0, index + 1), duplicated, ...current.slice(index + 1)]);
     });
+  }
+
+  function setQuestionBallotGroup(index: number, ballotGroup: string) {
+    const requiredScope = normaliseQuestionnaireBallotGroup(ballotGroup);
+    updateQuestion(index, (entry) => bumpQuestionBallotSlotVersion({
+      ...entry,
+      requiredScope,
+      ballotGroup: requiredScope,
+    }));
   }
 
   function moveQuestion(index: number, direction: -1 | 1) {
@@ -4529,9 +4588,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   function setupAuditProxyFromChecklist() {
     setDelegationMode("delegated_worker");
     setAuditProxyExpandSignal((current) => current + 1);
-    if (!activeWorkerDelegation && !generatedWorkerNpub.trim() && !generatedWorkerNsec.trim() && !delegatedWorkerNpub.trim()) {
-      generateWorkerCredentials();
-    }
     props.onConfigureWorker?.();
   }
 
@@ -4570,38 +4626,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       document.getElementById(fieldToFocus)?.focus({ preventScroll: true });
     });
   }, [props.setupFocusSignal, props.setupFocusTarget, titleReady]);
-
-  const hasAutoGeneratedWorkerCredentials = useRef(false);
-
-  useEffect(() => {
-    if (view !== "build" || hasAutoGeneratedWorkerCredentials.current) {
-      return;
-    }
-    const generatedNpub = normaliseWorkerNpub(generatedWorkerNpub);
-    const delegatedNpub = normaliseWorkerNpub(delegatedWorkerNpub);
-    const hasGeneratedPair = Boolean(
-      generatedWorkerNsec.trim()
-      && generatedNpub
-      && (!delegatedNpub || generatedNpub === delegatedNpub),
-    );
-    if (hasGeneratedPair || activeWorkerDelegation || selectedWorkerStatus) {
-      return;
-    }
-    if (!isProxyBuildPage && (generatedWorkerNpub.trim() || generatedWorkerNsec.trim() || delegatedWorkerNpub.trim())) {
-      return;
-    }
-    hasAutoGeneratedWorkerCredentials.current = true;
-    generateWorkerCredentials();
-  }, [
-    activeWorkerDelegation,
-    delegatedWorkerNpub,
-    generatedWorkerNpub,
-    generatedWorkerNsec,
-    generateWorkerCredentials,
-    isProxyBuildPage,
-    selectedWorkerStatus,
-    view,
-  ]);
 
   const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
   const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
@@ -5004,6 +5028,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   >
                     {QUESTION_TYPE_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </UiSelect>
+                  <UiSelect
+                    selectClassName='simple-voter-input simple-questionnaire-ballot-group-dropdown'
+                    aria-label={`Question ${index + 1} ballot`}
+                    value={questionRequiredScope(question) ?? ""}
+                    onChange={(event) => setQuestionBallotGroup(index, event.target.value)}
+                  >
+                    {QUESTION_BALLOT_GROUP_OPTIONS.map((option) => (
+                      <option key={option.value || "main"} value={option.value}>{option.label}</option>
                     ))}
                   </UiSelect>
                 </div>

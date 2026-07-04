@@ -17,7 +17,7 @@ import {
 import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
-import { deriveActorDisplayId } from "./actorDisplay";
+import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDisplay";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
 
@@ -1059,7 +1059,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             ) : null}
             {role === "voter" && activeVoterQuestionnaireId ? (
               <p className='simple-voter-topbar-questionnaire-id' title={activeVoterQuestionnaireId}>
-                {activeVoterQuestionnaireId}
+                {formatQuestionnaireDisplayId(activeVoterQuestionnaireId)}
               </p>
             ) : null}
             {role === "voter" ? null : isSimpleActorRole(role) && accountIdentityNpub ? (

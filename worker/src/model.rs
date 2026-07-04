@@ -117,6 +117,8 @@ pub struct WorkerElectionConfigSnapshot {
     #[serde(default)]
     pub proxy_voter_npubs: Option<Vec<String>>,
     #[serde(default)]
+    pub ballot_groups_by_npub: Option<HashMap<String, String>>,
+    #[serde(default)]
     pub bearer_invite_codes: Option<Vec<BearerInviteCodeEntry>>,
     #[serde(default)]
     pub eligibility_required: Option<bool>,
@@ -153,6 +155,8 @@ pub struct BearerInviteCodeEntry {
     pub state: String,
     #[serde(default)]
     pub credentials_per_voter: Option<u8>,
+    #[serde(default)]
+    pub ballot_group: Option<String>,
     #[serde(default)]
     pub redeemed_at: Option<String>,
     #[serde(default)]
@@ -390,6 +394,8 @@ pub struct ElectionRuntimeState {
     pub whitelist_npubs: HashSet<String>,
     #[serde(default)]
     pub proxy_voter_npubs: HashSet<String>,
+    #[serde(default)]
+    pub ballot_groups_by_npub: HashMap<String, String>,
     #[serde(default)]
     pub bearer_invite_codes: HashMap<String, BearerInviteCodeEntry>,
     #[serde(default)]

@@ -1,5 +1,6 @@
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
 import { normaliseQuestionnaireInviteCode } from "./questionnaireInviteCode";
+import { normaliseQuestionnaireBallotGroup } from "./questionnaireProtocol";
 
 const DEFAULT_INVITE_BASE_URL = "https://example.invalid/";
 
@@ -18,12 +19,14 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
   inviteCode: string | null;
   coordinatorNpub: string | null;
   credentialsPerVoter?: 2;
+  ballotGroup?: string | null;
 } {
   const params = new URLSearchParams(search);
   const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
   const coordinatorNpub = (params.get("coordinator") ?? "").trim();
   const invitedNpub = (params.get("invited") ?? "").trim();
   const credentialsPerVoter = parseCredentialsPerVoter(params);
+  const ballotGroup = normaliseQuestionnaireBallotGroup(params.get("ballot_group") ?? params.get("ballotGroup"));
   const relayHints = params.getAll("relay")
     .concat((params.get("relays") ?? "").split(","))
     .map((entry) => entry.trim())
@@ -52,11 +55,13 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
             relays: relayHints.length > 0 ? relayHints : undefined,
           },
           ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
+          ...(ballotGroup ? { ballotGroup } : {}),
           expiresAt: null,
         },
         inviteCode: inviteCode || null,
         coordinatorNpub: coordinatorNpub || null,
         ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
+        ...(ballotGroup ? { ballotGroup } : {}),
       };
     }
     return {
@@ -65,6 +70,7 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
       inviteCode: inviteCode || null,
       coordinatorNpub: coordinatorNpub || null,
       ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
+      ...(ballotGroup ? { ballotGroup } : {}),
     };
   }
 
@@ -78,11 +84,12 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
       || typeof parsed?.invitedNpub !== "string"
       || typeof parsed?.coordinatorNpub !== "string"
     ) {
-      return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}) };
+      return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}), ...(ballotGroup ? { ballotGroup } : {}) };
     }
-    return { electionId: parsed.electionId, invite: parsed, inviteCode: inviteCode || null, coordinatorNpub: parsed.coordinatorNpub || coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}) };
+    const parsedBallotGroup = normaliseQuestionnaireBallotGroup(parsed.ballotGroup) ?? ballotGroup;
+    return { electionId: parsed.electionId, invite: parsed, inviteCode: inviteCode || null, coordinatorNpub: parsed.coordinatorNpub || coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}), ...(parsedBallotGroup ? { ballotGroup: parsedBallotGroup } : {}) };
   } catch {
-    return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}) };
+    return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null, ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}), ...(ballotGroup ? { ballotGroup } : {}) };
   }
 }
 
@@ -97,6 +104,7 @@ export function buildInviteUrl(input: {
     invitedNpub: input.invite.invitedNpub,
     relays: input.invite.definitionReference?.relays,
     credentialsPerVoter: input.invite.credentialsPerVoter,
+    ballotGroup: input.invite.ballotGroup,
   });
 }
 
@@ -110,6 +118,7 @@ export function buildQuestionnaireInviteUrl(input: {
   autoRequestBallot?: boolean;
   relays?: string[] | null;
   credentialsPerVoter?: 1 | 2 | null;
+  ballotGroup?: string | null;
 }) {
   const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : DEFAULT_INVITE_BASE_URL);
   const url = new URL("./", base);
@@ -141,6 +150,10 @@ export function buildQuestionnaireInviteUrl(input: {
   }
   if (input.credentialsPerVoter === 2) {
     url.searchParams.set("credentials_per_voter", "2");
+  }
+  const ballotGroup = normaliseQuestionnaireBallotGroup(input.ballotGroup);
+  if (ballotGroup) {
+    url.searchParams.set("ballot_group", ballotGroup);
   }
   return url.toString();
 }

@@ -4,7 +4,11 @@ import {
   QUESTIONNAIRE_NULLIFIER_DOMAIN,
   QUESTIONNAIRE_RESULT_HASH_DOMAIN,
 } from "./questionnaireProtocolConstants";
-import type { QuestionnaireResultQuestionSummary } from "./questionnaireProtocol";
+import {
+  normaliseQuestionnaireAllowedScopes,
+  normaliseQuestionnaireBallotGroup,
+  type QuestionnaireResultQuestionSummary,
+} from "./questionnaireProtocol";
 
 export type QuestionnaireBlindTokenScope = {
   questionId?: string | null;
@@ -12,6 +16,9 @@ export type QuestionnaireBlindTokenScope = {
   slotIndex?: number | null;
   version?: number | null;
   credentialIndex?: number | null;
+  allowedScopes?: string[] | null;
+  /** Legacy alias for allowedScopes. */
+  ballotGroup?: string | null;
 };
 
 type CanonicalValue =
@@ -102,7 +109,10 @@ export function normaliseBlindTokenScope(scope: QuestionnaireBlindTokenScope | n
   const credentialIndex = Number.isFinite(scope.credentialIndex)
     ? Math.max(1, Math.floor(scope.credentialIndex as number))
     : null;
-  if (!questionId && !slotId && !slotIndex && !version && (!credentialIndex || credentialIndex <= 1)) {
+  const ballotGroup = normaliseQuestionnaireBallotGroup(scope.ballotGroup);
+  const allowedScopes = normaliseQuestionnaireAllowedScopes(scope.allowedScopes, ballotGroup);
+  const includeAllowedScopes = Array.isArray(scope.allowedScopes) || Boolean(ballotGroup);
+  if (!questionId && !slotId && !slotIndex && !version && (!credentialIndex || credentialIndex <= 1) && !includeAllowedScopes) {
     return null;
   }
   return {
@@ -111,6 +121,7 @@ export function normaliseBlindTokenScope(scope: QuestionnaireBlindTokenScope | n
     ...(slotIndex ? { slot_index: slotIndex } : {}),
     ...(version ? { version } : {}),
     ...(credentialIndex && credentialIndex > 1 ? { credential_index: credentialIndex } : {}),
+    ...(includeAllowedScopes ? { allowed_scopes: allowedScopes } : {}),
   };
 }
 

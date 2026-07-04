@@ -35,10 +35,12 @@ import {
   publishQuestionnaireParticipantCount,
   publishQuestionnaireState,
 } from "../src/questionnaireNostr";
-import type {
-  QuestionnaireDefinition,
-  QuestionnaireResponseAnswer,
-  QuestionnaireResultSummary,
+import {
+  allowedScopesForRequiredScope,
+  questionRequiredScope,
+  type QuestionnaireDefinition,
+  type QuestionnaireResponseAnswer,
+  type QuestionnaireResultSummary,
 } from "../src/questionnaireProtocol";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -263,11 +265,14 @@ function buildDefinition(input: {
   questionnaireId: string;
   coordinatorNpub: string;
   blindSigningPublicKey: ReturnType<typeof toQuestionnaireBlindPublicKey>;
-  questionCount: number;
+  baseQuestionCount: number;
+  restrictedQuestionGroupCount: number;
   perQuestionCredentials: boolean;
 }): QuestionnaireDefinition {
   const now = Math.floor(Date.now() / 1000);
-  const questionCount = Math.max(1, Math.floor(input.questionCount));
+  const baseQuestionCount = Math.max(1, Math.floor(input.baseQuestionCount));
+  const restrictedQuestionGroupCount = Math.max(0, Math.floor(input.restrictedQuestionGroupCount));
+  const questionCount = baseQuestionCount + restrictedQuestionGroupCount;
   return {
     schemaVersion: 1,
     eventType: "questionnaire_definition",
@@ -287,15 +292,19 @@ function buildDefinition(input: {
     allowMultipleResponsesPerPubkey: false,
     ...(input.perQuestionCredentials ? { ballotCredentialMode: "per_question" as const } : {}),
     blindSigningPublicKey: input.blindSigningPublicKey,
-    questions: Array.from({ length: questionCount }, (_, index) => ({
-      questionId: `q${index + 1}`,
-      prompt: `Live proxy harness question ${index + 1}`,
-      required: true,
-      type: "yes_no",
-      ...(input.perQuestionCredentials
-        ? { ballotSlot: { slotId: `q${index + 1}`, slotIndex: index + 1, version: 1 } }
-        : {}),
-    })),
+    questions: Array.from({ length: questionCount }, (_, index) => {
+      const ballotGroup = ballotGroupForQuestionIndex(index, baseQuestionCount);
+      return {
+        questionId: `q${index + 1}`,
+        prompt: `Live proxy harness question ${index + 1}`,
+        required: true,
+        type: "yes_no",
+        ...(ballotGroup ? { requiredScope: ballotGroup, ballotGroup } : {}),
+        ...(input.perQuestionCredentials
+          ? { ballotSlot: { slotId: `q${index + 1}`, slotIndex: index + 1, version: 1 } }
+          : {}),
+      };
+    }),
   };
 }
 
@@ -304,6 +313,7 @@ function ballotScopeForQuestion(
   index: number,
   credentialIndex = 1,
 ): BallotScope {
+  const requiredScope = questionRequiredScope(question);
   return {
     questionId: question.questionId,
     slotId: question.ballotSlot?.slotId?.trim() || question.questionId,
@@ -313,8 +323,19 @@ function ballotScopeForQuestion(
     version: Number.isFinite(question.ballotSlot?.version)
       ? Math.max(1, Math.floor(question.ballotSlot!.version))
       : 1,
+    ...(requiredScope ? { allowedScopes: allowedScopesForRequiredScope(requiredScope), ballotGroup: requiredScope } : {}),
     ...(credentialIndex > 1 ? { credentialIndex } : {}),
   };
+}
+
+function ballotScopeForQuestionnaireCredential(credentialIndex: number, ballotGroup?: string | null): BallotScope | null {
+  const allowedScopes = allowedScopesForRequiredScope(ballotGroup);
+  const scope: BallotScope = {
+    allowedScopes,
+    ...(ballotGroup ? { ballotGroup } : {}),
+    ...(credentialIndex > 1 ? { credentialIndex } : {}),
+  };
+  return Object.keys(scope).length > 0 ? scope : null;
 }
 
 function answerForQuestion(
@@ -354,6 +375,37 @@ function scopedEligibleVoterIndexes(input: {
   return Array.from({ length: Math.min(input.restrictedEligibleCount, input.voterCount) }, (_, offset) => (
     (start + offset) % input.voterCount
   ));
+}
+
+function ballotGroupForQuestionIndex(questionIndex: number, baseQuestionCount: number) {
+  if (questionIndex < baseQuestionCount) {
+    return null;
+  }
+  const groupIndex = questionIndex - baseQuestionCount;
+  return ["1", "2", "3"][groupIndex] ?? null;
+}
+
+function ballotGroupForVoterIndex(input: {
+  voterIndex: number;
+  baseQuestionCount: number;
+  voterCount: number;
+  restrictedQuestionGroupCount: number;
+  restrictedEligibleCount: number;
+}) {
+  for (let groupIndex = 0; groupIndex < input.restrictedQuestionGroupCount; groupIndex += 1) {
+    const questionIndex = input.baseQuestionCount + groupIndex;
+    const eligible = scopedEligibleVoterIndexes({
+      questionIndex,
+      baseQuestionCount: input.baseQuestionCount,
+      voterCount: input.voterCount,
+      restrictedQuestionGroupCount: input.restrictedQuestionGroupCount,
+      restrictedEligibleCount: input.restrictedEligibleCount,
+    });
+    if (eligible.includes(input.voterIndex)) {
+      return ballotGroupForQuestionIndex(questionIndex, input.baseQuestionCount);
+    }
+  }
+  return null;
 }
 
 function scopedCredentialIndexes(voterIndex: number, proxyVoterCount: number) {
@@ -644,6 +696,20 @@ async function main() {
   const coordinator = makeNostrIdentity();
   const worker = makeNostrIdentity();
   const voters = Array.from({ length: voterCount }, () => makeNostrIdentity());
+  const voterBallotGroups = voters.map((_, voterIndex) => ballotGroupForVoterIndex({
+    voterIndex,
+    baseQuestionCount,
+    voterCount: voters.length,
+    restrictedQuestionGroupCount,
+    restrictedEligibleCount,
+  }));
+  const ballotGroupsByNpub: Record<string, string> = {};
+  voters.forEach((voter, index) => {
+    const ballotGroup = voterBallotGroups[index];
+    if (ballotGroup) {
+      ballotGroupsByNpub[voter.npub] = ballotGroup;
+    }
+  });
   const questionnaireId = `q_live_rust_helper_${nodeCrypto.randomBytes(8).toString("hex")}`;
   const blindSigningPrivateKey = await generateQuestionnaireBlindKeyPair();
   const blindSigningPublicKey = toQuestionnaireBlindPublicKey(blindSigningPrivateKey);
@@ -651,7 +717,8 @@ async function main() {
     questionnaireId,
     coordinatorNpub: coordinator.npub,
     blindSigningPublicKey,
-    questionCount,
+    baseQuestionCount,
+    restrictedQuestionGroupCount,
     perQuestionCredentials: perQuestionSubmissions,
   });
   const expectedSubmissionCount = perQuestionSubmissions
@@ -667,7 +734,7 @@ async function main() {
         questionTotal + scopedCredentialIndexes(voterIndex, proxyVoterCount).length
       ), 0);
     }, 0)
-    : voters.length;
+    : voters.length + proxyVoterCount;
 
   process.stdout.write(`Live Rust helper smoke\n`);
   process.stdout.write(`Questionnaire: ${questionnaireId}\n`);
@@ -799,6 +866,7 @@ async function main() {
       expectedInviteeCount: expectedSubmissionCount,
       whitelistNpubs: voters.map((voter) => voter.npub),
       proxyVoterNpubs: voters.slice(0, proxyVoterCount).map((voter) => voter.npub),
+      ballotGroupsByNpub,
       bearerInviteCodes: [],
       eligibilityRequired: true,
       blindSigningPrivateKey,
@@ -865,6 +933,7 @@ async function main() {
     process.stdout.write(`Bulk inviting ${voters.length} voters before responses start...\n`);
     let invitedCount = 0;
     await runWithConcurrency(voters, inviteConcurrency, async (voter, index) => {
+      const ballotGroup = voterBallotGroups[index] ?? null;
       const draftInvite: ElectionInviteMessage = {
         type: "election_invite",
         schemaVersion: 1,
@@ -878,6 +947,7 @@ async function main() {
         issueBlindTokensWorker,
         definition,
         ...(index < proxyVoterCount ? { credentialsPerVoter: 2 as const } : {}),
+        ...(ballotGroup ? { ballotGroup } : {}),
         expiresAt: null,
       };
       const invite: ElectionInviteMessage = {
@@ -1634,18 +1704,34 @@ async function main() {
         });
       }
     } else {
-      const submissionJobs: LiveRustHelperSubmissionJob[] = voters.map((voter, voterIndex) => ({
-        voter,
-        voterIndex,
-        questionIndex: null,
-        answers,
-        ballotScope: null,
-      }));
+      const submissionJobs: LiveRustHelperSubmissionJob[] = voters.flatMap((voter, voterIndex) => (
+        scopedCredentialIndexes(voterIndex, proxyVoterCount).map((credentialIndex) => {
+          const ballotGroup = voterBallotGroups[voterIndex] ?? null;
+          return {
+            voter,
+            voterIndex,
+            questionIndex: null,
+            answers: definition.questions
+              .map((question, questionIndex) => ({ question, questionIndex }))
+              .filter(({ questionIndex }) => scopedEligibleVoterIndexes({
+                questionIndex,
+                baseQuestionCount,
+                voterCount: voters.length,
+                restrictedQuestionGroupCount,
+                restrictedEligibleCount,
+              }).includes(voterIndex))
+              .map(({ question, questionIndex }) => answerForQuestion(question, questionIndex)),
+            ballotScope: ballotScopeForQuestionnaireCredential(credentialIndex, ballotGroup),
+          };
+        })
+      ));
       process.stdout.write(`Submitting ${submissionJobs.length} blind response job(s)...\n`);
 
       await runWithConcurrency(submissionJobs, submissionConcurrency, async (job) => {
         const voter = job.voter;
-        const voterLabel = `voter ${job.voterIndex + 1}/${voters.length}`;
+        const credentialIndex = job.ballotScope?.credentialIndex ?? 1;
+        const credentialLabel = credentialIndex > 1 ? ` credential ${credentialIndex}` : "";
+        const voterLabel = `voter ${job.voterIndex + 1}/${voters.length}${credentialLabel}`;
         const submissionDelayMs = randomDelayMs(responseDelayMinMs, responseDelayMaxMs);
         if (submissionDelayMs > 0) {
           await sleep(submissionDelayMs);
@@ -1653,7 +1739,7 @@ async function main() {
         workerExit.assertRunning();
         const entry = await buildBlindRequest({
           voterNpub: voter.npub,
-          ballotScope: null,
+          ballotScope: job.ballotScope,
         });
       let workerSawRequest = false;
       for (let attempt = 1; attempt <= requestRetryLimit; attempt += 1) {
@@ -1754,7 +1840,7 @@ async function main() {
         blindingFactor: entry.blindingFactor,
         tokenSecret: entry.tokenSecret,
         tokenCommitment: entry.tokenCommitment,
-        ballotScope: null,
+        ballotScope: job.ballotScope,
         responseAnswers: job.answers,
         totalSubmissions: submissionJobs.length,
       });
