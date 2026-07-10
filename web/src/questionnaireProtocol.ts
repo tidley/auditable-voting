@@ -266,6 +266,32 @@ export type QuestionnairePublishedResponseRef = {
   authorPubkey: string;
   submittedAt: number;
   accepted: boolean;
+  tokenNullifier?: string;
+  tokenNullifiers?: Array<{
+    questionId?: string | null;
+    tokenNullifier: string;
+    ballotScope?: {
+      questionId?: string | null;
+      slotId?: string | null;
+      slotIndex?: number | null;
+      version?: number | null;
+      credentialIndex?: number | null;
+    } | null;
+  }>;
+  tokenProof?: {
+    tokenCommitment: string;
+    questionnaireId: string;
+    signature: string;
+    questionId?: string | null;
+    ballotScope?: {
+      questionId?: string | null;
+      slotId?: string | null;
+      slotIndex?: number | null;
+      version?: number | null;
+      credentialIndex?: number | null;
+    } | null;
+  };
+  tokenProofs?: Array<NonNullable<QuestionnairePublishedResponseRef["tokenProof"]>>;
   answers?: QuestionnaireResponseAnswer[];
   rejectionReason?: string | null;
 };
@@ -274,9 +300,9 @@ export type QuestionnaireResultPackReference = {
   url: string;
   sha256: string;
   size: number;
-  type: "application/vnd.auditable-voting.result-pack+json";
-  compression: "gzip";
-  uploadEncoding?: "gzip" | "json+base64url-gzip";
+  type: "text/csv" | "application/vnd.auditable-voting.result-pack+json";
+  compression: "none" | "gzip";
+  uploadEncoding?: "csv" | "gzip" | "json+base64url-gzip";
   payloadSha256?: string;
   payloadSize?: number;
   uploadedAt: number;

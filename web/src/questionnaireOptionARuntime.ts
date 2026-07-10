@@ -639,11 +639,24 @@ function voterShouldWaitForDefinitionBeforeBlindRequest(input: {
   if (input.cachedDefinition || input.state.inviteMessage?.definition) {
     return false;
   }
-  return Boolean(
+  if (
     input.state.inviteMessage?.definitionReference
-    || input.summary?.protocolVersion === 2
-    || input.summary?.flowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
-  );
+    && voterUsesScopedBlindCredentials({
+      invite: input.state.inviteMessage,
+      privateInviteCredentialsPerVoter: input.state.privateInviteCredentialsPerVoter,
+      privateInviteBallotGroup: input.state.privateInviteBallotGroup,
+      definition: input.cachedDefinition,
+    })
+  ) {
+    return true;
+  }
+  if (input.summary?.protocolVersion === 2) {
+    return true;
+  }
+  if (input.state.inviteMessage?.blindSigningPublicKey || input.summary?.blindSigningPublicKey) {
+    return false;
+  }
+  return false;
 }
 
 function buildQuestionnaireCredentialScopes(
@@ -1987,15 +2000,18 @@ export class QuestionnaireOptionAVoterRuntime {
       canonicalIssuance: loggedInState.blindRequest ? readBlindIssuance(loggedInState.blindRequest.requestId) : null,
       canonicalAcceptance: loggedInState.submission ? readAcceptance(loggedInState.submission.submissionId) : null,
     });
-    void this.refreshVoterPublicQuestionnaireMetadata({
-      state: restored,
+    const localMetadata = {
       summary: loadElectionSummary(this.electionId),
       cachedDefinition: readCachedQuestionnaireDefinition(this.electionId) ?? cachedDefinition,
+    };
+    void this.refreshVoterPublicQuestionnaireMetadata({
+      state: restored,
+      ...localMetadata,
     }).catch(() => null);
     const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
       inviteMessage: restored.inviteMessage,
-      summary: loadElectionSummary(this.electionId),
-      cachedDefinition: readCachedQuestionnaireDefinition(this.electionId) ?? cachedDefinition,
+      summary: localMetadata.summary,
+      cachedDefinition: localMetadata.cachedDefinition,
     });
     const reconciled = this.reconcileVoterBlindSigningKeyState({
       state: restored,
@@ -2003,7 +2019,7 @@ export class QuestionnaireOptionAVoterRuntime {
     });
     const readyState = reconcileVoterCredentialReadyForDefinition(
       reconciled,
-      readCachedQuestionnaireDefinition(this.electionId) ?? cachedDefinition,
+      localMetadata.cachedDefinition,
     );
 
     this.state = readyState;

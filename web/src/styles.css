@@ -7354,6 +7354,15 @@ code {
   text-underline-offset: 4px;
 }
 
+.simple-vote-receipt-finder .simple-vote-receipt-copy-line-identity strong {
+  color: var(--simple-text);
+  font-size: clamp(1.25rem, 3vw, 1.8rem);
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
 .simple-vote-receipt-identity-panel {
   display: grid;
   grid-template-columns: minmax(150px, 0.72fr) minmax(220px, 1fr);

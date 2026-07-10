@@ -1950,19 +1950,20 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
-    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
-    expect(receiptRegion.querySelector(".simple-vote-receipt-title-icon .lucide-check")).toBeTruthy();
+    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt details" });
     expect(within(receiptRegion).getByRole("img", { name: "Anonymous voting identity" })).toBeTruthy();
     expect(within(receiptRegion).queryByLabelText(/Expand QR for token/i)).toBeNull();
     expect(within(receiptRegion).queryByText("QR code")).toBeNull();
-    expect(within(receiptRegion).getByText("Vote receipt")).toBeTruthy();
+    expect(screen.getByText("Vote receipt")).toBeTruthy();
     expect(within(receiptRegion).queryByText(/Waiting for/i)).toBeNull();
-    expect(within(receiptRegion).getByText("Anonymous npub")).toBeTruthy();
+    expect(within(receiptRegion).getByText("Lookup keys")).toBeTruthy();
+    expect(within(receiptRegion).queryByText("Anonymous npub")).toBeNull();
     expect(within(receiptRegion).getByText("Submitted")).toBeTruthy();
     expect(screen.getAllByText("RRR-RRR").length).toBeGreaterThan(0);
     expect(within(receiptRegion).queryByText("Identity words")).toBeNull();
-    expect(within(receiptRegion).getByText("Anonymous voting identity")).toBeTruthy();
-    expect(within(receiptRegion).getByText(deriveIdentityWords("npub1" + "r".repeat(58)))).toBeTruthy();
+    const finderWords = within(receiptRegion).getByText(deriveIdentityWords("npub1" + "r".repeat(58)));
+    const anonymousNpub = within(receiptRegion).getByText("RRR-RRR");
+    expect(anonymousNpub.compareDocumentPosition(finderWords) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(receiptRegion).getByText("Advanced details")).toBeTruthy();
     await userEvent.click(within(receiptRegion).getByText("Advanced details"));
     expect(within(receiptRegion).getByText("Questionnaire ID")).toBeTruthy();
@@ -2211,18 +2212,19 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_complete"]} localVoterNpub={localVoterNpub} />);
 
-    expect(await screen.findByText("Question 1/2")).toBeTruthy();
+    expect(await screen.findByText("Question 1 of 2")).toBeTruthy();
     expect(screen.queryByText(/Complete/)).toBeNull();
-    expect(screen.getAllByText("Q1: First grouped question").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Q2: Second grouped question")).toBeNull();
-    expect((screen.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(true);
-    await userEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Question 2/2")).toBeTruthy();
-    expect(screen.queryByText("Q1: First grouped question")).toBeNull();
-    expect(screen.getAllByText("Q2: Second grouped question").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("First grouped question").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Second grouped question")).toBeNull();
+    expect((screen.getByRole("button", { name: /Previous/ }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: /Next/ }));
+    expect(await screen.findByText("Question 2 of 2")).toBeTruthy();
+    expect(screen.queryByText("First grouped question")).toBeNull();
+    expect(screen.getAllByText("Second grouped question").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "View results" })).toBeTruthy();
-    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt" });
-    expect(within(receiptRegion).queryByText("Q2: Second grouped question")).toBeNull();
+    expect(screen.queryByText("Questionnaire results")).toBeNull();
+    const receiptRegion = await screen.findByRole("region", { name: "Vote receipt details" });
+    expect(within(receiptRegion).queryByText("Second grouped question")).toBeNull();
     expect(within(receiptRegion).getByText("Submitted")).toBeTruthy();
     expect(within(receiptRegion).getByText("Anonymous voting identity")).toBeTruthy();
   });

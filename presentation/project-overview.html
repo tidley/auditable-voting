@@ -618,7 +618,7 @@
           <li>Protocol v2 questionnaire rounds are now driven by public submissions + public organiser decisions, while legacy rounds remain dual-read for migration safety</li>
           <li>Observers can run an explicit historic questionnaire search when older published rounds or public response payloads are outside the default recent scan window</li>
           <li>Observers now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>
-          <li>Published questionnaire summaries now carry canonical per-response refs or a verified two-mirror Blossom result-pack pointer, using JSON-wrapped gzip when servers reject gzip blobs, so Observer can still show detailed responder rows when public response events are fragmented across relays</li>
+          <li>Published questionnaire summaries now carry canonical per-response refs or a verified two-mirror Blossom CSV result-pack pointer, with spreadsheet-readable responder rows and audit columns when public response events are fragmented across relays</li>
           <li>Voters now publish separate public per-question provisional response events from the same anonymous ballot identity while answering, giving Organiser and Observer replaceable muted live chart markers without treating those hints as accepted blind-token votes</li>
           <li>The audit proxy can publish to a dedicated hot relay first, then drip-feed handled public responses and result events to configured public archive relays</li>
           <li>Observer round search and `Submitted Votes` filtering now support Submission/Response ID or Submittor identity, invalid rows are hidden by default behind `Show invalid votes`, and visible invalid rows show their rejection reason</li>
@@ -628,7 +628,7 @@
           <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Organiser follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
-          <li>Reads and live subscriptions are kept to a smaller primary subset, with tag-filtered paginated public questionnaire reads, consolidated organiser/voter/observer questionnaire subscriptions, adaptive blind-DM history reads, and a shorter organiser startup burst to reduce relay-side `too many concurrent REQs` pressure</li>
+          <li>Reads and live subscriptions are kept to a smaller primary subset, with tag-filtered paginated public questionnaire reads, consolidated organiser/voter/observer questionnaire subscriptions, adaptive blind-DM history reads, capped foreground DM/mailbox read fanout, and a shorter organiser startup burst to reduce relay-side `too many concurrent REQs` and browser WebSocket pressure</li>
           <li>Small live runs are now much stronger than large public-relay committee runs</li>
           <li>The protocol remains inspectable by any third party</li>
         </ul>

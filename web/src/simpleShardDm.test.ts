@@ -280,6 +280,29 @@ describe("simpleShardDm", () => {
     expect(result.successes).toBeGreaterThan(0);
   });
 
+  it("skips auth-required DM relays for coordinator follow reads", async () => {
+    const mod = await import("./simpleShardDm");
+    resolveNip65InboxRelays.mockResolvedValue([
+      "wss://vm-1734.lnvps.cloud/",
+      "wss://relay.nostr.net",
+      "wss://nip17.com",
+      "wss://relay.0xchat.com",
+    ]);
+    querySync.mockResolvedValue([]);
+
+    await mod.fetchSimpleCoordinatorFollowers({
+      coordinatorNsec: "nsec1coord",
+    });
+
+    const relays = querySync.mock.calls[0][0] as string[];
+    expect(relays).toEqual([
+      "wss://vm-1734.lnvps.cloud/",
+      "wss://relay.nostr.net",
+    ]);
+    expect(relays).not.toContain("wss://nip17.com");
+    expect(relays).not.toContain("wss://relay.0xchat.com");
+  });
+
   it("sends blinded shard requests over mailbox events", async () => {
     const mod = await import("./simpleShardDm");
 
@@ -366,6 +389,13 @@ describe("simpleShardDm", () => {
     const mod = await import("./simpleShardDm");
 
     querySync.mockResolvedValue([mailboxTicketEvent()]);
+    resolveNip65InboxRelays.mockResolvedValue([
+      "wss://vm-1734.lnvps.cloud/",
+      "wss://relay.nostr.net",
+      "wss://nos.lol",
+      "wss://relay.damus.io",
+      "wss://relay.primal.net",
+    ]);
 
     const responses = await mod.fetchSimpleShardResponses({
       voterNsec: "nsec1voter",
@@ -395,6 +425,7 @@ describe("simpleShardDm", () => {
         mailboxId: "mailbox-1",
       },
     ]);
+    expect((querySync.mock.calls[0][0] as string[]).length).toBeLessThanOrEqual(3);
   });
 
   it("normalises shard request ids to the blind request id when parsing", async () => {

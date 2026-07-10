@@ -398,6 +398,21 @@ export function selectQuestionnaireVoterIdentity(input: {
   };
 }
 
+export function selectVoterMessageCoordinatorTargets(input: {
+  configuredCoordinatorTargets: string[];
+  linkedCoordinatorNpub?: string | null;
+  messageOnlyCoordinators: string[];
+}) {
+  const linkedTargets = sanitizeCoordinatorNpubs([input.linkedCoordinatorNpub ?? ""]);
+  if (linkedTargets.length > 0) {
+    return linkedTargets;
+  }
+  return sanitizeCoordinatorNpubs([
+    ...input.configuredCoordinatorTargets,
+    ...input.messageOnlyCoordinators,
+  ]);
+}
+
 async function verifyAnnouncedQuestionnaireReadiness(questionnaireId: string) {
   const definitionFetch = await fetchQuestionnaireEventsWithFallback({
     questionnaireId,
@@ -630,11 +645,11 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     [manualCoordinators],
   );
   const messageCoordinatorTargets = useMemo(
-    () => sanitizeCoordinatorNpubs([
-      ...configuredCoordinatorTargets,
+    () => selectVoterMessageCoordinatorTargets({
+      configuredCoordinatorTargets,
       linkedCoordinatorNpub,
-      ...messageOnlyCoordinators,
-    ]),
+      messageOnlyCoordinators,
+    }),
     [configuredCoordinatorTargets, linkedCoordinatorNpub, messageOnlyCoordinators],
   );
   const coordinatorDraftIsValid = isValidNpub(coordinatorDraft.trim());

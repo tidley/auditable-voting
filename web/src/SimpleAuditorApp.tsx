@@ -662,7 +662,7 @@ export default function SimpleAuditorApp({
     automatic?: boolean;
   }) => {
     if (input?.automatic) {
-      if (auditorSessionAutoRefreshDone) {
+      if (auditorSessionAutoRefreshDone && (auditorMemoryCache.questionnaires.length > 0 || questionnairesRef.current.length > 0)) {
         return;
       }
       auditorSessionAutoRefreshDone = true;
@@ -1554,12 +1554,14 @@ function optionASummaryRefToAuditorDetail(input: {
       responseId,
       submittedAt,
       authorPubkey: normalizedAuthor,
-      tokenNullifier: `summary_missing_${responseId}`,
-      tokenProof: {
+      tokenNullifier: input.ref.tokenNullifier ?? `summary_missing_${responseId}`,
+      tokenNullifiers: input.ref.tokenNullifiers,
+      tokenProof: input.ref.tokenProof ?? {
         tokenCommitment: `summary_missing_${responseId}`,
         questionnaireId: input.questionnaireId,
         signature: "summary_reference",
       },
+      tokenProofs: input.ref.tokenProofs,
       answers: input.ref.answers ?? [],
     },
     accepted: input.ref.accepted,

@@ -481,6 +481,8 @@ const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
 const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
+  "wss://nip17.com",
+  "wss://relay.0xchat.com",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
@@ -499,13 +501,11 @@ const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   ["wss://nostr.wine", "wss://nos.lol"],
   ["wss://eden.nostr.land", "wss://relay.nostr.net"],
   ["wss://purplepag.es", "wss://relay.nostr.info"],
-  ["wss://nip17.com", "wss://relay.nostr.info"],
   ["wss://relay.layer.systems", "wss://relay.nostr.net"],
   ["wss://nostr.bond", "wss://nos.lol"],
   ["wss://auth.nostr1.com", "wss://relay.nostr.info"],
   ["wss://inbox.nostr.wine", "wss://relay.nostr.info"],
   ["wss://nostr-pub.wellorder.net", "wss://relay.nostr.net"],
-  ["wss://relay.0xchat.com", "wss://nos.lol"],
 ]);
 const CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES: WorkerCapability[] = [
   "issue_blind_tokens",
@@ -572,7 +572,7 @@ function deriveWorkerDmRelays(workerRelays: string) {
   const relays = sanitizeWorkerRelays(workerRelays)
     .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay))
     .filter((relay) => !WORKER_DM_DISCOURAGED_RELAYS.has(relay));
-  return relays.length > 0 ? relays : DEFAULT_WORKER_DM_RELAYS;
+  return normalizeRelaysRust([...relays, ...DEFAULT_WORKER_DM_RELAYS]);
 }
 
 function questionnaireSessionSortTimeMs(id: string, eventCreatedAtById?: Map<string, number>) {
@@ -4033,6 +4033,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             authorPubkey: entry.response.authorPubkey,
             submittedAt: entry.response.submittedAt ?? entry.event.created_at ?? nowUnix(),
             accepted: entry.accepted,
+            rejectionReason: entry.accepted ? null : entry.rejectionReason,
+            tokenNullifier: entry.response.tokenNullifier,
+            tokenNullifiers: entry.response.tokenNullifiers,
+            tokenProof: entry.response.tokenProof,
+            tokenProofs: entry.response.tokenProofs,
             answers: entry.accepted
               ? acceptedResponseById.get(entry.response.responseId)?.payload.answers
               : entry.response.answers,
@@ -4122,6 +4127,12 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
               authorPubkey: response.authorPubkey,
               submittedAt: response.payload.submittedAt,
               accepted: true,
+              tokenNullifier,
+              tokenProof: {
+                tokenCommitment,
+                questionnaireId: definition.questionnaireId,
+                signature: `coordinator_publication:${responseId}`,
+              },
               answers: response.payload.answers,
             };
           })
@@ -4131,7 +4142,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       const resultPackResponses = summary.publishedResponseRefs ?? [];
       if (resultPackResponses.length > 0) {
         try {
-          setStatus("Uploading compressed result pack to Blossom...");
+          setStatus("Uploading CSV result pack to Blossom...");
           summary.resultPack = await uploadQuestionnaireResultPack({
             publisherNsec: coordinatorNsec,
             resultSummary: summary,

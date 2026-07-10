@@ -10,6 +10,7 @@ import {
   QUESTIONNAIRE_RESPONSE_BLIND_KIND,
   QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
 } from "../src/questionnaireResponsePublish";
+import type { QuestionnaireResponseAnswer } from "../src/questionnaireProtocol";
 
 type RelayResult = {
   relay: string;
@@ -26,6 +27,10 @@ const DEFAULT_RELAYS = [
 function readInt(name: string, fallback: number) {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function clampInt(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
 function readRelays() {
@@ -51,10 +56,17 @@ function eventQuestionnaireId(event: NostrEvent) {
 function buildScaleEvents(input: {
   roundCount: number;
   voterCount: number;
+  questionCount: number;
+  proxyVoterCount: number;
+  abcQuestionCount: number;
   runId: string;
   secretKey: Uint8Array;
 }) {
   const coordinatorNpub = nip19.npubEncode(getPublicKey(input.secretKey));
+  const proxyVoterCount = clampInt(input.proxyVoterCount, 0, input.voterCount);
+  const submissionCount = input.voterCount + proxyVoterCount;
+  const questionCount = Math.max(1, input.questionCount);
+  const totalQuestionCount = questionCount + Math.max(0, input.abcQuestionCount);
   const roundIds = Array.from(
     { length: input.roundCount },
     (_, index) => `av_live_scale_${input.runId}_${String(index + 1).padStart(2, "0")}`,
@@ -63,9 +75,27 @@ function buildScaleEvents(input: {
   const events: NostrEvent[] = [];
 
   for (const questionnaireId of roundIds) {
-    for (let voterIndex = 0; voterIndex < input.voterCount; voterIndex += 1) {
-      const responseId = `submission_${questionnaireId}_${String(voterIndex + 1).padStart(3, "0")}`;
-      const nullifier = `nullifier_${questionnaireId}_${String(voterIndex + 1).padStart(3, "0")}`;
+    for (let submissionIndex = 0; submissionIndex < submissionCount; submissionIndex += 1) {
+      const voterIndex = submissionIndex % input.voterCount;
+      const credentialIndex = submissionIndex >= input.voterCount ? 2 : 1;
+      const responseId = `submission_${questionnaireId}_${String(submissionIndex + 1).padStart(3, "0")}`;
+      const nullifier = `nullifier_${questionnaireId}_${String(submissionIndex + 1).padStart(3, "0")}`;
+      const answers: QuestionnaireResponseAnswer[] = Array.from({ length: totalQuestionCount }, (_, questionIndex) => {
+        const questionNumber = questionIndex + 1;
+        if (questionIndex >= questionCount - 1) {
+          const selectedOptionId = (["a", "b", "c"] as const)[(submissionIndex + questionIndex) % 3];
+          return {
+            questionId: `q${questionNumber}`,
+            answerType: "multiple_choice",
+            selectedOptionIds: [selectedOptionId],
+          };
+        }
+        return {
+          questionId: `q${questionNumber}`,
+          answerType: "yes_no",
+          value: (submissionIndex + questionIndex) % 2 === 0,
+        };
+      });
       events.push(makeEvent(input.secretKey, {
         kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
         created_at: createdAt--,
@@ -87,17 +117,16 @@ function buildScaleEvents(input: {
           authorPubkey: coordinatorNpub,
           tokenNullifier: nullifier,
           tokenProof: {
-            tokenCommitment: `commitment_${responseId}`,
+            tokenCommitment: `commitment_${responseId}_${credentialIndex}`,
             questionnaireId,
             signature: `live_scale_signature_${responseId}`,
           },
-          answers: [
-            {
-              questionId: "q1",
-              answerType: "yes_no",
-              value: voterIndex % 2 === 0,
-            },
-          ],
+          answers,
+          testMetadata: {
+            voterIndex: voterIndex + 1,
+            credentialIndex,
+            proxyCredential: credentialIndex > 1,
+          },
         }),
       }));
       events.push(makeEvent(input.secretKey, {
@@ -144,22 +173,39 @@ function buildScaleEvents(input: {
         questionnaireId,
         createdAt,
         coordinatorPubkey: coordinatorNpub,
-        acceptedResponseCount: input.voterCount,
+        acceptedResponseCount: submissionCount,
+        expectedEligibleVoterCount: input.voterCount,
+        proxyVoterCount,
         rejectedResponseCount: 0,
-        acceptedNullifierCount: input.voterCount,
-        questionSummaries: [
-          {
-            questionId: "q1",
-            answerType: "yes_no",
-            yesCount: Math.ceil(input.voterCount / 2),
-            noCount: Math.floor(input.voterCount / 2),
-          },
-        ],
+        acceptedNullifierCount: submissionCount,
+        questionSummaries: Array.from({ length: totalQuestionCount }, (_, questionIndex) => ({
+          questionId: `q${questionIndex + 1}`,
+          answerType: questionIndex >= questionCount - 1 ? "multiple_choice" : "yes_no",
+        })),
       }),
     }));
   }
 
-  return { roundIds, events };
+  return { roundIds, events, submissionCount, totalQuestionCount };
+}
+
+function answerDistribution(events: NostrEvent[], questionId: string) {
+  const counts = { a: 0, b: 0, c: 0, missing: 0 };
+  for (const event of events) {
+    const parsed = JSON.parse(event.content) as { answers?: QuestionnaireResponseAnswer[] };
+    const answer = parsed.answers?.find((entry) => entry.questionId === questionId);
+    if (answer?.answerType !== "multiple_choice") {
+      counts.missing += 1;
+      continue;
+    }
+    const selected = answer.selectedOptionIds[0];
+    if (selected === "a" || selected === "b" || selected === "c") {
+      counts[selected] += 1;
+    } else {
+      counts.missing += 1;
+    }
+  }
+  return counts;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -224,6 +270,9 @@ async function sleep(ms: number) {
 async function main() {
   const roundCount = readInt("LIVE_SCALE_ROUNDS", 30);
   const voterCount = readInt("LIVE_SCALE_VOTERS", 100);
+  const questionCount = readInt("LIVE_SCALE_QUESTIONS", 1);
+  const proxyVoterCount = readInt("LIVE_SCALE_PROXY_VOTERS", 0);
+  const abcQuestionCount = readInt("LIVE_SCALE_ABC_EXTRA_QUESTIONS", 0);
   const publishConcurrency = readInt("LIVE_SCALE_PUBLISH_CONCURRENCY", 4);
   const publishMaxWaitMs = readInt("LIVE_SCALE_PUBLISH_MAX_WAIT_MS", 4_000);
   const readbackWaitMs = readInt("LIVE_SCALE_READBACK_WAIT_MS", 8_000);
@@ -234,8 +283,17 @@ async function main() {
     || `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${randomBytes(3).toString("hex")}`;
   const secretKey = makeSecretKey();
   const pool = new SimplePool({ enablePing: true, enableReconnect: true });
-  const { roundIds, events } = buildScaleEvents({ roundCount, voterCount, runId, secretKey });
+  const { roundIds, events, submissionCount, totalQuestionCount } = buildScaleEvents({
+    roundCount,
+    voterCount,
+    questionCount,
+    proxyVoterCount,
+    abcQuestionCount,
+    runId,
+    secretKey,
+  });
   const selectedRound = roundIds[Math.min(20, roundIds.length - 1)];
+  const finalQuestionId = `q${questionCount}`;
 
   process.stdout.write(JSON.stringify({
     phase: "start",
@@ -243,6 +301,11 @@ async function main() {
     relays,
     roundCount,
     voterCount,
+    proxyVoterCount: clampInt(proxyVoterCount, 0, voterCount),
+    expectedSubmissionsPerQuestionnaire: submissionCount,
+    questionCount,
+    abcQuestionCount,
+    totalQuestionCount,
     selectedRound,
     eventCount: events.length,
     publishConcurrency,
@@ -267,6 +330,7 @@ async function main() {
   const publishElapsedMs = Date.now() - startedAt;
   const acceptedEvents = events.filter((_, index) => publishResults[index].some((result) => result.success));
   const selectedAcceptedEvents = acceptedEvents.filter((event) => eventQuestionnaireId(event) === selectedRound);
+  const selectedAcceptedResponses = selectedAcceptedEvents.filter((event) => event.kind === QUESTIONNAIRE_RESPONSE_BLIND_KIND);
 
   process.stdout.write(JSON.stringify({
     phase: "publish_complete",
@@ -274,6 +338,7 @@ async function main() {
     attemptedEvents: events.length,
     acceptedEvents: acceptedEvents.length,
     selectedRoundAcceptedEvents: selectedAcceptedEvents.length,
+    selectedRoundFinalQuestionDistribution: answerDistribution(selectedAcceptedResponses, finalQuestionId),
     publishByRelay: summarizePublishResults(publishResults),
   }, null, 2) + "\n");
 
@@ -283,7 +348,7 @@ async function main() {
     fetchQuestionnaireBlindResponses({
       questionnaireId: selectedRound,
       relays,
-      limit: voterCount + 50,
+      limit: submissionCount + 50,
       readRelayLimit: relays.length,
       maxPages: readbackMaxPages,
       timeBudgetMs: readbackTimeBudgetMs,
@@ -291,7 +356,7 @@ async function main() {
     fetchQuestionnaireSubmissionDecisions({
       questionnaireId: selectedRound,
       relays,
-      limit: voterCount + 50,
+      limit: submissionCount + 50,
       readRelayLimit: relays.length,
       maxPages: readbackMaxPages,
       timeBudgetMs: readbackTimeBudgetMs,
@@ -306,17 +371,19 @@ async function main() {
     }),
   ]);
   const readElapsedMs = Date.now() - readStartedAt;
+  const readbackEvents = responses.map((entry) => entry.event);
 
   process.stdout.write(JSON.stringify({
     phase: "readback_complete",
     runId,
     selectedRound,
     readElapsedMs,
-    expectedResponses: voterCount,
+    expectedResponses: submissionCount,
     responses: responses.length,
     decisions: decisions.length,
     results: results.length,
-    passed: responses.length === voterCount && decisions.length === voterCount && results.length >= 1,
+    finalQuestionDistribution: answerDistribution(readbackEvents, finalQuestionId),
+    passed: responses.length === submissionCount && decisions.length === submissionCount && results.length >= 1,
   }, null, 2) + "\n");
 
   pool.destroy();

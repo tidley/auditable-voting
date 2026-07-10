@@ -1,4 +1,4 @@
-import { gzipSync, gunzipSync, strFromU8, strToU8 } from "fflate";
+import { gunzipSync, strFromU8, strToU8 } from "fflate";
 import { finalizeEvent, nip19 } from "nostr-tools";
 import type {
   QuestionnairePublishedResponseRef,
@@ -7,12 +7,16 @@ import type {
 } from "./questionnaireProtocol";
 
 const BLOSSOM_AUTH_KIND = 24_242;
-const RESULT_PACK_TYPE = "application/vnd.auditable-voting.result-pack+json" as const;
-const RESULT_PACK_COMPRESSION = "gzip" as const;
+const RESULT_PACK_JSON_TYPE = "application/vnd.auditable-voting.result-pack+json" as const;
+const RESULT_PACK_CSV_TYPE = "text/csv" as const;
+const RESULT_PACK_GZIP_COMPRESSION = "gzip" as const;
+const RESULT_PACK_CSV_COMPRESSION = "none" as const;
 const BLOSSOM_GZIP_UPLOAD_CONTENT_TYPE = "application/gzip";
 const BLOSSOM_JSON_UPLOAD_CONTENT_TYPE = "application/json";
+const BLOSSOM_CSV_UPLOAD_CONTENT_TYPE = "text/csv; charset=utf-8";
 const RESULT_PACK_DIRECT_UPLOAD_ENCODING = "gzip" as const;
 const RESULT_PACK_WRAPPED_UPLOAD_ENCODING = "json+base64url-gzip" as const;
+const RESULT_PACK_CSV_UPLOAD_ENCODING = "csv" as const;
 const BLOSSOM_UPLOAD_TIMEOUT_MS = 12_000;
 const BLOSSOM_TARGET_UPLOAD_COUNT = 2;
 
@@ -41,8 +45,8 @@ type BlossomBlobDescriptor = {
 type ResultPackUploadEnvelope = {
   schemaVersion: 1;
   eventType: "questionnaire_result_pack_blob";
-  type: typeof RESULT_PACK_TYPE;
-  compression: typeof RESULT_PACK_COMPRESSION;
+  type: typeof RESULT_PACK_JSON_TYPE;
+  compression: typeof RESULT_PACK_GZIP_COMPRESSION;
   sha256: string;
   size: number;
   payloadEncoding: "base64url";
@@ -60,70 +64,39 @@ export async function uploadQuestionnaireResultPack(input: {
     summary: input.resultSummary,
     responses,
   });
-  const payload = strToU8(JSON.stringify(pack));
-  const compressed = gzipSync(payload, { level: 6 });
-  const sha256 = await sha256HexBytes(compressed);
+  const csv = strToU8(buildQuestionnaireResultPackCsv(pack));
+  const sha256 = await sha256HexBytes(csv);
   const servers = sanitizeBlossomServers(input.servers);
   if (servers.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
     throw new Error("At least two Blossom result-pack servers are required.");
   }
-  const gzipUploads: QuestionnaireResultPackReference[] = [];
-  const gzipErrors: string[] = [];
+  const uploads: QuestionnaireResultPackReference[] = [];
+  const errors: string[] = [];
 
-  for (const server of servers) {
-    try {
-      const upload = await uploadCompressedPackToBlossom({
-        nsec: input.publisherNsec,
-        server,
-        compressed,
-        sha256,
-      });
-      gzipUploads.push(upload);
-      if (gzipUploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
-        break;
-      }
-    } catch (error) {
-      gzipErrors.push(`${server}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  if (gzipUploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
-    return buildMirroredResultPackReference(gzipUploads);
-  }
-
-  const envelopeBytes = buildJsonWrappedResultPack(compressed, sha256);
-  const envelopeSha256 = await sha256HexBytes(envelopeBytes);
-  const wrappedUploads: QuestionnaireResultPackReference[] = [];
-  const wrappedErrors: string[] = [];
   for (const server of servers) {
     try {
       const upload = await uploadPackBodyToBlossom({
         nsec: input.publisherNsec,
         server,
-        body: envelopeBytes,
-        sha256: envelopeSha256,
-        contentType: BLOSSOM_JSON_UPLOAD_CONTENT_TYPE,
-        uploadEncoding: RESULT_PACK_WRAPPED_UPLOAD_ENCODING,
-        payloadSha256: sha256,
-        payloadSize: compressed.length,
+        body: csv,
+        sha256,
+        contentType: BLOSSOM_CSV_UPLOAD_CONTENT_TYPE,
+        uploadEncoding: RESULT_PACK_CSV_UPLOAD_ENCODING,
       });
-      wrappedUploads.push(upload);
-      if (wrappedUploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
+      uploads.push(upload);
+      if (uploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
         break;
       }
     } catch (error) {
-      wrappedErrors.push(`${server}: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`${server}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  if (wrappedUploads.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
-    throw new Error(
-      `Blossom result-pack upload failed: gzip: ${gzipErrors.join("; ")}; `
-      + `JSON wrapper: ${wrappedErrors.join("; ")}`,
-    );
+  if (uploads.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
+    throw new Error(`Blossom CSV result-pack upload failed: ${errors.join("; ")}`);
   }
 
-  return buildMirroredResultPackReference(wrappedUploads);
+  return buildMirroredResultPackReference(uploads);
 }
 
 export async function fetchQuestionnaireResultPack(
@@ -131,6 +104,9 @@ export async function fetchQuestionnaireResultPack(
 ): Promise<QuestionnaireResultPack> {
   validateResultPackReference(reference);
   const uploadedBytes = await fetchVerifiedResultPackBytes(reference);
+  if ((reference.uploadEncoding ?? resultPackDefaultUploadEncoding(reference)) === RESULT_PACK_CSV_UPLOAD_ENCODING) {
+    return parseQuestionnaireResultPackCsv(strFromU8(uploadedBytes));
+  }
   const compressedBytes = await unwrapVerifiedResultPackBytes(reference, uploadedBytes);
   const json = strFromU8(gunzipSync(compressedBytes));
   const parsed = JSON.parse(json) as QuestionnaireResultPack;
@@ -190,6 +166,123 @@ export function buildQuestionnaireResultPack(input: {
     summary,
     responses: input.responses,
   };
+}
+
+export function buildQuestionnaireResultPackCsv(pack: QuestionnaireResultPack) {
+  const headers = [
+    "questionnaire_id",
+    "result_created_at",
+    "coordinator_pubkey",
+    "accepted_response_count",
+    "rejected_response_count",
+    "accepted_nullifier_count",
+    "response_id",
+    "submittor_pubkey",
+    "submitted_at",
+    "accepted",
+    "rejection_reason",
+    "token_nullifier",
+    "token_nullifiers_json",
+    "token_commitment",
+    "token_signature",
+    "token_proofs_json",
+    "answers_json",
+  ];
+  const rows = pack.responses.map((response) => [
+    pack.questionnaireId,
+    String(pack.createdAt),
+    pack.summary.coordinatorPubkey,
+    String(pack.summary.acceptedResponseCount),
+    String(pack.summary.rejectedResponseCount),
+    String(pack.summary.acceptedNullifierCount ?? ""),
+    response.responseId,
+    response.authorPubkey,
+    String(response.submittedAt),
+    response.accepted ? "true" : "false",
+    response.rejectionReason ?? "",
+    response.tokenNullifier ?? "",
+    JSON.stringify(response.tokenNullifiers ?? []),
+    response.tokenProof?.tokenCommitment ?? "",
+    response.tokenProof?.signature ?? "",
+    JSON.stringify(response.tokenProofs?.length ? response.tokenProofs : (response.tokenProof ? [response.tokenProof] : [])),
+    JSON.stringify(response.answers ?? []),
+  ]);
+  return "\ufeff" + [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
+
+function parseQuestionnaireResultPackCsv(csv: string): QuestionnaireResultPack {
+  const [headers, ...rows] = parseCsvRows(csv).filter((row) => row.some((cell) => cell.trim() !== ""));
+  if (!headers) {
+    throw new Error("Blossom CSV result-pack payload is empty.");
+  }
+  const column = Object.fromEntries(headers.map((header, index) => [header.replace(/^\ufeff/, ""), index]));
+  const required = ["questionnaire_id", "result_created_at", "coordinator_pubkey", "accepted_response_count", "rejected_response_count", "response_id", "submittor_pubkey", "submitted_at", "accepted", "answers_json"];
+  if (!required.every((name) => Number.isInteger(column[name]))) {
+    throw new Error("Blossom CSV result-pack headers are invalid.");
+  }
+  const read = (row: string[], name: string) => row[column[name]] ?? "";
+  const first = rows[0] ?? [];
+  const responses = rows.map((row): QuestionnairePublishedResponseRef => ({
+    responseId: read(row, "response_id"),
+    authorPubkey: read(row, "submittor_pubkey"),
+    submittedAt: Number(read(row, "submitted_at")) || 0,
+    accepted: read(row, "accepted").toLowerCase() === "true",
+    rejectionReason: read(row, "rejection_reason") || null,
+    tokenNullifier: read(row, "token_nullifier") || undefined,
+    tokenNullifiers: parseJsonColumn(read(row, "token_nullifiers_json"), []),
+    tokenProof: parseTokenProofColumn(row, read),
+    tokenProofs: parseJsonColumn(read(row, "token_proofs_json"), []),
+    answers: JSON.parse(read(row, "answers_json") || "[]"),
+  }));
+  return {
+    schemaVersion: 1,
+    eventType: "questionnaire_result_pack",
+    questionnaireId: read(first, "questionnaire_id"),
+    createdAt: Number(read(first, "result_created_at")) || 0,
+    summary: {
+      schemaVersion: 1,
+      eventType: "questionnaire_result_summary",
+      questionnaireId: read(first, "questionnaire_id"),
+      createdAt: Number(read(first, "result_created_at")) || 0,
+      coordinatorPubkey: read(first, "coordinator_pubkey"),
+      acceptedResponseCount: Number(read(first, "accepted_response_count")) || 0,
+      rejectedResponseCount: Number(read(first, "rejected_response_count")) || 0,
+      acceptedNullifierCount: Number(read(first, "accepted_nullifier_count")) || undefined,
+      questionSummaries: [],
+    },
+    responses,
+  };
+}
+
+function parseJsonColumn<T>(value: string, fallback: T): T {
+  if (!value.trim()) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseTokenProofColumn(
+  row: string[],
+  read: (row: string[], name: string) => string,
+): QuestionnairePublishedResponseRef["tokenProof"] | undefined {
+  const proofs = parseJsonColumn<NonNullable<QuestionnairePublishedResponseRef["tokenProof"]>[]>(
+    read(row, "token_proofs_json"),
+    [],
+  );
+  if (proofs[0]?.tokenCommitment && proofs[0]?.signature) {
+    return proofs[0];
+  }
+  const tokenCommitment = read(row, "token_commitment");
+  const signature = read(row, "token_signature");
+  const questionnaireId = read(row, "questionnaire_id");
+  if (!tokenCommitment || !signature) {
+    return undefined;
+  }
+  return { tokenCommitment, signature, questionnaireId };
 }
 
 function sanitizeBlossomServers(servers?: string[]) {
@@ -266,8 +359,8 @@ async function uploadPackBodyToBlossom(input: {
     url,
     sha256: input.sha256,
     size: input.body.length,
-    type: RESULT_PACK_TYPE,
-    compression: RESULT_PACK_COMPRESSION,
+    type: input.uploadEncoding === RESULT_PACK_CSV_UPLOAD_ENCODING ? RESULT_PACK_CSV_TYPE : RESULT_PACK_JSON_TYPE,
+    compression: input.uploadEncoding === RESULT_PACK_CSV_UPLOAD_ENCODING ? RESULT_PACK_CSV_COMPRESSION : RESULT_PACK_GZIP_COMPRESSION,
     uploadEncoding: input.uploadEncoding,
     payloadSha256: input.payloadSha256,
     payloadSize: input.payloadSize,
@@ -280,8 +373,8 @@ function buildJsonWrappedResultPack(compressed: Uint8Array, sha256: string) {
   const envelope: ResultPackUploadEnvelope = {
     schemaVersion: 1,
     eventType: "questionnaire_result_pack_blob",
-    type: RESULT_PACK_TYPE,
-    compression: RESULT_PACK_COMPRESSION,
+    type: RESULT_PACK_JSON_TYPE,
+    compression: RESULT_PACK_GZIP_COMPRESSION,
     sha256,
     size: compressed.length,
     payloadEncoding: "base64url",
@@ -335,13 +428,20 @@ function validateResultPackReference(reference: QuestionnaireResultPackReference
     || !/^[a-f0-9]{64}$/i.test(reference.sha256 ?? "")
     || !Number.isFinite(reference.size)
     || reference.size <= 0
-    || reference.type !== RESULT_PACK_TYPE
-    || reference.compression !== RESULT_PACK_COMPRESSION
+    || ![RESULT_PACK_CSV_TYPE, RESULT_PACK_JSON_TYPE].includes(reference.type)
+    || ![RESULT_PACK_CSV_COMPRESSION, RESULT_PACK_GZIP_COMPRESSION].includes(reference.compression)
   ) {
+    throw new Error("Invalid Blossom result-pack reference.");
+  }
+  if (reference.type === RESULT_PACK_CSV_TYPE && reference.compression !== RESULT_PACK_CSV_COMPRESSION) {
+    throw new Error("Invalid Blossom result-pack reference.");
+  }
+  if (reference.type === RESULT_PACK_JSON_TYPE && reference.compression !== RESULT_PACK_GZIP_COMPRESSION) {
     throw new Error("Invalid Blossom result-pack reference.");
   }
   if (
     reference.uploadEncoding
+    && reference.uploadEncoding !== RESULT_PACK_CSV_UPLOAD_ENCODING
     && reference.uploadEncoding !== RESULT_PACK_DIRECT_UPLOAD_ENCODING
     && reference.uploadEncoding !== RESULT_PACK_WRAPPED_UPLOAD_ENCODING
   ) {
@@ -368,15 +468,15 @@ async function sha256HexBytes(bytes: Uint8Array) {
 }
 
 async function unwrapVerifiedResultPackBytes(reference: QuestionnaireResultPackReference, bytes: Uint8Array) {
-  if ((reference.uploadEncoding ?? RESULT_PACK_DIRECT_UPLOAD_ENCODING) === RESULT_PACK_DIRECT_UPLOAD_ENCODING) {
+  if ((reference.uploadEncoding ?? resultPackDefaultUploadEncoding(reference)) === RESULT_PACK_DIRECT_UPLOAD_ENCODING) {
     return bytes;
   }
   const envelope = JSON.parse(strFromU8(bytes)) as ResultPackUploadEnvelope;
   if (
     envelope?.schemaVersion !== 1
     || envelope?.eventType !== "questionnaire_result_pack_blob"
-    || envelope?.type !== RESULT_PACK_TYPE
-    || envelope?.compression !== RESULT_PACK_COMPRESSION
+    || envelope?.type !== RESULT_PACK_JSON_TYPE
+    || envelope?.compression !== RESULT_PACK_GZIP_COMPRESSION
     || envelope?.payloadEncoding !== "base64url"
     || typeof envelope?.payload !== "string"
   ) {
@@ -396,6 +496,51 @@ async function unwrapVerifiedResultPackBytes(reference: QuestionnaireResultPackR
     throw new Error(`payload sha256 mismatch: expected ${expectedSha256}, got ${actualSha256}`);
   }
   return compressed;
+}
+
+function resultPackDefaultUploadEncoding(reference: QuestionnaireResultPackReference) {
+  return reference.type === RESULT_PACK_CSV_TYPE ? RESULT_PACK_CSV_UPLOAD_ENCODING : RESULT_PACK_DIRECT_UPLOAD_ENCODING;
+}
+
+function csvCell(value: string) {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, "\"\"")}"` : value;
+}
+
+function parseCsvRows(csv: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < csv.length; index += 1) {
+    const char = csv[index];
+    if (quoted) {
+      if (char === "\"" && csv[index + 1] === "\"") {
+        cell += "\"";
+        index += 1;
+      } else if (char === "\"") {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+    } else if (char === "\"") {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+  if (cell || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
 }
 
 function bytesToBase64Url(bytes: Uint8Array) {

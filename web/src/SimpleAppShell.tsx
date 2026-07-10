@@ -20,6 +20,7 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDisplay";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
+import { hasVoterInviteContextInUrl } from "./questionnaireInvite";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 type AuditorPage = "gallery" | "relays";
@@ -289,6 +290,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         ? `Open voter profile menu for Voter ${accountIdentityLabel}${voterMessagesUnread ? ", new message" : ""}`
         : `Open voter profile menu${voterMessagesUnread ? ", new message" : ""}`
       : "Menu";
+  const isPublicVoterInvite = role === "voter" && hasVoterInviteContextInUrl();
+  const voterSectionOptions = useMemo(() => (
+    isPublicVoterInvite
+      ? VOTER_SECTION_OPTIONS.filter((option) => option.tab !== "configure" && option.tab !== "settings")
+      : VOTER_SECTION_OPTIONS
+  ), [isPublicVoterInvite]);
 
   useEffect(() => {
     if (role !== "voter") {
@@ -298,6 +305,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       setAuditorPage("gallery");
     }
   }, [role]);
+
+  useEffect(() => {
+    if (role === "voter" && !voterSectionOptions.some((option) => option.tab === voterTab)) {
+      setVoterTab("vote");
+    }
+  }, [role, voterSectionOptions, voterTab]);
 
   useEffect(() => {
     if (role !== "voter" && role !== "coordinator") {
@@ -863,7 +876,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 role='tablist'
                 aria-label='Main actions'
               >
-                {VOTER_SECTION_OPTIONS.map((option) => (
+                {voterSectionOptions.map((option) => (
                   <UiButton
                     key={option.tab}
                     icon={voterTabIconName(option.icon)}
@@ -944,7 +957,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               ))}
             </div>
           </div>
-          {isSimpleActorRole(role) ? (
+          {isSimpleActorRole(role) && !(role === "voter" && isPublicVoterInvite) ? (
             <>
               <div className='simple-account-menu-section simple-account-menu-identity' role='none'>
                 <p className='simple-account-menu-kicker'>Identity</p>

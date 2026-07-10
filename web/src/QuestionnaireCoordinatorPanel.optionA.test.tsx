@@ -359,7 +359,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const quickStart = await screen.findByLabelText("Quick start command") as HTMLTextAreaElement;
     expect(quickStart.value).toContain("WORKER_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net");
-    expect(quickStart.value).toContain("WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net");
+    expect(quickStart.value).toContain("WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com");
     expect(quickStart.value).not.toContain("WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol");
   });
 

@@ -61,6 +61,9 @@ const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
 const OPTION_A_BLIND_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
 ]);
+const OPTION_A_BLIND_DM_AUTH_REQUIRED_READ_RELAYS = new Set([
+  "wss://nip17.com",
+]);
 const OPTION_A_BLIND_DM_READ_UNINDEXED_TAG_RELAYS = new Set([
   "wss://relay.damus.io",
   "wss://relay.primal.net",
@@ -445,16 +448,21 @@ function applyBlindDmRelayBackoff(relays: string[], reason: string) {
 function filterBlindDmReadRelays(relays: string[]) {
   const now = Date.now();
   const ordered = orderBlindDmReadRelays(relays);
+  const readable = ordered.filter((relay) => {
+    return !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay)
+      && !OPTION_A_BLIND_DM_AUTH_REQUIRED_READ_RELAYS.has(relay);
+  });
+  const fallback = readable.length > 0
+    ? readable
+    : ordered.filter((relay) => !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay));
   const available = ordered.filter((relay) => {
     const until = optionABlindDmRelayCooldownUntil.get(relay) ?? 0;
-    return until <= now && !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay);
+    return until <= now && fallback.includes(relay);
   });
   if (available.length > 0) {
     return available;
   }
-  return ordered
-    .filter((relay) => !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay))
-    .slice(0, Math.max(1, Math.min(2, ordered.length)));
+  return fallback.slice(0, Math.max(1, Math.min(2, fallback.length || ordered.length)));
 }
 
 async function withBlindDmQuerySlot<T>(task: () => Promise<T>): Promise<T> {

@@ -175,13 +175,11 @@
           ["wss://nostr.wine", "wss://nos.lol"],
           ["wss://eden.nostr.land", "wss://relay.nostr.net"],
           ["wss://purplepag.es", "wss://relay.nostr.info"],
-          ["wss://nip17.com", "wss://relay.nostr.info"],
           ["wss://relay.layer.systems", "wss://relay.nostr.net"],
           ["wss://nostr.bond", "wss://nos.lol"],
           ["wss://auth.nostr1.com", "wss://relay.nostr.info"],
           ["wss://inbox.nostr.wine", "wss://relay.nostr.info"],
           ["wss://nostr-pub.wellorder.net", "wss://relay.nostr.net"],
-          ["wss://relay.0xchat.com", "wss://nos.lol"],
         ]);
         return Array.from(new Set(
           value
@@ -203,6 +201,8 @@
       const DEFAULT_WORKER_DM_RELAYS = [
         "wss://vm-1734.lnvps.cloud/",
         "wss://relay.nostr.net",
+        "wss://nip17.com",
+        "wss://relay.0xchat.com",
       ];
       const WORKER_DM_REJECTING_RELAYS = new Set([
         "wss://relay.nostr.info",
@@ -228,7 +228,7 @@
           .filter(Boolean)
           .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay))
           .filter((relay) => !WORKER_DM_DISCOURAGED_RELAYS.has(relay));
-        return relays.length > 0 ? relays : DEFAULT_WORKER_DM_RELAYS;
+        return Array.from(new Set([...relays, ...DEFAULT_WORKER_DM_RELAYS]));
       }
 
       function sanitizeWorkerDmRelays(workerDmRelays, workerRelays) {

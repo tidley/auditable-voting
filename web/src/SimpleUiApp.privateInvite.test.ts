@@ -3,6 +3,7 @@ import { nip19 } from "nostr-tools";
 import {
   selectPublicQuestionnaireAnnouncementIds,
   selectQuestionnaireVoterIdentity,
+  selectVoterMessageCoordinatorTargets,
 } from "./SimpleUiApp";
 import { QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND } from "./questionnaireNostr";
 
@@ -112,5 +113,17 @@ describe("SimpleUiApp private invite identity selection", () => {
     });
 
     expect(ids).toEqual(["q_first", "q_second"]);
+  });
+
+  it("scopes voter messages to the linked invite organiser", () => {
+    const linkedCoordinatorNpub = nip19.npubEncode("11".repeat(32));
+    const savedCoordinatorNpub = nip19.npubEncode("22".repeat(32));
+    const messageOnlyCoordinatorNpub = nip19.npubEncode("33".repeat(32));
+
+    expect(selectVoterMessageCoordinatorTargets({
+      configuredCoordinatorTargets: [savedCoordinatorNpub],
+      linkedCoordinatorNpub,
+      messageOnlyCoordinators: [messageOnlyCoordinatorNpub],
+    })).toEqual([linkedCoordinatorNpub]);
   });
 });

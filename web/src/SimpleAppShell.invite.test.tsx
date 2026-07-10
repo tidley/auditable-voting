@@ -214,7 +214,7 @@ describe("SimpleAppShell invite-link login", () => {
     window.history.pushState(
       null,
       "",
-      "/?role=voter&q=q_public_link&coordinator=npub1organiser&invited=npub1voter&invite_code=abc123&request_ballot=1",
+      "/?role=voter",
     );
     window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
@@ -320,6 +320,8 @@ describe("SimpleAppShell invite-link login", () => {
       expect(voterSections).toBeTruthy();
       expect(screen.queryByRole("tab", { name: "Join" })).toBeNull();
       expect(screen.getByRole("tab", { name: "Find organiser" })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Settings" })).toBeTruthy();
+      expect(screen.getByText("Identity")).toBeTruthy();
       expect(screen.getByText("vtest")).toBeTruthy();
       const howItWorksLink = screen.getByRole("menuitem", { name: "How it works" });
       expect(howItWorksLink.getAttribute("href")).toBe("project-explainer.html");
@@ -342,6 +344,24 @@ describe("SimpleAppShell invite-link login", () => {
     } finally {
       window.removeEventListener("auditable-voting:voter-login", handleLogin);
     }
+  });
+
+  it("hides setup and identity controls for public invite voters", async () => {
+    const user = userEvent.setup();
+    window.history.pushState(null, "", "/?role=voter&q=q_public_link");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+
+    expect(screen.getByTestId("simple-voter-app").textContent).toContain("vote");
+
+    await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
+
+    expect(screen.queryByRole("tab", { name: "Find organiser" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
+    expect(screen.queryByText("Identity")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Vote" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Messages" })).toBeTruthy();
   });
 
   it("keeps organiser identity QR in the top menu without duplicating sidebar navigation", async () => {

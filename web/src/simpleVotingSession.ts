@@ -20,6 +20,8 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://nos.lol",
   "wss://relay.nostr.info",
   "wss://relay.nos.social",
+  "wss://nostr.mom",
+  "wss://nostr.bitcoiner.social",
   "wss://relay.damus.io",
   "wss://relay.primal.net",
 ];

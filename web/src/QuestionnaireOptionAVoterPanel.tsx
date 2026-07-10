@@ -4260,7 +4260,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     { label: "Last local update", value: snapshot?.lastUpdatedAt ?? "Not recorded" },
     { label: "Current message", value: status ?? "No status message" },
   ];
-  const questionnaireHeadingText = questionnaireTitle.trim() || questionnaireDescription.trim() || "Questionnaire";
+  const questionnaireTitleText = questionnaireTitle.trim();
+  const questionnaireHeadingText = questionnaireTitleText && questionnaireTitleText !== "Questionnaire"
+    ? questionnaireTitleText
+    : currentQuestionnaireId || questionnaireDescription.trim() || "Questionnaire";
   const questionnaireDescriptionText = questionnaireDescription.trim();
   const showQuestionnaireDescription = Boolean(
     questionnaireDescriptionText && questionnaireDescriptionText !== questionnaireHeadingText,
@@ -4641,7 +4644,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               >
                 <span className='simple-questionnaire-stepper-copy'>
                   <strong>{showViewResultsFromQuestionNav ? "View results" : showSubmitFromQuestionNav ? submitInFlight ? "Submitting..." : "Submit" : "Next"}</strong>
-                  <small>{showViewResultsFromQuestionNav ? "Questionnaire results" : showSubmitFromQuestionNav ? questionNavSubmitStatus : nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
+                  {showViewResultsFromQuestionNav ? null : (
+                    <small>{showSubmitFromQuestionNav ? questionNavSubmitStatus : nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
+                  )}
                 </span>
               </UiButton>
             </div>
@@ -4726,7 +4731,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               <section className='simple-settings-card simple-submission-identity-card simple-vote-receipt-card' aria-label='Vote receipt details'>
                 <div className='simple-submission-identity-body simple-vote-receipt-body'>
             <div className='simple-vote-receipt-finder'>
-              <span>Anonymous voting identity</span>
+              <span>Lookup keys</span>
+              <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-identity'>
+                <strong>{submittedMarkerLabel}</strong>
+                {submittedMarkerNpub ? (
+                  <UiButton
+                    icon={isReceiptCopyActive("receipt-anonymous-identity") ? "check" : "copy"}
+                    iconOnly
+                    className='simple-vote-receipt-copy-button'
+                    onPress={() => void copyReceiptValue(submittedMarkerNpub, "receipt-anonymous-identity")}
+                    aria-label={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied anonymous voting identity" : "Copy anonymous voting identity"}
+                    title={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied" : "Copy anonymous voting identity"}
+                    data-copied={isReceiptCopyActive("receipt-anonymous-identity") ? "true" : undefined}
+                  />
+                ) : null}
+              </span>
               <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-words'>
                 <span className='simple-identity-words-badge'>{submittedMarkerWordsLabel}</span>
                 {submittedMarkerWords ? (
@@ -4756,25 +4775,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 <div>
                   <dt>Submitted</dt>
                   <dd>{submittedAtLabel || "Recorded locally"}</dd>
-                </div>
-                <div>
-                  <dt>Anonymous npub</dt>
-                  <dd>
-                    <span className='simple-vote-receipt-copy-line simple-vote-receipt-copy-line-identity'>
-                      <strong>{submittedMarkerLabel}</strong>
-                      {submittedMarkerNpub ? (
-                        <UiButton
-                          icon={isReceiptCopyActive("receipt-anonymous-identity") ? "check" : "copy"}
-                          iconOnly
-                          className='simple-vote-receipt-copy-button'
-                          onPress={() => void copyReceiptValue(submittedMarkerNpub, "receipt-anonymous-identity")}
-                          aria-label={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied anonymous voting identity" : "Copy anonymous voting identity"}
-                          title={isReceiptCopyActive("receipt-anonymous-identity") ? "Copied" : "Copy anonymous voting identity"}
-                          data-copied={isReceiptCopyActive("receipt-anonymous-identity") ? "true" : undefined}
-                        />
-                      ) : null}
-                    </span>
-                  </dd>
                 </div>
               </dl>
             </div>

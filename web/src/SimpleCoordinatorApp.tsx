@@ -1482,7 +1482,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const isMobileCoordinatorViewport = useCallback(() => (
-    typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches
+    typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(max-width: 900px)").matches
   ), []);
   const [newRoundMode, setNewRoundMode] = useState(false);
   const [draftQuestionnaireId, setDraftQuestionnaireId] = useState("");
@@ -1581,6 +1583,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      return;
+    }
+    if (typeof window.matchMedia !== "function") {
       return;
     }
     const mobileQuery = window.matchMedia("(max-width: 900px)");

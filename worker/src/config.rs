@@ -11,7 +11,12 @@ const DEFAULT_WORKER_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://relay.primal.net",
 ];
-const DEFAULT_WORKER_DM_RELAYS: &[&str] = &["wss://vm-1734.lnvps.cloud/", "wss://relay.nostr.net"];
+const DEFAULT_WORKER_DM_RELAYS: &[&str] = &[
+    "wss://vm-1734.lnvps.cloud/",
+    "wss://relay.nostr.net",
+    "wss://nip17.com",
+    "wss://relay.0xchat.com",
+];
 const DEFAULT_WORKER_BLOSSOM_RESULT_PACK_SERVERS: &[&str] = &[
     "https://blossom.nostr.build",
     "https://blossom.primal.net",

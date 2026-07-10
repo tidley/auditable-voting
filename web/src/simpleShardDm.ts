@@ -38,19 +38,24 @@ import {
 export const SIMPLE_DM_RELAYS = [
   'wss://vm-1734.lnvps.cloud/',
   'wss://relay.nostr.net',
+  'wss://nip17.com',
+  'wss://relay.0xchat.com',
 ];
 
+const SIMPLE_DM_AUTH_REQUIRED_READ_RELAYS = new Set([
+  'wss://nip17.com',
+]);
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
 const SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS = 3000;
 const SIMPLE_DM_ACK_BACKFILL_INTERVAL_MS = 2000;
 const SIMPLE_DM_WELCOME_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
 const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
-const SIMPLE_DM_READ_RELAYS_MAX = 5;
-const SIMPLE_DM_FOLLOW_READ_RELAYS_MAX = 5;
+const SIMPLE_DM_READ_RELAYS_MAX = 2;
+const SIMPLE_DM_FOLLOW_READ_RELAYS_MAX = 2;
 const SIMPLE_DM_FOLLOW_PUBLISH_RELAYS_MAX = 5;
-const SIMPLE_DM_TICKET_READ_RELAYS_MAX = 5;
-const SIMPLE_DM_ACK_READ_RELAYS_MAX = 5;
+const SIMPLE_DM_TICKET_READ_RELAYS_MAX = 2;
+const SIMPLE_DM_ACK_READ_RELAYS_MAX = 2;
 const SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX = 5;
 const SIMPLE_DM_ACK_PUBLISH_RELAYS_MAX = 5;
 
@@ -335,7 +340,8 @@ function buildDmRelays(relays?: string[]) {
 
 function selectDmReadRelays(relays: string[], maxRelays = SIMPLE_DM_READ_RELAYS_MAX) {
   const normalized = normalizeRelaysRust(relays);
-  return selectRelaysWithBackoff(normalized, maxRelays);
+  const readableRelays = normalized.filter((relay) => !SIMPLE_DM_AUTH_REQUIRED_READ_RELAYS.has(relay));
+  return selectRelaysWithBackoff(readableRelays.length > 0 ? readableRelays : normalized, maxRelays);
 }
 
 function buildDmPublishChannel(recipientNpub: string, senderNpub?: string) {

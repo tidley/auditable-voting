@@ -25,6 +25,9 @@ const KIND_NIP17_RELAY_LIST = 10050;
 const INVITE_PAYLOAD_TAG = "optiona_invite_payload";
 const OPTION_A_INVITE_DM_QUERY_MAX_CONCURRENCY = 2;
 const OPTION_A_INVITE_DM_RELAY_BACKOFF_MS = 60 * 1000;
+const OPTION_A_INVITE_DM_AUTH_REQUIRED_READ_RELAYS = new Set([
+  "wss://nip17.com",
+]);
 const OPTION_A_INVITE_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
 ]);
@@ -92,11 +95,13 @@ function applyInviteRelayBackoff(relays: string[], reason: string) {
 
 function filterInviteReadRelays(relays: string[]) {
   const now = Date.now();
-  const available = relays.filter((relay) => (optionAInviteDmRelayCooldownUntil.get(relay) ?? 0) <= now);
+  const readable = relays.filter((relay) => !OPTION_A_INVITE_DM_AUTH_REQUIRED_READ_RELAYS.has(relay));
+  const fallback = readable.length > 0 ? readable : relays;
+  const available = fallback.filter((relay) => (optionAInviteDmRelayCooldownUntil.get(relay) ?? 0) <= now);
   if (available.length > 0) {
     return available;
   }
-  return relays.slice(0, Math.max(1, Math.min(2, relays.length)));
+  return fallback.slice(0, Math.max(1, Math.min(2, fallback.length || relays.length)));
 }
 
 async function withInviteQuerySlot<T>(task: () => Promise<T>): Promise<T> {

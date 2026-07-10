@@ -60,11 +60,9 @@ const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 const PUBLIC_ARCHIVE_SEND_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_AUTH_KIND: u16 = 24_242;
 const BLOSSOM_RESULT_PACK_TARGET_UPLOADS: usize = 2;
-const BLOSSOM_RESULT_PACK_GZIP_CONTENT_TYPE: &str = "application/gzip";
-const BLOSSOM_RESULT_PACK_JSON_CONTENT_TYPE: &str = "application/json";
-const BLOSSOM_RESULT_PACK_TYPE: &str = "application/vnd.auditable-voting.result-pack+json";
-const BLOSSOM_RESULT_PACK_DIRECT_UPLOAD_ENCODING: &str = "gzip";
-const BLOSSOM_RESULT_PACK_WRAPPED_UPLOAD_ENCODING: &str = "json+base64url-gzip";
+const BLOSSOM_RESULT_PACK_CSV_CONTENT_TYPE: &str = "text/csv; charset=utf-8";
+const BLOSSOM_RESULT_PACK_TYPE: &str = "text/csv";
+const BLOSSOM_RESULT_PACK_UPLOAD_ENCODING: &str = "csv";
 const BLOSSOM_RESULT_PACK_UPLOAD_TIMEOUT_SECS: u64 = 12;
 const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
 const COMPRESSED_BUNDLE_MESSAGE_TYPE: &str = "optiona_compressed_bundle_dm";
@@ -81,21 +79,23 @@ const DISCOURAGED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://nostr.wine",
     "wss://eden.nostr.land",
     "wss://purplepag.es",
-    "wss://nip17.com",
     "wss://relay.layer.systems",
     "wss://nostr.bond",
     "wss://auth.nostr1.com",
     "wss://inbox.nostr.wine",
     "wss://nostr-pub.wellorder.net",
-    "wss://relay.0xchat.com",
 ];
 const PRIVATE_DM_REJECTING_RELAYS: &[&str] = &[
     // Public questionnaire relay. It currently rejects NIP-17 gift wraps with
     // "kind 1059 not permitted", so keep it out of worker private DM publish/read paths.
     "wss://relay.nostr.info",
 ];
-const PRIVATE_DM_FALLBACK_RELAYS: &[&str] =
-    &["wss://vm-1734.lnvps.cloud/", "wss://relay.nostr.net"];
+const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &[
+    "wss://vm-1734.lnvps.cloud/",
+    "wss://relay.nostr.net",
+    "wss://nip17.com",
+    "wss://relay.0xchat.com",
+];
 const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
 const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
 const PUBLIC_RESPONSE_CONCURRENCY: usize = 16;
@@ -1576,20 +1576,6 @@ struct BlossomResultPackReference {
     #[serde(skip_serializing_if = "Option::is_none")]
     server: Option<String>,
     mirrors: Vec<BlossomResultPackMirror>,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BlossomResultPackUploadEnvelope {
-    schema_version: u8,
-    event_type: &'static str,
-    #[serde(rename = "type")]
-    media_type: &'static str,
-    compression: &'static str,
-    sha256: String,
-    size: usize,
-    payload_encoding: &'static str,
-    payload: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -3254,23 +3240,9 @@ impl WorkerRuntime {
             anyhow::bail!("result pack has no responses");
         }
 
-        let pack = serde_json::json!({
-            "schemaVersion": 1,
-            "eventType": "questionnaire_result_pack",
-            "questionnaireId": election_id,
-            "createdAt": Timestamp::now().as_secs() as i64,
-            "summary": summary,
-            "responses": responses,
-        });
-        let pack_json = serde_json::to_vec(&pack)?;
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder
-            .write_all(&pack_json)
-            .context("failed to gzip result pack")?;
-        let compressed = encoder
-            .finish()
-            .context("failed to finish result-pack gzip")?;
-        let sha256 = sha256_hex_bytes(&compressed);
+        let created_at = Timestamp::now().as_secs() as i64;
+        let csv = build_result_pack_csv(election_id, created_at, summary, responses)?;
+        let sha256 = sha256_hex_bytes(csv.as_bytes());
         let keys = Keys::parse(&self.config.worker_nsec)
             .context("WORKER_NSEC is not valid for Blossom upload auth")?;
         let http = reqwest::Client::builder()
@@ -3278,75 +3250,32 @@ impl WorkerRuntime {
             .connect_timeout(Duration::from_secs(BLOSSOM_RESULT_PACK_UPLOAD_TIMEOUT_SECS))
             .build()
             .context("failed to build Blossom upload client")?;
-        let mut gzip_uploads = Vec::new();
-        let mut gzip_errors = Vec::new();
+        let mut uploads = Vec::new();
+        let mut errors = Vec::new();
 
         for server in &self.config.blossom_result_pack_servers {
             match self
-                .upload_result_pack_to_server(&http, &keys, server, &compressed, &sha256)
+                .upload_result_pack_to_server(&http, &keys, server, csv.as_bytes(), &sha256)
                 .await
             {
                 Ok(upload) => {
-                    gzip_uploads.push(upload);
-                    if gzip_uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
+                    uploads.push(upload);
+                    if uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
                         break;
                     }
                 }
-                Err(error) => gzip_errors.push(format!("{server}: {error}")),
+                Err(error) => errors.push(format!("{server}: {error}")),
             }
         }
 
-        if gzip_uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
-            return build_mirrored_blossom_result_pack_reference(gzip_uploads);
-        }
-
-        let envelope = BlossomResultPackUploadEnvelope {
-            schema_version: 1,
-            event_type: "questionnaire_result_pack_blob",
-            media_type: BLOSSOM_RESULT_PACK_TYPE,
-            compression: "gzip",
-            sha256: sha256.clone(),
-            size: compressed.len(),
-            payload_encoding: "base64url",
-            payload: URL_SAFE_NO_PAD.encode(&compressed),
-        };
-        let envelope_bytes =
-            serde_json::to_vec(&envelope).context("failed to encode result-pack wrapper")?;
-        let envelope_sha256 = sha256_hex_bytes(&envelope_bytes);
-        let mut wrapped_uploads = Vec::new();
-        let mut wrapped_errors = Vec::new();
-        for server in &self.config.blossom_result_pack_servers {
-            match self
-                .upload_wrapped_result_pack_to_server(
-                    &http,
-                    &keys,
-                    server,
-                    &envelope_bytes,
-                    &envelope_sha256,
-                    &sha256,
-                    compressed.len(),
-                )
-                .await
-            {
-                Ok(upload) => {
-                    wrapped_uploads.push(upload);
-                    if wrapped_uploads.len() >= BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
-                        break;
-                    }
-                }
-                Err(error) => wrapped_errors.push(format!("{server}: {error}")),
-            }
-        }
-
-        if wrapped_uploads.len() < BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
+        if uploads.len() < BLOSSOM_RESULT_PACK_TARGET_UPLOADS {
             anyhow::bail!(
-                "Blossom result-pack upload failed to reach two mirrors: gzip: {}; JSON wrapper: {}",
-                gzip_errors.join("; "),
-                wrapped_errors.join("; ")
+                "Blossom CSV result-pack upload failed to reach two mirrors: {}",
+                errors.join("; ")
             );
         }
 
-        build_mirrored_blossom_result_pack_reference(wrapped_uploads)
+        build_mirrored_blossom_result_pack_reference(uploads)
     }
 
     async fn upload_result_pack_to_server(
@@ -3354,7 +3283,7 @@ impl WorkerRuntime {
         http: &reqwest::Client,
         keys: &Keys,
         server: &str,
-        compressed: &[u8],
+        body: &[u8],
         sha256: &str,
     ) -> Result<BlossomResultPackReference> {
         let descriptor = self
@@ -3362,9 +3291,9 @@ impl WorkerRuntime {
                 http,
                 keys,
                 server,
-                compressed,
+                body,
                 sha256,
-                BLOSSOM_RESULT_PACK_GZIP_CONTENT_TYPE,
+                BLOSSOM_RESULT_PACK_CSV_CONTENT_TYPE,
             )
             .await?;
         Ok(BlossomResultPackReference {
@@ -3372,45 +3301,10 @@ impl WorkerRuntime {
             sha256: sha256.to_string(),
             size: descriptor.size,
             media_type: BLOSSOM_RESULT_PACK_TYPE.to_string(),
-            compression: "gzip".to_string(),
-            upload_encoding: Some(BLOSSOM_RESULT_PACK_DIRECT_UPLOAD_ENCODING.to_string()),
+            compression: "none".to_string(),
+            upload_encoding: Some(BLOSSOM_RESULT_PACK_UPLOAD_ENCODING.to_string()),
             payload_sha256: None,
             payload_size: None,
-            uploaded_at: Timestamp::now().as_secs() as i64,
-            server: Some(server.trim_end_matches('/').to_string()),
-            mirrors: Vec::new(),
-        })
-    }
-
-    async fn upload_wrapped_result_pack_to_server(
-        &self,
-        http: &reqwest::Client,
-        keys: &Keys,
-        server: &str,
-        envelope_bytes: &[u8],
-        envelope_sha256: &str,
-        payload_sha256: &str,
-        payload_size: usize,
-    ) -> Result<BlossomResultPackReference> {
-        let descriptor = self
-            .upload_result_pack_body_to_server(
-                http,
-                keys,
-                server,
-                envelope_bytes,
-                envelope_sha256,
-                BLOSSOM_RESULT_PACK_JSON_CONTENT_TYPE,
-            )
-            .await?;
-        Ok(BlossomResultPackReference {
-            url: descriptor.url,
-            sha256: envelope_sha256.to_string(),
-            size: descriptor.size,
-            media_type: BLOSSOM_RESULT_PACK_TYPE.to_string(),
-            compression: "gzip".to_string(),
-            upload_encoding: Some(BLOSSOM_RESULT_PACK_WRAPPED_UPLOAD_ENCODING.to_string()),
-            payload_sha256: Some(payload_sha256.to_string()),
-            payload_size: Some(payload_size),
             uploaded_at: Timestamp::now().as_secs() as i64,
             server: Some(server.trim_end_matches('/').to_string()),
             mirrors: Vec::new(),
@@ -4030,6 +3924,80 @@ fn result_summary_tags(
         }
     }
     tags
+}
+
+fn build_result_pack_csv(
+    election_id: &str,
+    created_at: i64,
+    summary: &serde_json::Value,
+    responses: &[QuestionnairePublishedResponseRef],
+) -> Result<String> {
+    let headers = [
+        "questionnaire_id",
+        "result_created_at",
+        "coordinator_pubkey",
+        "accepted_response_count",
+        "rejected_response_count",
+        "accepted_nullifier_count",
+        "response_id",
+        "submittor_pubkey",
+        "submitted_at",
+        "accepted",
+        "rejection_reason",
+        "answers_json",
+    ];
+    let mut csv = headers.join(",");
+    csv.push_str("\r\n");
+    for response in responses {
+        let answers_json = serde_json::to_string(&response.answers)
+            .context("failed to encode result-pack response answers")?;
+        let row = [
+            election_id.to_string(),
+            created_at.to_string(),
+            summary
+                .get("coordinatorPubkey")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            summary
+                .get("acceptedResponseCount")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default()
+                .to_string(),
+            summary
+                .get("rejectedResponseCount")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default()
+                .to_string(),
+            summary
+                .get("acceptedNullifierCount")
+                .and_then(|value| value.as_u64())
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            response.response_id.clone(),
+            response.author_pubkey.clone(),
+            response.submitted_at.to_string(),
+            response.accepted.to_string(),
+            response.rejection_reason.clone().unwrap_or_default(),
+            answers_json,
+        ];
+        csv.push_str(
+            &row.iter()
+                .map(|value| csv_cell(value))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        csv.push_str("\r\n");
+    }
+    Ok(csv)
+}
+
+fn csv_cell(value: &str) -> String {
+    if value.chars().any(|ch| matches!(ch, ',' | '"' | '\r' | '\n')) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }
 
 fn submission_decision_tags(
@@ -6404,8 +6372,8 @@ mod tests {
             sha256: "a".repeat(64),
             size: 123,
             media_type: BLOSSOM_RESULT_PACK_TYPE.to_string(),
-            compression: "gzip".to_string(),
-            upload_encoding: Some(BLOSSOM_RESULT_PACK_DIRECT_UPLOAD_ENCODING.to_string()),
+            compression: "none".to_string(),
+            upload_encoding: Some(BLOSSOM_RESULT_PACK_UPLOAD_ENCODING.to_string()),
             payload_sha256: None,
             payload_size: None,
             uploaded_at: 1,

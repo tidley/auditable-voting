@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gzipSync, strToU8 } from "fflate";
-import { fetchQuestionnaireResultPack } from "./questionnaireResultPack";
+import { buildQuestionnaireResultPackCsv, fetchQuestionnaireResultPack } from "./questionnaireResultPack";
 import type { QuestionnaireResultPackReference } from "./questionnaireProtocol";
 
 afterEach(() => {
@@ -9,6 +9,81 @@ afterEach(() => {
 });
 
 describe("questionnaire result packs", () => {
+  it("reads Blossom CSV result packs with audit columns", async () => {
+    const pack = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_result_pack" as const,
+      questionnaireId: "q_csv",
+      createdAt: 1_777_000_000,
+      summary: {
+        schemaVersion: 1 as const,
+        eventType: "questionnaire_result_summary" as const,
+        questionnaireId: "q_csv",
+        createdAt: 1_777_000_000,
+        coordinatorPubkey: "npub1organiser",
+        acceptedResponseCount: 1,
+        rejectedResponseCount: 1,
+        acceptedNullifierCount: 1,
+        questionSummaries: [],
+      },
+      responses: [{
+        responseId: "submission_1",
+        authorPubkey: "npub1submitter",
+        submittedAt: 1_777_000_001,
+        accepted: true,
+        tokenNullifier: "nullifier_1",
+        tokenProof: {
+          tokenCommitment: "commitment_1",
+          questionnaireId: "q_csv",
+          signature: "blind_signature_1",
+        },
+        answers: [{ questionId: "q1", value: "Yes, with comma" }],
+      }, {
+        responseId: "submission_2",
+        authorPubkey: "npub1submitter2",
+        submittedAt: 1_777_000_002,
+        accepted: false,
+        rejectionReason: "duplicate_nullifier",
+        answers: [],
+      }],
+    };
+    const bytes = strToU8(buildQuestionnaireResultPackCsv(pack));
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const csv = new TextDecoder().decode(bytes);
+    expect(csv.split("\r\n")[0]).toBe(
+      "questionnaire_id,result_created_at,coordinator_pubkey,accepted_response_count,rejected_response_count,accepted_nullifier_count,response_id,submittor_pubkey,submitted_at,accepted,rejection_reason,token_nullifier,token_nullifiers_json,token_commitment,token_signature,token_proofs_json,answers_json",
+    );
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const reference: QuestionnaireResultPackReference = {
+      url: "https://blossom.invalid/result.csv",
+      sha256,
+      size: bytes.length,
+      type: "text/csv",
+      compression: "none",
+      uploadEncoding: "csv",
+      uploadedAt: 1_777_000_003,
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(bytes)));
+
+    await expect(fetchQuestionnaireResultPack(reference)).resolves.toMatchObject({
+      questionnaireId: "q_csv",
+      summary: { coordinatorPubkey: "npub1organiser" },
+      responses: [
+        {
+          responseId: "submission_1",
+          authorPubkey: "npub1submitter",
+          accepted: true,
+          tokenNullifier: "nullifier_1",
+          tokenProof: {
+            tokenCommitment: "commitment_1",
+            signature: "blind_signature_1",
+          },
+        },
+        { responseId: "submission_2", rejectionReason: "duplicate_nullifier" },
+      ],
+    });
+  });
+
   it("verifies Blossom bytes before parsing and falls back to a valid mirror", async () => {
     const pack = {
       schemaVersion: 1 as const,
