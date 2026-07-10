@@ -4274,6 +4274,10 @@ code {
   background: rgba(8, 130, 127, 0.13);
 }
 
+.simple-delegate-setup-section {
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
 .simple-delegate-section-head {
   display: flex;
   align-items: flex-start;
@@ -4321,6 +4325,14 @@ code {
   .simple-delegate-launch-controls {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .simple-delegate-confirm-panel {
+    display: grid;
+  }
+
+  .simple-delegate-confirm-button {
+    width: 100%;
+  }
 }
 
 .simple-delegate-title {
@@ -4328,58 +4340,6 @@ code {
   color: var(--simple-text);
   font-size: 1.18rem;
   font-weight: 700;
-}
-
-.simple-delegate-download-grid {
-  display: grid;
-  border: 1px solid var(--simple-border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.simple-delegate-download-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 12px;
-  border-top: 1px solid var(--simple-border);
-  background: var(--simple-surface);
-}
-
-.simple-delegate-download-row:first-child {
-  border-top: 0;
-}
-
-.simple-delegate-download-label {
-  color: var(--simple-soft);
-  font-weight: 600;
-  font-size: 0.92rem;
-}
-
-.simple-delegate-link {
-  color: var(--simple-teal);
-  text-decoration: none;
-  font-size: 0.84rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-
-.simple-delegate-link:hover {
-  color: var(--simple-text);
-}
-
-.simple-delegate-button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-}
-
-.simple-delegate-link-readme {
-  margin-top: 2px;
 }
 
 .simple-delegate-command {
@@ -4390,6 +4350,31 @@ code {
   line-height: 1.45;
   overflow-x: auto;
   word-break: break-all;
+}
+
+.simple-delegate-confirm-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(45, 212, 191, 0.26);
+}
+
+.simple-delegate-confirm-panel .simple-voter-note {
+  margin: 4px 0 0;
+}
+
+.simple-delegate-confirm-title {
+  margin: 0;
+  color: var(--simple-text);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.simple-delegate-confirm-button {
+  min-height: 46px;
+  font-size: 0.96rem;
 }
 
 .simple-delegate-warning-note {

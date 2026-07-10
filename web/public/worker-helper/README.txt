@@ -24,14 +24,14 @@ Usage (Linux x86_64):
 
    WORKER_POLL_SECONDS controls how quickly the proxy retries stalled subscriptions and publishes fresh state after submission events.
 
-Organiser Build page launcher downloads:
-- The Autoconfigured action on each platform row now saves a single launcher script.
-- That launcher script includes the current organiser npub, the effective relay list, and the generated audit proxy nsec when present.
-- It also starts the audit proxy with `RUST_LOG=info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info` so blind-request processing shows up in the helper logs by default.
+Organiser Audit proxy quick start:
+- The proxy page generates a fresh audit proxy account when opened.
+- Copy the Quick start command for your platform and run it on the proxy machine.
+- That command includes the current organiser npub, the effective relay list, and the generated audit proxy nsec.
+- It starts the audit proxy with `RUST_LOG=info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info` so blind-request processing shows up in the helper logs by default.
 - `.worker-state` is used by default so the proxy can keep operating across sessions; delete it to reset local state for that proxy identity.
-- On first run it downloads the matching raw binary asset automatically, then starts the audit proxy.
-- Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own audit proxy secret before running it.
-- The Build page `Helper download and launch command` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the audit proxy manually.
+- On each run it downloads the matching raw binary asset, checks the version, then starts the audit proxy.
+- The organiser page confirms configuration automatically when the proxy heartbeat appears; use Confirm configuration if the proxy is already running.
 
 Other platforms:
 - Linux arm64, Linux armv7, Windows x64, and macOS Apple Silicon release jobs are temporarily disabled to keep release turnaround short. The targets remain documented in the workflow and can be re-enabled easily.

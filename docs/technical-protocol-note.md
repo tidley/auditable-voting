@@ -60,8 +60,8 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 1. After publishing, click **Set up audit proxy** if this questionnaire should keep processing while the organiser browser is offline.
 2. The audit proxy section opens and generates a proxy account.
 3. Copy the **Quick start command** and run it on the machine that should host the proxy.
-4. Use **Audit proxy details** or **Helper download and launch command** if you need the helper download, checksum, or a direct launch command.
-5. Wait for a heartbeat in **Audit proxy status** before relying on the proxy for issuance or verification.
+4. Configuration is confirmed automatically when a fresh proxy heartbeat appears; use **Confirm configuration** if the proxy is already running or auto-confirm has not fired.
+5. Wait for **Audit proxy status** to show the active proxy before relying on it for issuance or verification.
 
 ### 3. Organiser invites voters
 

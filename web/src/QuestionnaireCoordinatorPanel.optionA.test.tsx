@@ -284,7 +284,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect((document.querySelector("#delegated-worker-relays") as HTMLTextAreaElement | null)?.value).toContain("wss://relay.nostr.net");
   });
 
-  it("does not replace a stored proxy npub just because the setup page is opened", async () => {
+  it("refreshes a stored proxy account when the setup page is opened", async () => {
     const staleWorkerNpub = nip19.npubEncode("2".repeat(64));
     window.localStorage.setItem(
       buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
@@ -308,17 +308,19 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
 
     const workerNpubInput = await screen.findByLabelText("Audit proxy npub") as HTMLInputElement;
+    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
     await waitFor(() => {
-      expect(workerNpubInput.value).toBe(staleWorkerNpub);
+      expect(workerNpubInput.value).toMatch(/^npub1/);
+      expect(workerNpubInput.value).not.toBe(staleWorkerNpub);
+      expect(workerNsecInput.value).toMatch(/^nsec1/);
     });
-    expect(screen.queryByLabelText("Generated audit proxy nsec (store securely)")).toBeNull();
 
     const quickStart = screen.getByLabelText("Quick start command") as HTMLTextAreaElement;
-    expect(quickStart.value).toContain("WORKER_NSEC=nsec1...");
-    expect(quickStart.value).toContain("WORKER_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net");
+    expect(quickStart.value).toContain(workerNsecInput.value);
+    expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net');
   });
 
-  it("keeps a manually generated proxy account when the setup page is reopened", async () => {
+  it("refreshes a manually generated proxy account when the setup page is reopened", async () => {
     render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
 
     fireEvent.click(screen.getByRole("button", { name: "Generate new account" }));
@@ -339,8 +341,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
 
     const restoredWorkerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
-    expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(generatedWorkerNpub);
-    expect(restoredWorkerNsecInput.value).toBe(generatedWorkerNsec);
+    await waitFor(() => {
+      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toMatch(/^npub1/);
+      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).not.toBe(generatedWorkerNpub);
+      expect(restoredWorkerNsecInput.value).toMatch(/^nsec1/);
+      expect(restoredWorkerNsecInput.value).not.toBe(generatedWorkerNsec);
+    });
   });
 
   it("shows separate public and private DM relay lists in the worker quick start command", async () => {
@@ -358,9 +364,11 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
 
     const quickStart = await screen.findByLabelText("Quick start command") as HTMLTextAreaElement;
-    expect(quickStart.value).toContain("WORKER_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net");
-    expect(quickStart.value).toContain("WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com");
-    expect(quickStart.value).not.toContain("WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol");
+    expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net"');
+    expect(quickStart.value).toContain('WORKER_DM_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com"');
+    expect(quickStart.value).not.toContain('WORKER_DM_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol');
+    expect(screen.queryByText("Audit proxy downloads")).toBeNull();
+    expect(screen.queryByLabelText("Direct command-line launch")).toBeNull();
   });
 
   it("shows locally known organiser questionnaires in the live status selector", async () => {

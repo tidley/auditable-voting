@@ -54,7 +54,7 @@ The archive extracts a platform-specific executable with the same stem as the as
 
 - Linux x64: `./auditable-voting-worker-linux-x64`
 
-The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective public/delegation relay list, private-DM relay list, and generated audit proxy `nsec` when present. Those launcher scripts and direct command-line snippets default helper-side logging to scoped proxy debug logs, set `WORKER_POLL_SECONDS=5` for responsive ballot issuance, default private DMs to `vm-1734.lnvps.cloud` plus `relay.nostr.net`, keep public-only/rate-limited relays out of `WORKER_DM_RELAYS`, and keep dependency relay-frame logs at `info` so encrypted NIP-17 payloads are not printed. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
+The organiser Audit proxy page shows one quick start command. It downloads the correct binary, fills in the current coordinator `npub`, effective public/delegation relay list, private-DM relay list, and generated audit proxy `nsec`, defaults helper-side logging to scoped proxy debug logs, sets `WORKER_POLL_SECONDS=5` for responsive ballot issuance, keeps public-only/rate-limited relays out of `WORKER_DM_RELAYS`, and keeps dependency relay-frame logs at `info` so encrypted NIP-17 payloads are not printed. The organiser page confirms configuration automatically when the proxy heartbeat appears, with a manual **Confirm configuration** fallback.
 
 ## Current responsibilities
 

@@ -855,21 +855,6 @@ function downloadJsonFile(filename: string, payload: unknown) {
   window.URL.revokeObjectURL(url);
 }
 
-function downloadTextFile(filename: string, contents: string, type = "text/plain;charset=utf-8") {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const blob = new Blob([contents], { type });
-  const url = window.URL.createObjectURL(blob);
-  const anchor = window.document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  window.document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.URL.revokeObjectURL(url);
-}
-
 function escapeForDoubleQuotedBash(value: string) {
   return value
     .replace(/\\/g, "\\\\")
@@ -885,10 +870,8 @@ function escapeForPowerShellSingleQuotedString(value: string) {
 type WorkerLauncherTarget = {
   assetFilename: string;
   assetUrl: string;
-  checksumUrl: string;
   binaryFilename: string;
   legacyBinaryFilename?: string;
-  launcherFilename: string;
   shell: "bash" | "powershell";
 };
 
@@ -906,161 +889,6 @@ const WORKER_DEFAULT_POLL_SECONDS = "5";
 const WORKER_MINIMUM_VERSION = "0.1.36";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
-
-function buildWorkerLauncherContents(input: {
-  target: WorkerLauncherTarget;
-  coordinatorNpub: string;
-  workerNsec: string;
-  workerNpub: string;
-  workerRelays: string;
-}) {
-  const coordinatorNpub = input.coordinatorNpub.trim() || "npub1...";
-  const workerNsec = input.workerNsec.trim() || "nsec1...";
-  const workerNpub = input.workerNpub.trim();
-  const workerRelays = sanitizeWorkerRelays(input.workerRelays).join(",");
-  const workerDmRelays = deriveWorkerDmRelays(input.workerRelays).join(",");
-
-  if (input.target.shell === "powershell") {
-    const coordinator = escapeForPowerShellSingleQuotedString(coordinatorNpub);
-    const nsec = escapeForPowerShellSingleQuotedString(workerNsec);
-    const npubLine = workerNpub
-      ? `Write-Host 'Expected audit proxy npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n`
-      : "";
-    const relays = escapeForPowerShellSingleQuotedString(workerRelays);
-    const dmRelays = escapeForPowerShellSingleQuotedString(workerDmRelays);
-    const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim();
-    return [
-      "$ErrorActionPreference = 'Stop'",
-      "",
-      "# Generated from the organiser Build page.",
-      "# Treat this file as sensitive if WORKER_NSEC is populated with a real secret.",
-      npubLine.trimEnd(),
-      "$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path",
-      `$AssetUrl = '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}'`,
-      `$ArchivePath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
-      `$BinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(input.target.binaryFilename)}'`,
-      legacyBinaryFilename
-        ? `$LegacyBinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}'`
-        : "$LegacyBinaryPath = $null",
-      "",
-      "Write-Host \"Refreshing audit proxy binary...\"",
-      "Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
-      "Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
-      "",
-      `if (-not $env:RUST_LOG) { $env:RUST_LOG = '${WORKER_DEFAULT_RUST_LOG}' }`,
-      `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsec}' }`,
-      `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${coordinator}' }`,
-      `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${relays}' }`,
-      `if (-not $env:WORKER_DM_RELAYS) { $env:WORKER_DM_RELAYS = '${dmRelays}' }`,
-      `if (-not $env:WORKER_POLL_SECONDS) { $env:WORKER_POLL_SECONDS = '${WORKER_DEFAULT_POLL_SECONDS}' }`,
-      "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
-      "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
-      "",
-      "if (Test-Path $BinaryPath) {",
-      "  $ExecutablePath = $BinaryPath",
-      "} elseif ($LegacyBinaryPath -and (Test-Path $LegacyBinaryPath)) {",
-      "  $ExecutablePath = $LegacyBinaryPath",
-      "} else {",
-      "  throw 'Audit proxy executable not found after extraction.'",
-      "}",
-      "",
-      `$RequiredVersion = [version]'${WORKER_MINIMUM_VERSION}'`,
-      "$VersionOutput = try { & $ExecutablePath --version } catch { $null }",
-      "$ParsedVersion = ($VersionOutput -split '\\s+')[1]",
-      "if (-not $ParsedVersion) { throw 'Unable to determine audit proxy version.' }",
-      "if ([version]$ParsedVersion -lt $RequiredVersion) {",
-      `  throw \"Audit proxy version $ParsedVersion is below minimum $RequiredVersion. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing.\"`,
-      "}",
-      "",
-      'Write-Host "Audit proxy version: $ParsedVersion"',
-      "Write-Host \"Starting audit proxy...\"",
-      "& $ExecutablePath",
-      "",
-    ].filter(Boolean).join("\n");
-  }
-
-  const coordinator = escapeForDoubleQuotedBash(coordinatorNpub);
-  const nsec = escapeForDoubleQuotedBash(workerNsec);
-  const relays = escapeForDoubleQuotedBash(workerRelays);
-  const dmRelays = escapeForDoubleQuotedBash(workerDmRelays);
-  const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim() ?? "";
-  const expectedNpubComment = workerNpub
-    ? `# Expected audit proxy npub: ${escapeForDoubleQuotedBash(workerNpub)}\n`
-    : "";
-  return [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    "",
-    "# Generated from the organiser Build page.",
-    "# Treat this file as sensitive if WORKER_NSEC is populated with a real secret.",
-    expectedNpubComment.trimEnd(),
-    'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-    `ASSET_URL="${escapeForDoubleQuotedBash(input.target.assetUrl)}"`,
-    `ASSET_NAME="${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
-    `BINARY_NAME="${escapeForDoubleQuotedBash(input.target.binaryFilename)}"`,
-    `LEGACY_BINARY_NAME="${escapeForDoubleQuotedBash(legacyBinaryFilename)}"`,
-    "",
-    "download_asset() {",
-    "  if command -v curl >/dev/null 2>&1; then",
-    '    curl -L --fail "$ASSET_URL" -o "$SCRIPT_DIR/$ASSET_NAME"',
-    "    return",
-    "  fi",
-    "  if command -v wget >/dev/null 2>&1; then",
-    '    wget -O "$SCRIPT_DIR/$ASSET_NAME" "$ASSET_URL"',
-    "    return",
-    "  fi",
-    '  echo "Need curl or wget to download $ASSET_NAME" >&2',
-    "  exit 1",
-    "}",
-    "",
-    'echo "Refreshing audit proxy binary..."',
-    "  download_asset",
-    '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
-    '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
-    '  if [ -n "$LEGACY_BINARY_NAME" ]; then',
-    '    chmod +x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" || true',
-    "  fi",
-    "",
-    `export RUST_LOG="\${RUST_LOG:-${WORKER_DEFAULT_RUST_LOG}}"`,
-    `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
-    `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${coordinator}}"`,
-    `export WORKER_RELAYS="\${WORKER_RELAYS:-${relays}}"`,
-    `export WORKER_DM_RELAYS="\${WORKER_DM_RELAYS:-${dmRelays}}"`,
-    `export WORKER_POLL_SECONDS="\${WORKER_POLL_SECONDS:-${WORKER_DEFAULT_POLL_SECONDS}}"`,
-    'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
-    'mkdir -p "$WORKER_STATE_DIR"',
-    "",
-    'if [ -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
-    '  EXECUTABLE_PATH="$SCRIPT_DIR/$BINARY_NAME"',
-    'elif [ -n "$LEGACY_BINARY_NAME" ] && [ -x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" ]; then',
-    '  EXECUTABLE_PATH="$SCRIPT_DIR/$LEGACY_BINARY_NAME"',
-    "else",
-    '  echo "Audit proxy executable not found after extraction." >&2',
-    "  exit 1",
-    "fi",
-    "",
-    `WORKER_MINIMUM_VERSION="${WORKER_MINIMUM_VERSION}"`,
-    'WORKER_VERSION="$("$EXECUTABLE_PATH" --version | awk \'{print $2}\')"',
-    "if [ -z \"$WORKER_VERSION\" ]; then",
-    '  echo "Unable to determine audit proxy version." >&2',
-    "  exit 1",
-    "fi",
-    "if ! echo \"$WORKER_VERSION\" | grep -Eq \"^[0-9]+\\.[0-9]+\\.[0-9]+$\"; then",
-    '  echo "Unexpected audit proxy version format: $WORKER_VERSION" >&2',
-    "  exit 1",
-    "fi",
-    'WORKER_VERSION_VALUE="$(echo "$WORKER_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
-    'WORKER_MINIMUM_VERSION_VALUE="$(echo "$WORKER_MINIMUM_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
-    "if [ \"$WORKER_VERSION_VALUE\" -lt \"$WORKER_MINIMUM_VERSION_VALUE\" ]; then",
-    `  echo "Audit proxy version $WORKER_VERSION is below minimum $WORKER_MINIMUM_VERSION. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing." >&2`,
-    "  exit 1",
-    "fi",
-    'echo "Audit proxy version: $WORKER_VERSION"',
-    'echo "Starting audit proxy..."',
-    'exec "$EXECUTABLE_PATH"',
-    "",
-  ].filter(Boolean).join("\n");
-}
 
 function buildWorkerDirectCommand(input: {
   target: WorkerLauncherTarget;
@@ -1173,27 +1001,6 @@ function buildWorkerDirectCommand(input: {
     "}",
     "start_auditable_voting_proxy",
   ].join("\n");
-}
-
-function buildAutoconfiguredWorkerLauncherHref(input: {
-  baseUrl: string;
-  targetKey: WorkerLauncherTargetKey;
-  coordinatorNpub: string;
-  workerNpub?: string;
-  workerRelays: string;
-}) {
-  const params = new URLSearchParams({
-    target: input.targetKey,
-    coordinator_npub: input.coordinatorNpub.trim() || "npub1...",
-    worker_relays: sanitizeWorkerRelays(input.workerRelays).join(","),
-    worker_dm_relays: deriveWorkerDmRelays(input.workerRelays).join(","),
-    rust_log: WORKER_DEFAULT_RUST_LOG,
-    worker_poll_seconds: WORKER_DEFAULT_POLL_SECONDS,
-  });
-  if (input.workerNpub?.trim()) {
-    params.set("worker_npub", input.workerNpub.trim());
-  }
-  return `${input.baseUrl}?${params.toString()}`;
 }
 
 function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content" | "kind"> & { tags?: string[][] }): string | null {
@@ -3126,138 +2933,57 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   }, [activeWorkerDelegation, coordinatorNpub, lastWorkerRevocationState, selectedWorkerStatus]);
   const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
   const workerHelperDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-x64.tar.gz`;
-  const workerHelperChecksumUrl = `${workerHelperDownloadUrl}.sha256`;
-  const workerHelperReadmeUrl = useMemo(() => {
-    const basePath = import.meta.env.BASE_URL || "/";
-    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
-    return `${prefix}worker-helper/README.txt`;
-  }, []);
-  const workerAutoconfiguredLauncherPageUrl = useMemo(() => {
-    const basePath = import.meta.env.BASE_URL || "/";
-    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
-    return `${prefix}worker-helper/autoconfigured.html`;
-  }, []);
   const workerLinuxArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-arm64.tar.gz`;
-  const workerLinuxArm64ChecksumUrl = `${workerLinuxArm64DownloadUrl}.sha256`;
   const workerLinuxArmv7DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-armv7.tar.gz`;
-  const workerLinuxArmv7ChecksumUrl = `${workerLinuxArmv7DownloadUrl}.sha256`;
   const workerWindowsDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-windows-x64.zip`;
-  const workerWindowsChecksumUrl = `${workerWindowsDownloadUrl}.sha256`;
   const workerMacOsArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-macos-arm64.tar.gz`;
-  const workerMacOsArm64ChecksumUrl = `${workerMacOsArm64DownloadUrl}.sha256`;
   const helperRelayList = useMemo(
     () => parseDelegatedControlRelays(delegatedWorkerControlRelays).join(","),
     [delegatedWorkerControlRelays],
-  );
-  const helperDmRelayList = useMemo(
-    () => deriveWorkerDmRelays(helperRelayList).join(","),
-    [helperRelayList],
   );
   const workerLauncherTargets = useMemo<Record<string, WorkerLauncherTarget>>(() => ({
     linuxX64: {
       assetFilename: "auditable-voting-worker-linux-x64.tar.gz",
       assetUrl: workerHelperDownloadUrl,
-      checksumUrl: workerHelperChecksumUrl,
       binaryFilename: "auditable-voting-worker-linux-x64",
       legacyBinaryFilename: "auditable-voting-worker",
-      launcherFilename: "start-auditable-voting-worker-linux-x64.sh",
       shell: "bash",
     },
     linuxArm64: {
       assetFilename: "auditable-voting-worker-linux-arm64.tar.gz",
       assetUrl: workerLinuxArm64DownloadUrl,
-      checksumUrl: workerLinuxArm64ChecksumUrl,
       binaryFilename: "auditable-voting-worker-linux-arm64",
       legacyBinaryFilename: "auditable-voting-worker",
-      launcherFilename: "start-auditable-voting-worker-linux-arm64.sh",
       shell: "bash",
     },
     linuxArmv7: {
       assetFilename: "auditable-voting-worker-linux-armv7.tar.gz",
       assetUrl: workerLinuxArmv7DownloadUrl,
-      checksumUrl: workerLinuxArmv7ChecksumUrl,
       binaryFilename: "auditable-voting-worker-linux-armv7",
       legacyBinaryFilename: "auditable-voting-worker",
-      launcherFilename: "start-auditable-voting-worker-linux-armv7.sh",
       shell: "bash",
     },
     windowsX64: {
       assetFilename: "auditable-voting-worker-windows-x64.zip",
       assetUrl: workerWindowsDownloadUrl,
-      checksumUrl: workerWindowsChecksumUrl,
       binaryFilename: "auditable-voting-worker-windows-x64.exe",
       legacyBinaryFilename: "auditable-voting-worker.exe",
-      launcherFilename: "start-auditable-voting-worker-windows-x64.ps1",
       shell: "powershell",
     },
     macosArm64: {
       assetFilename: "auditable-voting-worker-macos-arm64.tar.gz",
       assetUrl: workerMacOsArm64DownloadUrl,
-      checksumUrl: workerMacOsArm64ChecksumUrl,
       binaryFilename: "auditable-voting-worker-macos-arm64",
       legacyBinaryFilename: "auditable-voting-worker",
-      launcherFilename: "start-auditable-voting-worker-macos-arm64.sh",
       shell: "bash",
     },
   }), [
     workerHelperDownloadUrl,
-    workerHelperChecksumUrl,
     workerLinuxArm64DownloadUrl,
-    workerLinuxArm64ChecksumUrl,
     workerLinuxArmv7DownloadUrl,
-    workerLinuxArmv7ChecksumUrl,
     workerMacOsArm64DownloadUrl,
-    workerMacOsArm64ChecksumUrl,
     workerWindowsDownloadUrl,
-    workerWindowsChecksumUrl,
   ]);
-  const downloadConfiguredWorkerLauncher = useCallback((target: WorkerLauncherTarget) => {
-    const contents = buildWorkerLauncherContents({
-      target,
-      coordinatorNpub,
-      workerNsec: generatedWorkerNsec,
-      workerNpub: delegatedWorkerNpub,
-      workerRelays: helperRelayList,
-    });
-    downloadTextFile(target.launcherFilename, contents, "text/plain;charset=utf-8");
-  }, [coordinatorNpub, delegatedWorkerNpub, generatedWorkerNsec, helperRelayList]);
-  const autoconfiguredWorkerLauncherHrefs = useMemo<Record<WorkerLauncherTargetKey, string>>(() => ({
-    linuxX64: buildAutoconfiguredWorkerLauncherHref({
-      baseUrl: workerAutoconfiguredLauncherPageUrl,
-      targetKey: "linuxX64",
-      coordinatorNpub,
-      workerNpub: delegatedWorkerNpub,
-      workerRelays: helperRelayList,
-    }),
-    linuxArm64: buildAutoconfiguredWorkerLauncherHref({
-      baseUrl: workerAutoconfiguredLauncherPageUrl,
-      targetKey: "linuxArm64",
-      coordinatorNpub,
-      workerNpub: delegatedWorkerNpub,
-      workerRelays: helperRelayList,
-    }),
-    linuxArmv7: buildAutoconfiguredWorkerLauncherHref({
-      baseUrl: workerAutoconfiguredLauncherPageUrl,
-      targetKey: "linuxArmv7",
-      coordinatorNpub,
-      workerNpub: delegatedWorkerNpub,
-      workerRelays: helperRelayList,
-    }),
-    windowsX64: buildAutoconfiguredWorkerLauncherHref({
-      baseUrl: workerAutoconfiguredLauncherPageUrl,
-      targetKey: "windowsX64",
-      coordinatorNpub,
-      workerNpub: delegatedWorkerNpub,
-      workerRelays: helperRelayList,
-    }),
-    macosArm64: buildAutoconfiguredWorkerLauncherHref({
-      baseUrl: workerAutoconfiguredLauncherPageUrl,
-      targetKey: "macosArm64",
-      coordinatorNpub,
-      workerNpub: delegatedWorkerNpub,
-      workerRelays: helperRelayList,
-    }),
-  }), [coordinatorNpub, delegatedWorkerNpub, helperRelayList, workerAutoconfiguredLauncherPageUrl]);
   const selectedWorkerLauncherTarget = workerLauncherTargets[selectedWorkerDownloadTarget];
   const workerDirectCommand = useMemo(() => buildWorkerDirectCommand({
     target: selectedWorkerLauncherTarget,
@@ -3265,20 +2991,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     workerNsec: generatedWorkerNsec,
     workerRelays: helperRelayList,
   }), [coordinatorNpub, generatedWorkerNsec, helperRelayList, selectedWorkerLauncherTarget]);
-  const workerStartupCommand = useMemo(() => {
-    const coordinator = coordinatorNpub.trim() || "npub1...";
-    const workerNsec = generatedWorkerNsec.trim() || "nsec1...";
-    const lines = [
-      `RUST_LOG=${WORKER_DEFAULT_RUST_LOG} \\`,
-      `WORKER_NSEC=${workerNsec} \\`,
-      `  COORDINATOR_NPUB=${coordinator} \\`,
-      `  WORKER_POLL_SECONDS=${WORKER_DEFAULT_POLL_SECONDS} \\`,
-      `  WORKER_RELAYS=${helperRelayList} \\`,
-      `  WORKER_DM_RELAYS=${helperDmRelayList} \\`,
-    ];
-    lines.push("  ./auditable-voting-worker-linux-x64");
-    return lines.join("\n");
-  }, [coordinatorNpub, generatedWorkerNsec, helperDmRelayList, helperRelayList]);
   async function copyWorkerCommand(value: string, key: string) {
     const copied = await tryWriteClipboard(value);
     if (copied) {
@@ -4596,6 +4308,19 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     setDelegatedWorkerNpub(npub);
   }
 
+  const proxyPageCredentialRefreshRef = useRef(false);
+  useEffect(() => {
+    if (!isProxyBuildPage) {
+      proxyPageCredentialRefreshRef.current = false;
+      return;
+    }
+    if (proxyPageCredentialRefreshRef.current) {
+      return;
+    }
+    proxyPageCredentialRefreshRef.current = true;
+    generateWorkerCredentials();
+  }, [isProxyBuildPage]);
+
   function setupAuditProxyFromChecklist() {
     setDelegationMode("delegated_worker");
     setAuditProxyExpandSignal((current) => current + 1);
@@ -5392,12 +5117,57 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
 
                 {showDelegatedWorkerControls ? (
                   <>
+                <section className='simple-delegate-section simple-delegate-setup-section'>
+                  <div className='simple-delegate-section-head'>
+                    <div>
+                      <h4 className='simple-delegate-title'>Setup</h4>
+                      <p className='simple-voter-note'>
+                        A fresh audit proxy account is generated when this page opens. Start the proxy with the command below, then leave it running.
+                      </p>
+                    </div>
+                    <UiButton icon='key' className='simple-voter-secondary' onPress={generateWorkerCredentials}>
+                      Generate new account
+                    </UiButton>
+                  </div>
+                  <UiTextField
+                    label='Audit proxy npub'
+                    inputClassName='simple-voter-input'
+                    inputProps={{
+                      id: 'delegated-worker-npub',
+                      placeholder: 'npub1...',
+                      value: delegatedWorkerNpub,
+                      onChange: (event) => {
+                        const nextWorkerNpub = event.target.value;
+                        setDelegatedWorkerNpub(nextWorkerNpub);
+                        if (normaliseWorkerNpub(nextWorkerNpub) !== normaliseWorkerNpub(generatedWorkerNpub)) {
+                          setGeneratedWorkerNsec("");
+                          setGeneratedWorkerNpub("");
+                        }
+                      },
+                    }}
+                  />
+                  {generatedWorkerNsec ? (
+                    <div className='simple-voter-field-stack'>
+                      <UiTextArea
+                        label='Generated audit proxy nsec (store securely)'
+                        textAreaClassName='simple-voter-input'
+                        textAreaProps={{
+                          id: 'generated-worker-nsec',
+                          rows: 2,
+                          readOnly: true,
+                          value: generatedWorkerNsec,
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </section>
+
                 <section className='simple-delegate-section simple-delegate-direct-launch-section'>
                   <div className='simple-delegate-section-head'>
                     <div>
-                      <h4 className='simple-delegate-title'>Helper download and launch command</h4>
+                      <h4 className='simple-delegate-title'>Quick start command</h4>
                       <p className='simple-voter-note'>
-                        Copy this command to download the current audit proxy release, check it is at least <code>{WORKER_MINIMUM_VERSION}</code>, and start it with this organiser and relay set.
+                        Copy this command to refresh the audit proxy binary, verify it is at least <code>{WORKER_MINIMUM_VERSION}</code>, and start it with this organiser and account. Once the proxy heartbeat appears, configuration is confirmed automatically; use the button below if it does not.
                       </p>
                     </div>
                     <UiButton
@@ -5405,7 +5175,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       className='simple-voter-primary'
                       onPress={() => void copyWorkerCommand(workerDirectCommand, "worker-direct-command")}
                     >
-                      {isCopyLabelActive("worker-direct-command") ? "Copied" : "Copy command"}
+                      {isCopyLabelActive("worker-direct-command") ? "Copied" : "Copy quick start"}
                     </UiButton>
                   </div>
                   <div className='simple-delegate-launch-controls'>
@@ -5422,7 +5192,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     </UiSelect>
                   </div>
                   <UiTextArea
-                    label='Direct command-line launch'
+                    label='Quick start command'
                     textAreaClassName='simple-voter-input simple-delegate-command'
                     textAreaProps={{
                       id: 'worker-direct-command',
@@ -5431,13 +5201,18 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       value: workerDirectCommand,
                     }}
                   />
-                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                    <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.assetUrl} target='_blank' rel='noreferrer'>
-                      Download binary
-                    </a>
-                    <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.checksumUrl} target='_blank' rel='noreferrer'>
-                      Download checksum
-                    </a>
+                  <div className='simple-delegate-confirm-panel'>
+                    <div>
+                      <h4 className='simple-delegate-confirm-title'>Confirm configuration</h4>
+                      <p className='simple-voter-note'>This usually happens automatically after the proxy starts. Press confirm if the proxy is already running or auto-confirm has not fired.</p>
+                    </div>
+                    <UiButton
+                      icon='check'
+                      className='simple-voter-primary simple-voter-primary-wide simple-delegate-confirm-button'
+                      onPress={() => void delegateToWorker()}
+                    >
+                      Confirm configuration
+                    </UiButton>
                   </div>
                   <p className='simple-voter-note'>
                     State is kept in <code>.worker-state</code> beside the binary by default. Delete that folder to reset local proxy state, or override <code>WORKER_STATE_DIR</code>.
@@ -5469,144 +5244,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                 </section>
 
                 <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Setup</h4>
-                  <UiTextField
-                    label='Audit proxy npub'
-                    inputClassName='simple-voter-input'
-                    inputProps={{
-                      id: 'delegated-worker-npub',
-                      placeholder: 'npub1...',
-                      value: delegatedWorkerNpub,
-                      onChange: (event) => {
-                        const nextWorkerNpub = event.target.value;
-                        setDelegatedWorkerNpub(nextWorkerNpub);
-                        if (normaliseWorkerNpub(nextWorkerNpub) !== normaliseWorkerNpub(generatedWorkerNpub)) {
-                          setGeneratedWorkerNsec("");
-                          setGeneratedWorkerNpub("");
-                        }
-                      },
-                    }}
-                  />
-                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                    <UiButton icon='key' className='simple-voter-secondary' onPress={generateWorkerCredentials}>
-                      Generate new account
-                    </UiButton>
-                  </div>
-                  {generatedWorkerNsec ? (
-                    <div className='simple-voter-field-stack'>
-                      <UiTextArea
-                        label='Generated audit proxy nsec (store securely)'
-                        textAreaClassName='simple-voter-input'
-                        textAreaProps={{
-                          id: 'generated-worker-nsec',
-                          rows: 2,
-                          readOnly: true,
-                          value: generatedWorkerNsec,
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                  <UiTextArea
-                    label='Quick start command'
-                    textAreaClassName='simple-voter-input simple-delegate-command'
-                    textAreaProps={{
-                      id: 'worker-startup-command',
-                      rows: 4,
-                      readOnly: true,
-                      value: workerStartupCommand,
-                    }}
-                  />
-                  <UiButton
-                    icon={isCopyLabelActive("worker-quick-start") ? "check" : "copy"}
-                    className='simple-voter-secondary'
-                    onPress={() => void copyWorkerCommand(workerStartupCommand, "worker-quick-start")}
-                    isDisabled={!coordinatorNpub.trim()}
-                  >
-                    {isCopyLabelActive("worker-quick-start") ? "Copied" : "Copy quick start command"}
-                  </UiButton>
-                  <a className='simple-voter-secondary simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
-                    Audit proxy details
-                  </a>
-                </section>
-
-                <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Audit proxy downloads</h4>
-                  <p className='simple-voter-note'>
-                    Autoconfigured saves a platform-specific launcher script with the current organiser `npub`, effective relay list, and generated audit proxy `nsec` when one is present.
-                  </p>
-                  <p className='simple-voter-note'>
-                    Right-click copy link is supported. Shared Autoconfigured links intentionally omit `WORKER_NSEC`, so the receiving operator must supply their own audit proxy secret.
-                  </p>
-                  <div className='simple-delegate-download-grid'>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Linux x64</span>
-                      <a
-                        className='simple-delegate-link simple-delegate-button'
-                        href={autoconfiguredWorkerLauncherHrefs.linuxX64}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxX64);
-                        }}
-                      >
-                        Autoconfigured
-                      </a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Linux arm64</span>
-                      <a
-                        className='simple-delegate-link simple-delegate-button'
-                        href={autoconfiguredWorkerLauncherHrefs.linuxArm64}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArm64);
-                        }}
-                      >
-                        Autoconfigured
-                      </a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Linux armv7</span>
-                      <a
-                        className='simple-delegate-link simple-delegate-button'
-                        href={autoconfiguredWorkerLauncherHrefs.linuxArmv7}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArmv7);
-                        }}
-                      >
-                        Autoconfigured
-                      </a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Windows</span>
-                      <a
-                        className='simple-delegate-link simple-delegate-button'
-                        href={autoconfiguredWorkerLauncherHrefs.windowsX64}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          downloadConfiguredWorkerLauncher(workerLauncherTargets.windowsX64);
-                        }}
-                      >
-                        Autoconfigured
-                      </a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>macOS</span>
-                      <a
-                        className='simple-delegate-link simple-delegate-button'
-                        href={autoconfiguredWorkerLauncherHrefs.macosArm64}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          downloadConfiguredWorkerLauncher(workerLauncherTargets.macosArm64);
-                        }}
-                      >
-                        Autoconfigured
-                      </a>
-                    </div>
-                  </div>
-                </section>
-
-                <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Audit proxy status</h4>
                   <div className='simple-delegate-status-overview'>
                     <span>Status overview</span>
@@ -5621,6 +5258,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <p className='simple-voter-note'>Last blind issuance <span>{selectedWorkerStatus?.lastBlindIssuanceAt ? new Date(selectedWorkerStatus.lastBlindIssuanceAt).toLocaleString() : "Not reported"}</span></p>
                     <p className='simple-voter-note'>Last vote verification <span>{selectedWorkerStatus?.lastVoteVerificationAt ? new Date(selectedWorkerStatus.lastVoteVerificationAt).toLocaleString() : "Not reported"}</span></p>
                     <p className='simple-voter-note'>Last decision publish <span>{selectedWorkerStatus?.lastDecisionPublishAt ? new Date(selectedWorkerStatus.lastDecisionPublishAt).toLocaleString() : "Not reported"}</span></p>
+                  </div>
+                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                    <UiButton
+                      icon='delete'
+                      className='simple-voter-secondary'
+                      onPress={() => void revokeWorkerDelegation()}
+                      isDisabled={!activeWorkerDelegation}
+                    >
+                      Revoke delegation
+                    </UiButton>
                   </div>
                 </section>
 
@@ -5723,19 +5370,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </div>
                 </section>
 
-                <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                  <UiButton icon='check' className='simple-voter-primary simple-voter-primary-wide' onPress={() => void delegateToWorker()}>
-                    Confirm configuration
-                  </UiButton>
-                  <UiButton
-                    icon='delete'
-                    className='simple-voter-secondary'
-                    onPress={() => void revokeWorkerDelegation()}
-                    isDisabled={!activeWorkerDelegation}
-                  >
-                    Revoke delegation
-                  </UiButton>
-                </div>
                   </>
                 ) : null}
               </div>

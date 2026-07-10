@@ -243,8 +243,8 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 1. After publishing, click **Set up audit proxy** if this questionnaire should keep processing while the organiser browser is offline.
 2. The audit proxy section opens and generates a proxy account.
 3. Copy the **Quick start command** and run it on the machine that should host the proxy.
-4. Use **Audit proxy details** or **Helper download and launch command** if you need the helper download, checksum, or a direct launch command.
-5. Wait for a heartbeat in **Audit proxy status** before relying on the proxy for issuance or verification.
+4. Configuration is confirmed automatically when a fresh proxy heartbeat appears; use **Confirm configuration** if the proxy is already running or auto-confirm has not fired.
+5. Wait for **Audit proxy status** to show the active proxy before relying on it for issuance or verification.
 
 ### 3. Organiser invites voters
 
@@ -287,7 +287,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Build and publish a questionnaire definition (public event), including non-default relay hints when configured.
 2. Share the public questionnaire link by copy or native device sharing, optionally using personalised links or roster-applied public announcements for invited voter npubs.
-3. Optional: in the separate **Questionnaire** tab `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current organiser `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the organiser as root authority.
+3. Optional: in the separate **Questionnaire** tab `Audit proxy` section, use Set up audit proxy after publication to open the simplified proxy page, generate a fresh audit proxy account, copy the quick start command, and let the page confirm configuration automatically when the proxy heartbeat appears. Delegation still leaves the organiser as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
 5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the organiser for that delegated round). Invite payloads and cached election metadata carry the audit proxy routing hint plus a questionnaire pointer, so voters can keep targeting the audit proxy if the organiser browser goes offline; audit proxy election-config DMs carry the public definition pointer, and credential DMs carry only credentials/signatures plus a definition hash or event id.
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
