@@ -129,6 +129,7 @@ import {
 } from "./wasm/auditableVotingCore";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import { selectRelaysWithBackoff, withRelayOutcomes } from "./relayBackoff";
 import type {
   BallotSubmission,
   BearerInviteCodeEntry,
@@ -5686,13 +5687,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     setKnownVoterContactsLoading(true);
     try {
-      const relays = normalizeRelaysRust(SIMPLE_PUBLIC_RELAYS).slice(0, 6);
+      const relays = selectRelaysWithBackoff(normalizeRelaysRust(SIMPLE_PUBLIC_RELAYS), 6);
       const pool = getSharedNostrPool();
-      const events = await pool.querySync(relays, {
+      const events = await withRelayOutcomes(relays, pool.querySync(relays, {
         kinds: [3],
         authors: [sourceHex],
         limit: 20,
-      });
+      }));
       const latest = [...events]
         .sort((left, right) => right.created_at - left.created_at)
         .find((event) => event.pubkey === sourceHex);
@@ -5717,11 +5718,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         return;
       }
       const uniqueHexContacts = [...uniqueContactsByHex.values()];
-      const metadataEvents = await pool.querySync(relays, {
+      const metadataEvents = await withRelayOutcomes(relays, pool.querySync(relays, {
         kinds: [0],
         authors: uniqueHexContacts.map((entry) => entry.hex),
         limit: Math.max(50, uniqueHexContacts.length * 2),
-      });
+      }));
       const metadataByHex = new Map<string, { nip05: string | null; profileName: string | null }>();
       const sortedMetadataEvents = [...metadataEvents].sort((left, right) => right.created_at - left.created_at);
       for (const event of sortedMetadataEvents) {
@@ -8323,8 +8324,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 onPress={() => selectTab('messages')}
               >
                 <span className='simple-sidebar-readiness-entry-main'>
-                  <span className='simple-sidebar-readiness-entry-icon' aria-hidden='true'>
+                  <span className='simple-sidebar-readiness-entry-icon simple-coordinator-message-icon' aria-hidden='true'>
                     <UiIcon name='message' />
+                    {hasUnreadMessages ? <span className='simple-message-unread-dot simple-coordinator-message-unread-dot' /> : null}
                   </span>
                   <span className='simple-sidebar-readiness-copy'>
                     <span className='simple-coordinator-nav-label'>Messages</span>
@@ -8332,7 +8334,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   </span>
                 </span>
                 <span className='simple-sidebar-readiness-status simple-coordinator-nav-status'>
-                  {hasUnreadMessages ? <span className='simple-message-unread-dot' aria-hidden='true' /> : null}
                   <UiIcon name='chevronRight' className='simple-sidebar-readiness-chevron' />
                 </span>
               </UiButton>

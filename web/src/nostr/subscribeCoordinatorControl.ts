@@ -2,6 +2,7 @@ import type { Filter, NostrEvent } from "nostr-tools";
 import { getSharedNostrPool } from "../sharedNostrPool";
 import { SIMPLE_PUBLIC_RELAYS } from "../simpleVotingSession";
 import { normalizeRelaysRust } from "../wasm/auditableVotingCore";
+import { recordRelayCloseReasons, rankRelaysByBackoff, selectRelaysWithBackoff, withRelayOutcomes } from "../relayBackoff";
 import {
   matchesCoordinatorControlEvent,
   SIMPLE_COORDINATOR_CONTROL_KIND,
@@ -13,8 +14,8 @@ export const COORDINATOR_CONTROL_DEFAULT_LIMIT = 200;
 export type CoordinatorControlReadMode = "kind_only" | "kind_election" | "kind_election_group";
 
 function buildReadRelays(relays?: string[]) {
-  const normalized = normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
-  return normalized.slice(0, Math.min(COORDINATOR_CONTROL_READ_RELAYS_MAX, normalized.length));
+  const normalized = rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
+  return selectRelaysWithBackoff(normalized, COORDINATOR_CONTROL_READ_RELAYS_MAX);
 }
 
 function matchesCoordinatorControlReadMode(input: {
@@ -60,7 +61,7 @@ export async function fetchCoordinatorControlEvents(input: {
   const pool = getSharedNostrPool();
   const relays = buildReadRelays(input.relays);
   const filter = buildBaseFilter(input);
-  const events = await pool.querySync(relays, filter);
+  const events = await withRelayOutcomes(relays, pool.querySync(relays, filter));
   const mode = input.mode ?? "kind_election_group";
   return events.filter((event) => matchesCoordinatorControlReadMode({
     event,
@@ -101,6 +102,9 @@ export function subscribeCoordinatorControl(input: {
         })) {
           input.onEvents([event]);
         }
+      },
+      onclose(reasons) {
+        recordRelayCloseReasons(reasons);
       },
     },
   );

@@ -58,6 +58,7 @@ const SIMPLE_DM_TICKET_READ_RELAYS_MAX = 2;
 const SIMPLE_DM_ACK_READ_RELAYS_MAX = 2;
 const SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX = 5;
 const SIMPLE_DM_ACK_PUBLISH_RELAYS_MAX = 5;
+const SIMPLE_DM_QUERY_TIMEOUT_MS = 5000;
 
 export type SimpleDmAcknowledgedAction =
   | 'simple_coordinator_follow'
@@ -348,6 +349,52 @@ function buildDmPublishChannel(recipientNpub: string, senderNpub?: string) {
   const recipient = recipientNpub.trim();
   const sender = senderNpub?.trim() || "unknown-sender";
   return `simple-dm:${sender}:${recipient}`;
+}
+
+type SimpleDmQueryFilter = Parameters<ReturnType<typeof getSharedNostrPool>["querySync"]>[1];
+
+async function withSimpleDmQueryTimeout<T>(
+  task: Promise<T>,
+  timeoutMs = SIMPLE_DM_QUERY_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_, reject) => {
+        timer = globalThis.setTimeout(() => {
+          reject(new Error(`simple DM relay query timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      globalThis.clearTimeout(timer);
+    }
+  }
+}
+
+async function querySimpleDmRelays(relays: string[], filter: SimpleDmQueryFilter) {
+  const pool = getSharedNostrPool();
+  try {
+    const events = await withSimpleDmQueryTimeout(pool.querySync(relays, filter));
+    for (const relay of relays) {
+      recordRelayOutcome(relay, true);
+    }
+    return events;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    for (const relay of relays) {
+      recordRelayOutcome(relay, false, message);
+    }
+    throw error;
+  }
+}
+
+function recordDmPublishResults(results: DmPublishResult["relayResults"]) {
+  for (const result of results) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
 }
 
 async function resolveRecipientInboxRelays(recipientNpub: string, relays?: string[]) {
@@ -859,9 +906,7 @@ export async function sendSimpleCoordinatorFollow(input: {
     },
   );
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
-  for (const result of relayResults) {
-    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
-  }
+  recordDmPublishResults(relayResults);
 
   return {
     eventId: event.id,
@@ -974,6 +1019,7 @@ export async function sendSimpleDmAcknowledgement(input: {
               : String(result.reason),
         },
   );
+  recordDmPublishResults(relayResults);
 
   return {
     eventId: event.id,
@@ -1061,6 +1107,7 @@ export async function sendSimpleCoordinatorRoster(input: {
               : String(result.reason),
         },
   );
+  recordDmPublishResults(relayResults);
 
   return {
     eventId: event.id,
@@ -1124,6 +1171,7 @@ export async function sendSimpleSubCoordinatorJoin(input: {
     },
   );
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
+  recordDmPublishResults(relayResults);
 
   return {
     eventId: event.id,
@@ -1188,6 +1236,7 @@ export async function sendSimpleCoordinatorMlsWelcome(input: {
     },
   );
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
+  recordDmPublishResults(relayResults);
 
   return {
     eventId: event.id,
@@ -1270,8 +1319,7 @@ export async function fetchSimpleCoordinatorFollowers(input: {
     await resolveRecipientInboxRelays(coordinatorNpub, input.relays),
     SIMPLE_DM_FOLLOW_READ_RELAYS_MAX,
   );
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await querySimpleDmRelays(dmRelays, {
     kinds: [1059],
     "#p": [coordinatorHex],
     limit: 100,
@@ -1308,8 +1356,7 @@ export async function fetchSimpleDmAcknowledgements(input: {
     Array.from(new Set(inboxRelaySets.flat())),
     SIMPLE_DM_ACK_READ_RELAYS_MAX,
   );
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await querySimpleDmRelays(dmRelays, {
     kinds: [1059],
     '#p': actorHexes,
     limit: 200,
@@ -1369,8 +1416,7 @@ export async function fetchSimpleCoordinatorRosterAnnouncements(input: {
     'Voter',
   );
   const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(voterNpub, input.relays));
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await querySimpleDmRelays(dmRelays, {
     kinds: [1059],
     '#p': [voterHex],
     limit: 100,
@@ -1513,6 +1559,7 @@ export function subscribeSimpleDmAcknowledgements(input: {
             (reason) => !reason.startsWith('closed by caller'),
           );
           if (errors.length > 0) {
+            recordRelayCloseReasons(errors);
             input.onError?.(new Error(errors.join('; ')));
           }
         },
@@ -1609,6 +1656,7 @@ export function subscribeSimpleCoordinatorRosterAnnouncements(input: {
               (reason) => !reason.startsWith('closed by caller'),
             );
             if (errors.length > 0) {
+              recordRelayCloseReasons(errors);
               input.onError?.(new Error(errors.join('; ')));
             }
           },
@@ -1716,8 +1764,7 @@ export async function fetchSimpleSubCoordinatorApplications(input: {
     "Lead organiser",
   );
   const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(leadCoordinatorNpub, input.relays));
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await querySimpleDmRelays(dmRelays, {
     kinds: [1059],
     "#p": [leadCoordinatorHex],
     limit: 100,
@@ -1796,6 +1843,7 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
 
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
         if (errors.length > 0) {
+          recordRelayCloseReasons(errors);
           input.onError?.(new Error(errors.join("; ")));
         }
       },
@@ -1822,8 +1870,7 @@ export async function fetchSimpleCoordinatorMlsWelcomes(input: {
     "Organiser",
   );
   const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(npub, input.relays));
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await querySimpleDmRelays(dmRelays, {
     kinds: [1059],
     "#p": [publicHex],
     limit: 100,
@@ -1911,6 +1958,7 @@ export function subscribeSimpleCoordinatorMlsWelcomes(input: {
 
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
         if (errors.length > 0) {
+          recordRelayCloseReasons(errors);
           input.onError?.(new Error(errors.join("; ")));
         }
       },
@@ -2023,6 +2071,7 @@ export async function sendSimpleShardResponse(input: {
     },
   );
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
+  recordDmPublishResults(relayResults);
   const successes = relayResults.filter((result) => result.success).length;
   const failures = relayResults.filter((result) => !result.success).length;
   recordSimpleTicketLifecycleTrace({
@@ -2182,6 +2231,7 @@ export async function sendSimpleShareAssignment(input: {
     },
   );
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
+  recordDmPublishResults(relayResults);
 
   return {
     eventId: event.id,
@@ -2259,8 +2309,7 @@ export async function fetchSimpleCoordinatorShareAssignments(input: {
     "Organiser",
   );
   const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(coordinatorNpub, input.relays));
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await querySimpleDmRelays(dmRelays, {
     kinds: [1059],
     "#p": [coordinatorHex],
     limit: 100,
@@ -2339,6 +2388,7 @@ export function subscribeSimpleCoordinatorShareAssignments(input: {
 
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
         if (errors.length > 0) {
+          recordRelayCloseReasons(errors);
           input.onError?.(new Error(errors.join("; ")));
         }
       },

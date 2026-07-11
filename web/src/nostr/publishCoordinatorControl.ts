@@ -8,6 +8,7 @@ import {
   SIMPLE_PUBLIC_RELAYS,
 } from "../simpleVotingSession";
 import { normalizeRelaysRust } from "../wasm/auditableVotingCore";
+import { recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff } from "../relayBackoff";
 import {
   buildCoordinatorControlTags,
   SIMPLE_COORDINATOR_CONTROL_KIND,
@@ -17,8 +18,8 @@ import type { CoordinatorOutboundTransportMessage } from "../core/coordinatorCor
 const COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX = 5;
 
 function buildControlRelays(relays?: string[]) {
-  const normalized = normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
-  return normalized.slice(0, Math.min(COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX, normalized.length));
+  const normalized = rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
+  return selectRelaysWithBackoff(normalized, COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX);
 }
 
 export async function publishCoordinatorControl(input: {
@@ -71,6 +72,9 @@ export async function publishCoordinatorControl(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
 
   return {
     eventId: event.id,

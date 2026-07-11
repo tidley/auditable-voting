@@ -1,7 +1,7 @@
 import { finalizeEvent, getPublicKey, nip19, nip44, type Filter, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { getSharedNostrPool } from "./sharedNostrPool";
-import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff } from "./relayBackoff";
+import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff, withRelayOutcomes } from "./relayBackoff";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
   SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
@@ -131,7 +131,10 @@ export async function queryQuestionnaireEvents(
   }
   const run = withQuestionnairePublicQuerySlot(async () => {
     const pool = getSharedNostrPool();
-    return withQuestionnairePublicQueryTimeout(pool.querySync(relays, filter), timeoutMs);
+    return withRelayOutcomes(
+      relays,
+      withQuestionnairePublicQueryTimeout(pool.querySync(relays, filter), timeoutMs),
+    );
   });
   questionnairePublicInFlightQueries.set(key, run);
   try {

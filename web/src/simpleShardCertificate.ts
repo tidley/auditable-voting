@@ -16,6 +16,7 @@ import {
   SIMPLE_PUBLIC_RELAYS,
   SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
 } from "./simpleVotingSession";
+import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff, withRelayOutcomes } from "./relayBackoff";
 import { sha256Hex } from "./tokenIdentity";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 
@@ -153,12 +154,11 @@ const blindKeySubscriptions = new Map<string, BlindKeySubscriptionState>();
 let nextBlindKeySubscriberId = 1;
 
 function buildPublicRelays(relays?: string[]) {
-  return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
+  return rankRelaysByBackoff(normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]));
 }
 
 function selectPublicReadRelays(relays: string[]) {
-  const normalized = normalizeRelaysRust(relays);
-  return normalized.slice(0, Math.min(SIMPLE_PUBLIC_READ_RELAYS_MAX, normalized.length));
+  return selectRelaysWithBackoff(relays, SIMPLE_PUBLIC_READ_RELAYS_MAX);
 }
 
 function buildBlindKeySubscriptionKey(coordinatorNpub: string, relays?: string[]) {
@@ -224,11 +224,11 @@ async function ensureBlindKeySubscription(input: {
 
     const readRelays = selectPublicReadRelays(relays);
     const refreshFromHistory = async () => {
-      const events = await pool.querySync(readRelays, {
+      const events = await withRelayOutcomes(readRelays, pool.querySync(readRelays, {
         kinds: [SIMPLE_BLIND_KEY_KIND],
         authors: [decoded.data as string],
         limit: 50,
-      });
+      }));
 
       for (const event of events) {
         const announcement = parseSimpleBlindKeyAnnouncement(
@@ -271,6 +271,7 @@ async function ensureBlindKeySubscription(input: {
 
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
         if (errors.length > 0) {
+          recordRelayCloseReasons(errors);
           for (const subscriber of state.subscribers.values()) {
             subscriber.onError?.(new Error(errors.join("; ")));
           }
@@ -513,6 +514,9 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
   return {
     eventId: event.id,
     successes: relayResults.filter((result) => result.success).length,
@@ -602,11 +606,12 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
     fallbackRelays: buildPublicRelays(input.relays),
   });
   const pool = getSharedNostrPool();
-  const events = await pool.querySync(selectPublicReadRelays(relays), {
+  const readRelays = selectPublicReadRelays(relays);
+  const events = await withRelayOutcomes(readRelays, pool.querySync(readRelays, {
     kinds: [SIMPLE_BLIND_KEY_KIND],
     authors: [decoded.data as string],
     limit: 20,
-  });
+  }));
   const parsed = events
     .map((event) =>
       parseSimpleBlindKeyAnnouncement(

@@ -7,6 +7,7 @@ import type { ElectionInviteMessage } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
 import { parseInviteFromUrl } from "./questionnaireInvite";
 import { mapRelayPublishResult } from "./nostrPublishResult";
+import { recordRelayOutcome, selectRelaysWithBackoff, withRelayOutcomes } from "./relayBackoff";
 
 const OPTION_A_INVITE_DM_RELAYS_MAX = 12;
 const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 5;
@@ -99,9 +100,12 @@ function filterInviteReadRelays(relays: string[]) {
   const fallback = readable.length > 0 ? readable : relays;
   const available = fallback.filter((relay) => (optionAInviteDmRelayCooldownUntil.get(relay) ?? 0) <= now);
   if (available.length > 0) {
-    return available;
+    return selectRelaysWithBackoff(available, available.length);
   }
-  return fallback.slice(0, Math.max(1, Math.min(2, fallback.length || relays.length)));
+  return selectRelaysWithBackoff(
+    fallback.length > 0 ? fallback : relays,
+    Math.max(1, Math.min(2, fallback.length || relays.length)),
+  );
 }
 
 async function withInviteQuerySlot<T>(task: () => Promise<T>): Promise<T> {
@@ -130,7 +134,7 @@ async function queryInviteDmSync(relays: string[], filter: Record<string, unknow
   const run = withInviteQuerySlot(async () => {
     const pool = getSharedNostrPool();
     try {
-      return await pool.querySync(queryRelays, filter);
+      return await withRelayOutcomes(queryRelays, pool.querySync(queryRelays, filter));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       applyInviteRelayBackoff(queryRelays, message);
@@ -184,7 +188,7 @@ function buildRelays(relays?: string[]) {
 
 function selectReadRelays(relays: string[], maxRelays = OPTION_A_INVITE_DM_READ_RELAYS_MAX) {
   const compatibleRelays = relays.filter((relay) => !OPTION_A_INVITE_DM_REJECTING_RELAYS.has(relay));
-  return compatibleRelays.slice(0, Math.min(maxRelays, compatibleRelays.length));
+  return selectRelaysWithBackoff(compatibleRelays, Math.min(maxRelays, compatibleRelays.length));
 }
 
 function selectFallbackReadRelays(relays: string[], primaryRelays: string[], maxRelays = OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX) {
@@ -197,7 +201,10 @@ function selectFallbackReadRelays(relays: string[], primaryRelays: string[], max
 
 function selectPublishRelays(relays: string[]) {
   const compatibleRelays = relays.filter((relay) => !OPTION_A_INVITE_DM_REJECTING_RELAYS.has(relay));
-  return compatibleRelays.slice(0, Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, compatibleRelays.length));
+  return selectRelaysWithBackoff(
+    compatibleRelays,
+    Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, compatibleRelays.length),
+  );
 }
 
 function selectHintRelays(relays: string[]) {
@@ -531,6 +538,9 @@ export async function publishOptionAInviteDm(input: {
   );
 
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, relays[index]));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
   optionAInviteDmLog("publish_finished", {
     electionId: input.invite.electionId,
     invitedNpub: input.invite.invitedNpub,

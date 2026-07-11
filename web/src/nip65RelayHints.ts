@@ -6,6 +6,7 @@ import {
   buildConversationRelaySetRust,
   normalizeRelaysRust,
 } from "./wasm/auditableVotingCore";
+import { recordRelayOutcome, selectRelaysWithBackoff, withRelayOutcomes } from "./relayBackoff";
 
 export const NIP65_RELAY_LIST_KIND = 10002;
 
@@ -159,7 +160,8 @@ export async function fetchNip65RelayHints(input: {
     return relayHintsInflight.get(npub) ?? null;
   }
 
-  const discoveryRelays = uniqueRelays(input.discoveryRelays);
+  const allDiscoveryRelays = uniqueRelays(input.discoveryRelays);
+  const discoveryRelays = selectRelaysWithBackoff(allDiscoveryRelays, allDiscoveryRelays.length);
   if (discoveryRelays.length === 0) {
     relayHintsCache.set(npub, null);
     return null;
@@ -168,11 +170,11 @@ export async function fetchNip65RelayHints(input: {
   const request = (async () => {
     const pool = getSharedNostrPool();
     try {
-      const events = await pool.querySync(discoveryRelays, {
+      const events = await withRelayOutcomes(discoveryRelays, pool.querySync(discoveryRelays, {
         kinds: [NIP65_RELAY_LIST_KIND],
         authors: [getDecodedNpubHex(npub)],
         limit: 10,
-      });
+      }));
       const parsed = sortByFetchedAtDescending(
         events
           .map((event) => parseNip65RelayHintsEvent(event as VerifiedEvent, npub))
@@ -218,10 +220,11 @@ export async function publishOwnNip65RelayHints(input: {
   const npub = nip19.npubEncode(getPublicKey(input.secretKey));
   const inboxRelays = uniqueRelays(input.inboxRelays ?? []);
   const outboxRelays = uniqueRelays(input.outboxRelays ?? []);
-  const publishRelays = buildActorRelaySetRust({
+  const allPublishRelays = buildActorRelaySetRust({
     preferredRelays: [...outboxRelays, ...inboxRelays],
     fallbackRelays: input.publishRelays,
   });
+  const publishRelays = selectRelaysWithBackoff(allPublishRelays, allPublishRelays.length);
 
   if (publishRelays.length === 0 || (inboxRelays.length === 0 && outboxRelays.length === 0)) {
     return null;
@@ -265,6 +268,19 @@ export async function publishOwnNip65RelayHints(input: {
   );
 
   const successes = results.filter((result) => result.status === "fulfilled").length;
+  results.forEach((result, index) => {
+    const relay = publishRelays[index];
+    if (!relay) {
+      return;
+    }
+    recordRelayOutcome(
+      relay,
+      result.status === "fulfilled",
+      result.status === "rejected"
+        ? result.reason instanceof Error ? result.reason.message : String(result.reason)
+        : undefined,
+    );
+  });
   if (successes > 0) {
     relayHintsCache.set(npub, {
       npub,

@@ -27,6 +27,11 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { mapRelayPublishResult } from "./nostrPublishResult";
+import {
+  recordRelayCloseReasons,
+  recordRelayOutcome,
+  selectRelaysWithBackoff,
+} from "./relayBackoff";
 
 const OPTION_A_BLIND_DM_RELAYS_MAX = 4;
 const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 4;
@@ -431,6 +436,9 @@ function shouldBackoffBlindDmRelay(message: string) {
 }
 
 function applyBlindDmRelayBackoff(relays: string[], reason: string) {
+  for (const relay of relays) {
+    recordRelayOutcome(relay, false, reason);
+  }
   if (!shouldBackoffBlindDmRelay(reason)) {
     return;
   }
@@ -460,9 +468,12 @@ function filterBlindDmReadRelays(relays: string[]) {
     return until <= now && fallback.includes(relay);
   });
   if (available.length > 0) {
-    return available;
+    return selectRelaysWithBackoff(available, available.length);
   }
-  return fallback.slice(0, Math.max(1, Math.min(2, fallback.length || ordered.length)));
+  return selectRelaysWithBackoff(
+    fallback.length > 0 ? fallback : ordered,
+    Math.max(1, Math.min(2, fallback.length || ordered.length)),
+  );
 }
 
 async function withBlindDmQuerySlot<T>(task: () => Promise<T>): Promise<T> {
@@ -509,7 +520,11 @@ async function queryBlindDmSync(relays: string[], filter: Record<string, unknown
   const run = withBlindDmQuerySlot(async () => {
     const pool = getSharedNostrPool();
     try {
-      return await withBlindDmTimeout(pool.querySync(queryRelays, filter));
+      const events = await withBlindDmTimeout(pool.querySync(queryRelays, filter));
+      for (const relay of queryRelays) {
+        recordRelayOutcome(relay, true);
+      }
+      return events;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       applyBlindDmRelayBackoff(queryRelays, message);
@@ -586,7 +601,7 @@ function buildRelays(relays?: string[]) {
 
 function selectReadRelays(relays: string[], maxRelays = OPTION_A_BLIND_DM_READ_RELAYS_MAX) {
   const ordered = filterBlindDmReadRelays(relays);
-  return ordered.slice(0, Math.min(maxRelays, ordered.length));
+  return selectRelaysWithBackoff(ordered, Math.min(maxRelays, ordered.length));
 }
 
 function orderBlindDmReadRelays(relays: string[]) {
@@ -612,7 +627,10 @@ function orderBlindDmReadRelays(relays: string[]) {
 
 function selectPublishRelays(relays: string[]) {
   const compatibleRelays = relays.filter((relay) => !OPTION_A_BLIND_DM_REJECTING_RELAYS.has(relay));
-  return compatibleRelays.slice(0, Math.min(OPTION_A_BLIND_DM_RELAYS_MAX, compatibleRelays.length));
+  return selectRelaysWithBackoff(
+    compatibleRelays,
+    Math.min(OPTION_A_BLIND_DM_RELAYS_MAX, compatibleRelays.length),
+  );
 }
 
 function selectHintRelays(relays: string[]) {
@@ -727,6 +745,7 @@ async function ensureSharedGiftWrapInboxStarted(inbox: SharedGiftWrapInbox) {
         current.subscription = null;
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller") && !reason.startsWith("shared inbox restarting"));
         if (errors.length > 0) {
+          recordRelayCloseReasons(errors);
           const error = new Error(errors.join("; "));
           for (const listener of current.listeners.values()) {
             listener.onError?.(error);
@@ -1874,6 +1893,9 @@ async function publishEnvelope(input: {
   );
 
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, relays[index]));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
   optionABlindDmLog("publish_finished", {
     channel: input.channel,
     recipientNpub: input.recipientNpub,

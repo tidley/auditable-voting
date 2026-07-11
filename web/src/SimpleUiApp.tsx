@@ -98,6 +98,7 @@ import {
 import { type MailboxReadQueryDebug } from "./simpleMailbox";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import { recordRelayCloseReasons } from "./relayBackoff";
 import { useHelplineUnreadIndicator } from "./useHelplineUnreadIndicator";
 import { UiButton, UiSelect, UiSwitch, UiTextField } from "./ui/DesignLayer";
 
@@ -1152,6 +1153,9 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       limit: 40,
     }, {
       onevent: (event) => applyAnnouncementEvents([event]),
+      onclose: (reasons) => {
+        recordRelayCloseReasons(reasons);
+      },
     });
     const triggerForegroundFetch = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {

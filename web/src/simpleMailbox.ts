@@ -9,6 +9,11 @@ import {
   resolveNip65InboxRelays,
 } from "./nip65RelayHints";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import {
+  recordRelayCloseReasons,
+  recordRelayOutcome,
+  selectRelaysWithBackoff,
+} from "./relayBackoff";
 import { sha256HexRust, normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 import type {
@@ -37,6 +42,7 @@ const SIMPLE_MAILBOX_PUBLISH_MAX_WAIT_MS = 1500;
 const SIMPLE_MAILBOX_SUBSCRIPTION_MAX_WAIT_MS = 3000;
 const SIMPLE_MAILBOX_PUBLISH_STAGGER_MS = 1000;
 const SIMPLE_MAILBOX_MIN_PUBLISH_INTERVAL_MS = 5000;
+const SIMPLE_MAILBOX_QUERY_TIMEOUT_MS = 5_000;
 const SIMPLE_MAILBOX_REQUEST_RELAYS_MAX = 5;
 const SIMPLE_MAILBOX_TICKET_RELAYS_MAX = 5;
 const SIMPLE_MAILBOX_ACK_RELAYS_MAX = 5;
@@ -47,15 +53,6 @@ const SIMPLE_MAILBOX_ANCHOR_RELAYS = [
   "wss://nos.lol",
 ];
 const SIMPLE_MAILBOX_ANCHORS_PER_MESSAGE_MAX = 1;
-const SIMPLE_MAILBOX_RELAY_HEALTH_MAX_PENALTY_MS = 30 * 60_000;
-
-type MailboxRelayHealth = {
-  cooldownUntil: number;
-  consecutiveFailures: number;
-  lastError?: string;
-};
-
-const mailboxRelayHealth = new Map<string, MailboxRelayHealth>();
 
 export type MailboxRequestPayload = {
   kind: "blind_request";
@@ -253,73 +250,6 @@ function rotateBySeed(values: string[], seed: string) {
   return Array.from({ length: values.length }, (_, index) => values[(offset + index) % values.length]);
 }
 
-function rankMailboxRelaysByHealth(relays: string[]) {
-  const now = Date.now();
-  const healthy: string[] = [];
-  const unhealthy: Array<{ relay: string; cooldownUntil: number }> = [];
-
-  for (const relay of relays) {
-    const health = mailboxRelayHealth.get(relay);
-    if (!health || health.cooldownUntil <= now) {
-      healthy.push(relay);
-      continue;
-    }
-    unhealthy.push({ relay, cooldownUntil: health.cooldownUntil });
-  }
-
-  unhealthy.sort((left, right) => left.cooldownUntil - right.cooldownUntil);
-  return [...healthy, ...unhealthy.map((entry) => entry.relay)];
-}
-
-function getMailboxRelayPenaltyMs(error?: string) {
-  const normalized = (error ?? "").toLowerCase();
-  if (!normalized) {
-    return 60_000;
-  }
-  if (normalized.includes("rate-limited") || normalized.includes("too much")) {
-    return 3 * 60_000;
-  }
-  if (normalized.includes("pow")) {
-    return 10 * 60_000;
-  }
-  if (
-    normalized.includes("blocked")
-    || normalized.includes("spam")
-    || normalized.includes("policy violated")
-    || normalized.includes("web of trust")
-  ) {
-    return 20 * 60_000;
-  }
-  if (normalized.includes("timed out") || normalized.includes("timeout")) {
-    return 90_000;
-  }
-  return 2 * 60_000;
-}
-
-function recordMailboxRelayOutcome(relay: string, success: boolean, error?: string) {
-  if (success) {
-    mailboxRelayHealth.set(relay, {
-      cooldownUntil: 0,
-      consecutiveFailures: 0,
-      lastError: undefined,
-    });
-    return;
-  }
-
-  const previous = mailboxRelayHealth.get(relay);
-  const consecutiveFailures = (previous?.consecutiveFailures ?? 0) + 1;
-  const basePenaltyMs = getMailboxRelayPenaltyMs(error);
-  const scaledPenaltyMs = Math.min(
-    SIMPLE_MAILBOX_RELAY_HEALTH_MAX_PENALTY_MS,
-    basePenaltyMs * Math.min(8, 2 ** (consecutiveFailures - 1)),
-  );
-  mailboxRelayHealth.set(relay, {
-    cooldownUntil: Date.now() + scaledPenaltyMs,
-    consecutiveFailures,
-    lastError: error,
-  });
-}
-
 function selectRecipientRelays(relays: string[], recipientNpub: string, maxRelayCount: number) {
   const normalized = normalizeRelaysRust(relays);
   const maxRelays = Math.min(maxRelayCount, normalized.length);
@@ -334,8 +264,7 @@ function selectRecipientRelays(relays: string[], recipientNpub: string, maxRelay
   const secondaryPool = normalized.filter((relay) => !selectedAnchors.includes(relay));
   const rotatedSecondaries = rotateBySeed(secondaryPool, seed.slice(8));
   const deterministicOrder = [...selectedAnchors, ...rotatedSecondaries];
-  const healthRankedOrder = rankMailboxRelaysByHealth(deterministicOrder);
-  return normalizeRelaysRust(healthRankedOrder).slice(0, maxRelays);
+  return selectRelaysWithBackoff(deterministicOrder, maxRelays);
 }
 
 function selectRecipientRelayUnion(
@@ -348,7 +277,25 @@ function selectRecipientRelayUnion(
   if (merged.length <= maxRelayCount) {
     return merged;
   }
-  return rankMailboxRelaysByHealth(merged).slice(0, maxRelayCount);
+  return selectRelaysWithBackoff(merged, maxRelayCount);
+}
+
+async function withMailboxQueryTimeout<T>(task: Promise<T>, timeoutMs = SIMPLE_MAILBOX_QUERY_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_, reject) => {
+        timer = globalThis.setTimeout(() => {
+          reject(new Error(`mailbox relay query timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      globalThis.clearTimeout(timer);
+    }
+  }
 }
 
 function getKeysFromNsec(nsec: string, actorLabel: string) {
@@ -459,7 +406,7 @@ async function publishMailboxEvent(input: {
 
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, publishRelays[index]));
   for (const result of relayResults) {
-    recordMailboxRelayOutcome(result.relay, result.success, result.error);
+    recordRelayOutcome(result.relay, result.success, result.error);
   }
 
   return {
@@ -909,7 +856,19 @@ async function fetchMailboxEvents(input: {
     filter["#etype"] = eventTypes;
   }
   const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, filter);
+  let events: Awaited<ReturnType<typeof pool.querySync>>;
+  try {
+    events = await withMailboxQueryTimeout(pool.querySync(relays, filter));
+    for (const relay of relays) {
+      recordRelayOutcome(relay, true);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    for (const relay of relays) {
+      recordRelayOutcome(relay, false, message);
+    }
+    throw error;
+  }
   input.onQueryDebug?.({
     source: "fetch",
     relays: [...relays],
@@ -1060,6 +1019,7 @@ export function subscribeMailboxShardRequests(input: {
         if (!closed) {
           const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
           if (errors.length > 0) {
+            recordRelayCloseReasons(errors);
             input.onError?.(new Error(errors.join("; ")));
           }
         }
@@ -1172,6 +1132,7 @@ export function subscribeMailboxShardResponses(input: {
           if (!closed) {
             const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
             if (errors.length > 0) {
+              recordRelayCloseReasons(errors);
               input.onError?.(new Error(errors.join("; ")));
             }
           }

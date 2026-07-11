@@ -9,8 +9,10 @@ import {
 } from "./nip65RelayHints";
 import {
   recordRelayCloseReasons,
+  recordRelayOutcome,
   rankRelaysByBackoff,
   selectRelaysWithBackoff,
+  withRelayOutcomes,
 } from "./relayBackoff";
 import { parseInviteFromUrl } from "./questionnaireInvite";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
@@ -331,11 +333,11 @@ async function fetchHelplineDmMessagesFromRelays(input: {
   hideReceivedQuestionnaireInviteLinks?: boolean;
 }) {
   const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(input.dmRelays, {
+  const wrappedEvents = await withRelayOutcomes(input.dmRelays, pool.querySync(input.dmRelays, {
     kinds: [1059],
     "#p": [input.actor.publicHex],
     limit: input.limit ?? 300,
-  });
+  }));
   const allowedPeers = allowedPeerSet(input.allowedPeerNpubs);
   const byLogicalId = new Map<string, HelplineDmMessage>();
   for (const wrappedEvent of wrappedEvents) {
@@ -477,6 +479,9 @@ export async function sendHelplineDmMessage(input: {
     channel: `helpline-dm:${sender.npub}:${input.recipientNpub}`,
     minIntervalMs: HELPLINE_DM_MIN_PUBLISH_INTERVAL_MS,
   });
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
 
   return {
     eventIds: events.map((event) => event.id),

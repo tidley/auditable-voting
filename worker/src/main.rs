@@ -96,8 +96,11 @@ const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &[
     "wss://nip17.com",
     "wss://relay.0xchat.com",
 ];
-const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
-const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
+const WORKER_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
+const WORKER_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
+const WORKER_RELAY_FAILURES_BEFORE_BACKOFF: u32 = 2;
+const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = WORKER_RELAY_INITIAL_BACKOFF_SECS;
+const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = WORKER_RELAY_MAX_BACKOFF_SECS;
 const PUBLIC_RESPONSE_CONCURRENCY: usize = 16;
 const CONTROL_BLIND_REQUEST_QUEUE_SIZE: usize = 1024;
 const CONTROL_BLIND_REQUEST_BATCH_MAX_REQUESTS: usize = 128;
@@ -1851,9 +1854,17 @@ fn spawn_public_archive_task(
     interval: Duration,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let mut relay_backoff: HashMap<String, RelayBackoffState> = HashMap::new();
         for relay in &relays {
             if let Err(error) = client.add_relay(relay.clone()).await {
                 warn!("unable to add public archive relay {relay}: {error}");
+                record_worker_relay_backoff_result(
+                    &mut relay_backoff,
+                    relay,
+                    false,
+                    "public archive relay add",
+                    Some(&error.to_string()),
+                );
             }
         }
         client.connect().await;
@@ -1865,6 +1876,23 @@ fn spawn_public_archive_task(
 
         while let Some(job) = receiver.recv().await {
             let event_id = job.event.id.to_hex();
+            let relay_key = normalize_relay_key(&job.relay.to_string());
+            if let Some(next_retry_at) = relay_backoff
+                .get(&relay_key)
+                .and_then(|state| state.next_retry_at)
+            {
+                if next_retry_at > Instant::now() {
+                    let wait_secs = next_retry_at
+                        .saturating_duration_since(Instant::now())
+                        .as_secs();
+                    debug!(
+                        "public archive relay {} is in backoff for {}s; dropping {} event {} archive copy",
+                        job.relay, wait_secs, job.label, event_id
+                    );
+                    sleep(interval).await;
+                    continue;
+                }
+            }
             let result = timeout(
                 Duration::from_secs(PUBLIC_ARCHIVE_SEND_TIMEOUT_SECS),
                 client.send_event_to([job.relay.clone()], &job.event),
@@ -1872,21 +1900,54 @@ fn spawn_public_archive_task(
             .await;
             match result {
                 Ok(Ok(output)) if !output.success.is_empty() => {
+                    record_worker_relay_backoff_result(
+                        &mut relay_backoff,
+                        &job.relay,
+                        true,
+                        "public archive publish",
+                        None,
+                    );
                     debug!("archived {} event {} to {}", job.label, event_id, job.relay);
                 }
                 Ok(Ok(output)) => {
+                    let relay_error = output
+                        .failed
+                        .get(&job.relay)
+                        .cloned()
+                        .unwrap_or_else(|| format!("{:?}", output.failed));
+                    record_worker_relay_backoff_result(
+                        &mut relay_backoff,
+                        &job.relay,
+                        false,
+                        "public archive publish",
+                        Some(&relay_error),
+                    );
                     warn!(
                         "public archive relay rejected {} event {} on {}: {:?}",
                         job.label, event_id, job.relay, output.failed
                     );
                 }
                 Ok(Err(error)) => {
+                    record_worker_relay_backoff_result(
+                        &mut relay_backoff,
+                        &job.relay,
+                        false,
+                        "public archive publish",
+                        Some(&error.to_string()),
+                    );
                     warn!(
                         "public archive publish failed for {} event {} on {}: {error}",
                         job.label, event_id, job.relay
                     );
                 }
                 Err(_) => {
+                    record_worker_relay_backoff_result(
+                        &mut relay_backoff,
+                        &job.relay,
+                        false,
+                        "public archive publish",
+                        Some("timed out"),
+                    );
                     warn!(
                         "public archive publish timed out for {} event {} on {}",
                         job.label, event_id, job.relay
@@ -2003,7 +2064,17 @@ impl WorkerRuntime {
             match result {
                 Ok((relay, Ok(Ok(output)))) => {
                     let relay_success = !output.success.is_empty();
-                    self.record_relay_attempt_result(&relay, relay_success, label)
+                    let relay_error = output
+                        .failed
+                        .get(&relay)
+                        .map(|error| error.as_str())
+                        .or(Some("relay did not acknowledge private DM"));
+                    self.record_relay_attempt_result(
+                        &relay,
+                        relay_success,
+                        label,
+                        if relay_success { None } else { relay_error },
+                    )
                         .await;
                     successes += output.success.len();
                     if !relay_success {
@@ -2011,11 +2082,13 @@ impl WorkerRuntime {
                     }
                 }
                 Ok((relay, Ok(Err(error)))) => {
-                    self.record_relay_attempt_result(&relay, false, label).await;
+                    self.record_relay_attempt_result(&relay, false, label, Some(&error.to_string()))
+                        .await;
                     failures.push(format!("{relay}: {error}"));
                 }
                 Ok((relay, Err(_))) => {
-                    self.record_relay_attempt_result(&relay, false, label).await;
+                    self.record_relay_attempt_result(&relay, false, label, Some("timed out"))
+                        .await;
                     failures.push(format!("{relay}: timed out"));
                 }
                 Err(error) => failures.push(format!("join error: {error}")),
@@ -2260,6 +2333,14 @@ impl WorkerRuntime {
         let relays = self.effective_worker_relays().await;
         self.ensure_relays_connected(&relays).await;
         let output = self.client.send_event_to(relays.clone(), &event).await?;
+        for relay in output.success.iter() {
+            self.record_relay_attempt_result(relay, true, label, None)
+                .await;
+        }
+        for (relay, error) in output.failed.iter() {
+            self.record_relay_attempt_result(relay, false, label, Some(error.as_str()))
+                .await;
+        }
         if output.success.is_empty() {
             anyhow::bail!(
                 "{label} publish failed on all hot relays: {:?}",
@@ -2295,6 +2376,19 @@ impl WorkerRuntime {
             .subscribe_to(relays.clone(), filter, None)
             .await
             .context("failed to subscribe to control plane")?;
+        for relay in output.success.iter() {
+            self.record_relay_attempt_result(relay, true, "control subscription", None)
+                .await;
+        }
+        for (relay, error) in output.failed.iter() {
+            self.record_relay_attempt_result(
+                relay,
+                false,
+                "control subscription",
+                Some(error.as_str()),
+            )
+            .await;
+        }
         if !output.failed.is_empty() {
             warn!(
                 "control subscription rejected by {} relays: {}",
@@ -2472,6 +2566,13 @@ impl WorkerRuntime {
         for relay in relays {
             if let Err(error) = self.client.add_relay(relay.clone()).await {
                 warn!("unable to add effective relay {relay}: {error}");
+                self.record_relay_attempt_result(
+                    relay,
+                    false,
+                    "relay add",
+                    Some(&error.to_string()),
+                )
+                .await;
             }
         }
     }
@@ -2480,12 +2581,8 @@ impl WorkerRuntime {
         let now = Instant::now();
         let relay_backoff = self.relay_backoff.lock().await;
         let mut selected = Vec::with_capacity(relays.len());
+        let mut delayed: Vec<(RelayUrl, Instant)> = Vec::new();
         for relay in relays {
-            if !is_discouraged_worker_relay(&relay.to_string()) {
-                selected.push(relay);
-                continue;
-            }
-
             let key = normalize_relay_key(&relay.to_string());
             match relay_backoff
                 .get(&key)
@@ -2494,39 +2591,40 @@ impl WorkerRuntime {
                 Some(next_retry_at) if next_retry_at > now => {
                     let wait_secs = next_retry_at.saturating_duration_since(now).as_secs();
                     debug!(
-                        "discouraged worker relay {relay} is in backoff; retrying in {wait_secs}s"
+                        "worker relay {relay} is in backoff; retrying in {wait_secs}s"
                     );
+                    delayed.push((relay, next_retry_at));
                 }
                 _ => {
-                    debug!("trying discouraged worker relay {relay}");
+                    if is_discouraged_worker_relay(&relay.to_string()) {
+                        debug!("trying discouraged worker relay {relay}");
+                    }
                     selected.push(relay);
                 }
+            }
+        }
+        if selected.is_empty() && !delayed.is_empty() {
+            delayed.sort_by_key(|(_, next_retry_at)| *next_retry_at);
+            if let Some((relay, next_retry_at)) = delayed.into_iter().next() {
+                let wait_secs = next_retry_at.saturating_duration_since(now).as_secs();
+                warn!(
+                    "all worker relays are in backoff; trying earliest relay {relay} {wait_secs}s early"
+                );
+                selected.push(relay);
             }
         }
         selected
     }
 
-    async fn record_relay_attempt_result(&self, relay: &RelayUrl, success: bool, label: &str) {
-        if !is_discouraged_worker_relay(&relay.to_string()) {
-            return;
-        }
-        let key = normalize_relay_key(&relay.to_string());
+    async fn record_relay_attempt_result(
+        &self,
+        relay: &RelayUrl,
+        success: bool,
+        label: &str,
+        error: Option<&str>,
+    ) {
         let mut relay_backoff = self.relay_backoff.lock().await;
-        if success {
-            if relay_backoff.remove(&key).is_some() {
-                info!("{label} discouraged relay recovered and will be retried normally: {relay}");
-            }
-            return;
-        }
-
-        let entry = relay_backoff.entry(key).or_default();
-        entry.failures = entry.failures.saturating_add(1);
-        let delay = discouraged_relay_retry_delay(entry.failures);
-        entry.next_retry_at = Some(Instant::now() + delay);
-        warn!(
-            "{label} discouraged relay failed; backing off for {}s before retrying {relay}",
-            delay.as_secs()
-        );
+        record_worker_relay_backoff_result(&mut relay_backoff, relay, success, label, error);
     }
 
     async fn process_control_message(&self, content: &str) -> Result<ControlMessageAction> {
@@ -2667,6 +2765,46 @@ impl WorkerRuntime {
             )
             .await
             .context("failed to subscribe to public definition plane")?;
+
+        for relay in response_output.success.iter() {
+            self.record_relay_attempt_result(relay, true, "public response subscription", None)
+                .await;
+        }
+        for (relay, error) in response_output.failed.iter() {
+            self.record_relay_attempt_result(
+                relay,
+                false,
+                "public response subscription",
+                Some(error.as_str()),
+            )
+            .await;
+        }
+        for relay in delegation_output.success.iter() {
+            self.record_relay_attempt_result(relay, true, "public delegation subscription", None)
+                .await;
+        }
+        for (relay, error) in delegation_output.failed.iter() {
+            self.record_relay_attempt_result(
+                relay,
+                false,
+                "public delegation subscription",
+                Some(error.as_str()),
+            )
+            .await;
+        }
+        for relay in definition_output.success.iter() {
+            self.record_relay_attempt_result(relay, true, "public definition subscription", None)
+                .await;
+        }
+        for (relay, error) in definition_output.failed.iter() {
+            self.record_relay_attempt_result(
+                relay,
+                false,
+                "public definition subscription",
+                Some(error.as_str()),
+            )
+            .await;
+        }
 
         if !response_output.failed.is_empty() {
             warn!(
@@ -4083,12 +4221,89 @@ fn filter_private_dm_relays(relays: Vec<RelayUrl>) -> Vec<RelayUrl> {
         .collect()
 }
 
-fn discouraged_relay_retry_delay(failures: u32) -> Duration {
+fn worker_relay_error_base_secs(error: Option<&str>) -> u64 {
+    let Some(error) = error else {
+        return WORKER_RELAY_INITIAL_BACKOFF_SECS;
+    };
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("initialized but not ready") || lower.contains("not ready") {
+        return 120;
+    }
+    if lower.contains("insufficient resources")
+        || lower.contains("rate")
+        || lower.contains("throttle")
+        || lower.contains("too many")
+    {
+        return 180;
+    }
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return 90;
+    }
+    WORKER_RELAY_INITIAL_BACKOFF_SECS
+}
+
+fn is_immediate_worker_relay_backoff_error(error: Option<&str>) -> bool {
+    let Some(error) = error else {
+        return false;
+    };
+    let lower = error.to_ascii_lowercase();
+    lower.contains("initialized but not ready")
+        || lower.contains("not ready")
+        || lower.contains("insufficient resources")
+        || lower.contains("rate")
+        || lower.contains("throttle")
+        || lower.contains("too many")
+}
+
+fn worker_relay_retry_delay(failures: u32, error: Option<&str>) -> Duration {
     let exponent = failures.saturating_sub(1).min(10);
-    let secs = DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS
+    let secs = worker_relay_error_base_secs(error)
         .saturating_mul(2u64.saturating_pow(exponent))
-        .min(DISCOURAGED_RELAY_MAX_BACKOFF_SECS);
+        .min(WORKER_RELAY_MAX_BACKOFF_SECS);
     Duration::from_secs(secs)
+}
+
+fn record_worker_relay_backoff_result(
+    relay_backoff: &mut HashMap<String, RelayBackoffState>,
+    relay: &RelayUrl,
+    success: bool,
+    label: &str,
+    error: Option<&str>,
+) {
+    let key = normalize_relay_key(&relay.to_string());
+    if success {
+        if relay_backoff.remove(&key).is_some() {
+            info!("{label} relay recovered and will be retried normally: {relay}");
+        }
+        return;
+    }
+
+    let entry = relay_backoff.entry(key).or_default();
+    entry.failures = entry.failures.saturating_add(1);
+    if entry.failures < WORKER_RELAY_FAILURES_BEFORE_BACKOFF
+        && !is_immediate_worker_relay_backoff_error(error)
+    {
+        debug!(
+            "{label} relay failure recorded for {relay}; waiting for repeat failure before backoff"
+        );
+        return;
+    }
+
+    let delay = worker_relay_retry_delay(entry.failures, error);
+    entry.next_retry_at = Some(Instant::now() + delay);
+    let relay_kind = if is_discouraged_worker_relay(&relay.to_string()) {
+        "discouraged "
+    } else {
+        ""
+    };
+    warn!(
+        "{label} {relay_kind}relay failed; backing off for {}s before retrying {relay}",
+        delay.as_secs()
+    );
+}
+
+fn discouraged_relay_retry_delay(failures: u32) -> Duration {
+    worker_relay_retry_delay(failures, None)
 }
 
 fn sanitize_control_relay_strings(relays: &[String]) -> Vec<String> {
@@ -6512,6 +6727,17 @@ mod tests {
         assert_eq!(
             discouraged_relay_retry_delay(20),
             Duration::from_secs(DISCOURAGED_RELAY_MAX_BACKOFF_SECS)
+        );
+    }
+
+    #[test]
+    fn worker_relay_retry_delay_treats_not_ready_as_immediate_backoff() {
+        assert!(is_immediate_worker_relay_backoff_error(Some(
+            "relay is initialized but not ready"
+        )));
+        assert_eq!(
+            worker_relay_retry_delay(1, Some("relay is initialized but not ready")),
+            Duration::from_secs(120)
         );
     }
 

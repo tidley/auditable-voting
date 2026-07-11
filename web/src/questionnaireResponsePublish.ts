@@ -1,6 +1,6 @@
 import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
-import { recordRelayOutcome, rankRelaysByBackoff } from "./relayBackoff";
+import { recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff } from "./relayBackoff";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
@@ -98,10 +98,11 @@ type PublicPublishOptions = {
 };
 
 function buildPublicRelays(relays?: string[], includeDefaultRelays = true) {
-  return rankRelaysByBackoff(normalizeRelaysRust([
+  const ranked = rankRelaysByBackoff(normalizeRelaysRust([
     ...(relays ?? []),
     ...(includeDefaultRelays ? SIMPLE_PUBLIC_RELAYS : []),
   ]));
+  return selectRelaysWithBackoff(ranked, ranked.length);
 }
 
 function decodeNsecSecretKey(nsec: string) {

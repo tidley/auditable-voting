@@ -11,7 +11,7 @@ import {
   type SimpleShardCertificate,
   type SimplePublicShardProof,
 } from "./simpleShardCertificate";
-import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff } from "./relayBackoff";
+import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff, withRelayOutcomes } from "./relayBackoff";
 import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_PUBLIC_RELAYS = [
@@ -271,11 +271,11 @@ export async function fetchLatestSimpleLiveVote(input: {
     fallbackRelays: buildPublicRelays(input.relays),
   }));
   const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await withRelayOutcomes(relays, pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_KIND],
     authors: [coordinatorHex],
     limit: 20,
-  });
+  }));
 
   const sessions = events
     .map((event) => parseSimpleLiveVoteEvent(event, input.coordinatorNpub))
@@ -317,11 +317,11 @@ export function subscribeLatestSimpleLiveVote(input: {
     };
 
     const refreshFromHistory = async () => {
-      const events = await pool.querySync(relays, {
+      const events = await withRelayOutcomes(relays, pool.querySync(relays, {
         kinds: [SIMPLE_LIVE_VOTE_KIND],
         authors: [coordinatorHex],
         limit: 20,
-      });
+      }));
 
       for (const event of events) {
         const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
@@ -416,11 +416,11 @@ export function subscribeSimpleLiveVotes(input: {
     };
 
     const refreshFromHistory = async () => {
-      const events = await pool.querySync(relays, {
+      const events = await withRelayOutcomes(relays, pool.querySync(relays, {
         kinds: [SIMPLE_LIVE_VOTE_KIND],
         authors: [coordinatorHex],
         limit: 100,
-      });
+      }));
 
       for (const event of events) {
         const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
@@ -488,10 +488,10 @@ export async function fetchSimpleLiveVotes(input?: {
 }): Promise<SimpleLiveVoteSession[]> {
   const relays = selectPublicReadRelays(buildPublicRelays(input?.relays));
   const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await withRelayOutcomes(relays, pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_KIND],
     limit: 200,
-  });
+  }));
 
   return sortByCreatedAtDescending(
     events
@@ -602,11 +602,11 @@ export async function fetchSimpleSubmittedVotes(input: {
 }): Promise<SimpleSubmittedVote[]> {
   const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
   const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await withRelayOutcomes(relays, pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
     "#d": [input.votingId],
     limit: 200,
-  });
+  }));
 
   const votes = new Map<string, SimpleSubmittedVote>();
 
@@ -636,11 +636,11 @@ export function subscribeSimpleSubmittedVotes(input: {
   };
 
   const refreshFromHistory = async () => {
-    const events = await pool.querySync(relays, {
+    const events = await withRelayOutcomes(relays, pool.querySync(relays, {
       kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
       "#d": [input.votingId],
       limit: 200,
-    });
+    }));
 
     for (const event of events) {
       const vote = await parseSimpleSubmittedVoteEvent(event, input.votingId);

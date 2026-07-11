@@ -6,6 +6,7 @@ import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 import { decodeNsec } from "./nostrIdentity";
 import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
+import { recordRelayOutcome, selectRelaysWithBackoff } from "./relayBackoff";
 
 export const OPTIONA_WORKER_DELEGATION_KIND = 31994;
 export const OPTIONA_WORKER_DELEGATION_REVOCATION_KIND = 31995;
@@ -221,7 +222,8 @@ async function publishWorkerControlEvent(input: {
     tags: input.tags,
     content: input.content,
   }, secretKey);
-  const relays = normalizeRelaysRust([...(input.relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
+  const allRelays = normalizeRelaysRust([...(input.relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
+  const relays = selectRelaysWithBackoff(allRelays, allRelays.length);
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
     () => publishToRelaysStaggered(
@@ -235,6 +237,9 @@ async function publishWorkerControlEvent(input: {
     },
   );
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, relays[index]));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
   return {
     event,
     eventId: event.id,

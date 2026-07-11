@@ -2037,6 +2037,7 @@ code {
 
 .simple-sidebar-readiness-entry-icon {
   display: inline-grid;
+  position: relative;
   width: 34px;
   height: 34px;
   place-items: center;
@@ -2289,6 +2290,15 @@ code {
 
 .simple-coordinator-nav-button.has-unread-message {
   color: var(--simple-text);
+}
+
+.simple-coordinator-message-unread-dot {
+  top: 4px;
+  right: 4px;
+  width: 9px;
+  height: 9px;
+  background: #f97316;
+  box-shadow: 0 0 0 2px #0c1722, 0 0 12px rgba(249, 115, 22, 0.72);
 }
 
 .simple-coordinator-nav-symbol .simple-message-unread-dot {
