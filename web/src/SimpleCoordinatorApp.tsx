@@ -167,6 +167,10 @@ import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 
 type CoordinatorTab = "configure" | "proxy" | "participants" | "messages" | "settings";
+type PendingParticipantSettings = {
+  proxyVoter?: boolean;
+  ballotGroup?: string | null;
+};
 
 export const SIMPLE_COORDINATOR_MENU_NAV_EVENT = "auditable-voting:coordinator-menu-nav";
 
@@ -1490,6 +1494,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [draftQuestionnaireId, setDraftQuestionnaireId] = useState("");
   const [questionnaireReadinessItems, setQuestionnaireReadinessItems] = useState<QuestionnaireReadinessItem[]>(DEFAULT_QUESTIONNAIRE_READINESS_ITEMS);
   const [proxySetupSignal, setProxySetupSignal] = useState(0);
+  const [pendingParticipantSettingsByNpub, setPendingParticipantSettingsByNpub] = useState<Record<string, PendingParticipantSettings>>({});
   const [setupFocusRequest, setSetupFocusRequest] = useState<{ target: QuestionnaireSetupFocusTarget; signal: number }>({
     target: "basics",
     signal: 0,
@@ -1630,6 +1635,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   useEffect(() => {
     participantNoteDraftsRef.current = {};
     participantNoteFocusRef.current = null;
+    participantBallotGroupFocusRef.current = null;
+    setPendingParticipantSettingsByNpub({});
   }, [activeCoordinatorNpub, optionAElectionId]);
   const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
   const optionACoordinatorRuntime = useMemo(() => (
@@ -2138,6 +2145,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const currentQuestionnaireEntry = participant.currentQuestionnaireEntry;
       const pendingAuthorization = participant.pendingAuthorization;
       const privateInviteEntry = participant.privateInviteEntry;
+      const pendingSettings = pendingAuthorization ? pendingParticipantSettingsByNpub[participant.npub] : undefined;
       const submissionEntry = participant.submissionEntry;
       const responseDetail = submissionEntry?.responseDetail ?? participant.responseDetail;
       const responseIdentityNpub = submissionEntry?.submission.responseNpub?.trim()
@@ -2205,12 +2213,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         isResultOnlyParticipant,
         canUseCurrentInviteActions,
         canToggleProxyVoter,
-        canSetBallotGroup: Boolean(participant.admittedEntry || privateInviteEntry || currentQuestionnaireEntry),
-        proxyVoterEnabled: participant.admittedEntry?.proxyVoter === true
+        canSetBallotGroup: Boolean(participant.admittedEntry || pendingAuthorization || privateInviteEntry || currentQuestionnaireEntry),
+        proxyVoterEnabled: pendingSettings?.proxyVoter
+          ?? (participant.admittedEntry?.proxyVoter === true
           || currentQuestionnaireEntry?.credentialsPerVoter === 2
-          || privateInviteEntry?.credentialsPerVoter === 2,
+          || privateInviteEntry?.credentialsPerVoter === 2),
         ballotGroupValue: normaliseQuestionnaireBallotGroup(
-          participant.admittedEntry?.ballotGroup
+          (Object.prototype.hasOwnProperty.call(pendingSettings ?? {}, "ballotGroup") ? pendingSettings?.ballotGroup : undefined)
+          ?? participant.admittedEntry?.ballotGroup
           ?? privateInviteEntry?.ballotGroup
           ?? currentQuestionnaireEntry?.ballotGroup,
         ) ?? "",
@@ -2392,7 +2402,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             <UiSwitch
               aria-label='Proxy voter'
               isSelected={state.proxyVoterEnabled}
-              onChange={(selected) => updateParticipantProxyVoter(participant.npub, selected)}
+              onChange={(selected) => updateParticipantProxyVoter(participant, selected)}
             />
           ) : state.isPrivateInviteClaimant ? (
             <span className={`simple-admitted-voter-proxy-label${state.proxyVoterEnabled ? " is-proxy" : ""}`}>
@@ -2478,6 +2488,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     copyPrivateInviteCodeLink,
     getPrivateInviteCodeLink,
     isCopyLabelActive,
+    pendingParticipantSettingsByNpub,
     removeVoterAdmission,
     revokePrivateInviteCode,
     sendInviteToKnownVoter,
@@ -5068,10 +5079,24 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   function updateParticipantBallotGroup(participant: ParticipantDisplayRow, ballotGroup: string | null) {
     const nextBallotGroup = normaliseQuestionnaireBallotGroup(ballotGroup);
     const coordinatorNpub = activeCoordinatorNpub.trim();
-    if (participant.admittedEntry && coordinatorNpub) {
+    const participantNpub = participant.npub.trim();
+    const hasWhitelistEntry = Boolean(optionACoordinatorRuntime?.getSnapshot()?.whitelist?.[participantNpub]);
+    const isPendingManualApproval = Boolean(participant.pendingAuthorization && !participant.currentQuestionnaireEntry && !hasWhitelistEntry);
+    if (isPendingManualApproval && participantNpub) {
+      setPendingParticipantSettingsByNpub((current) => ({
+        ...current,
+        [participantNpub]: {
+          ...current[participantNpub],
+          ballotGroup: nextBallotGroup,
+        },
+      }));
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      return;
+    }
+    if (participant.admittedEntry && coordinatorNpub && participantNpub) {
       const next = updateAdmittedVoter({
         coordinatorNpub,
-        npub: participant.npub,
+        npub: participantNpub,
         patch: { ballotGroup: nextBallotGroup },
       });
       refreshAdmittedVoterRoster(next);
@@ -5079,19 +5104,32 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (participant.privateInviteEntry) {
       optionACoordinatorRuntime?.setBearerInviteCodeBallotGroup(participant.privateInviteEntry.codeHash, nextBallotGroup);
     }
-    if (optionACoordinatorRuntime && participant.npub.trim()) {
-      const hasWhitelistEntry = Boolean(optionACoordinatorRuntime.getSnapshot()?.whitelist?.[participant.npub]);
+    if (optionACoordinatorRuntime && participantNpub) {
       if (hasWhitelistEntry) {
-        optionACoordinatorRuntime.setWhitelistBallotGroup(participant.npub, nextBallotGroup);
+        optionACoordinatorRuntime.setWhitelistBallotGroup(participantNpub, nextBallotGroup);
       }
     }
     setKnownVoterInviteRefreshNonce((value) => value + 1);
     void syncActiveWorkerElectionConfig().catch(() => false);
   }
 
-  function updateParticipantProxyVoter(npub: string, proxyVoter: boolean) {
+  function updateParticipantProxyVoter(participant: ParticipantDisplayRow, proxyVoter: boolean) {
     const coordinatorNpub = activeCoordinatorNpub.trim();
-    if (!coordinatorNpub) {
+    const npub = participant.npub.trim();
+    if (!coordinatorNpub || !npub) {
+      return;
+    }
+    const hasWhitelistEntry = Boolean(optionACoordinatorRuntime?.getSnapshot()?.whitelist?.[npub]);
+    const isPendingManualApproval = Boolean(participant.pendingAuthorization && !participant.currentQuestionnaireEntry && !hasWhitelistEntry);
+    if (isPendingManualApproval) {
+      setPendingParticipantSettingsByNpub((current) => ({
+        ...current,
+        [npub]: {
+          ...current[npub],
+          proxyVoter,
+        },
+      }));
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
       return;
     }
     let next = admittedVoters;
@@ -5383,9 +5421,17 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }
     }
     if (electionId === optionAElectionId.trim()) {
+      const pendingManualApprovalNpubs = new Set(
+        optionAPendingAuthorizations
+          .map((entry) => entry.invitedNpub.trim())
+          .filter((npub) => npub.length > 0 && !whitelistByNpub.has(npub)),
+      );
       for (const npub of admittedVoterAutoApplyNpubs) {
         const normalized = npub.trim();
         if (!normalized) {
+          continue;
+        }
+        if (pendingManualApprovalNpubs.has(normalized)) {
           continue;
         }
         const existing = whitelistByNpub.get(normalized) ?? { credentialsPerVoter: 1 as const, ballotGroup: null };
@@ -6056,12 +6102,43 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       return;
     }
     try {
-      admitVotersToRoster([invitedNpub], "manual", { silent: true });
-      const roster = loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub });
-      const credentialsPerVoter = roster[invitedNpub]?.proxyVoter === true ? 2 : 1;
-      const ballotGroup = normaliseQuestionnaireBallotGroup(roster[invitedNpub]?.ballotGroup);
+      const normalizedInvitedNpub = invitedNpub.trim();
+      const stagedSettings = pendingParticipantSettingsByNpub[normalizedInvitedNpub];
+      admitVotersToRoster([normalizedInvitedNpub], "manual", { silent: true });
+      let roster = loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub });
+      if (stagedSettings) {
+        const patch: { proxyVoter?: boolean; ballotGroup?: string | null } = {};
+        if (typeof stagedSettings.proxyVoter === "boolean") {
+          patch.proxyVoter = stagedSettings.proxyVoter;
+        }
+        if (Object.prototype.hasOwnProperty.call(stagedSettings, "ballotGroup")) {
+          patch.ballotGroup = normaliseQuestionnaireBallotGroup(stagedSettings.ballotGroup);
+        }
+        roster = updateAdmittedVoter({
+          coordinatorNpub: activeCoordinatorNpub,
+          npub: normalizedInvitedNpub,
+          patch,
+        });
+        refreshAdmittedVoterRoster(roster);
+      }
+      const credentialsPerVoter = (typeof stagedSettings?.proxyVoter === "boolean"
+        ? stagedSettings.proxyVoter
+        : roster[normalizedInvitedNpub]?.proxyVoter === true)
+        ? 2
+        : 1;
+      const ballotGroup = Object.prototype.hasOwnProperty.call(stagedSettings ?? {}, "ballotGroup")
+        ? normaliseQuestionnaireBallotGroup(stagedSettings?.ballotGroup)
+        : normaliseQuestionnaireBallotGroup(roster[normalizedInvitedNpub]?.ballotGroup);
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
       await syncActiveWorkerElectionConfig().catch(() => false);
+      setPendingParticipantSettingsByNpub((current) => {
+        if (!current[normalizedInvitedNpub]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[normalizedInvitedNpub];
+        return next;
+      });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       setInviteFeedbackStatus(`Authorised and invited ${deriveActorDisplayId(invitedNpub)}. Sending invite...`, options?.statusTarget);
       await sendInviteToKnownVoter(invitedNpub, { statusTarget: options?.statusTarget });
