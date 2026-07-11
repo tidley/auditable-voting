@@ -956,9 +956,11 @@ code {
   left: 0;
   z-index: 500;
   isolation: isolate;
+  box-sizing: border-box;
   display: grid;
   gap: 24px;
   width: min(800px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
   padding: 24px 30px 26px;
   border: 1px solid var(--simple-border);
   border-radius: 8px;
@@ -9335,6 +9337,11 @@ code {
     max-width: calc(100vw - 28px);
     padding: 18px;
     box-shadow: 24px 0 44px rgba(0, 0, 0, 0.42);
+  }
+
+  .simple-coordinator-shell:not(.is-sidebar-collapsed) .simple-coordinator-sidebar .simple-account-menu {
+    width: 100%;
+    max-width: 100%;
   }
 
   .simple-coordinator-shell:not(.is-sidebar-collapsed) .simple-coordinator-sidebar-backdrop {
