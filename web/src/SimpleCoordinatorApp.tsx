@@ -5465,14 +5465,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, optionAKnownVoterCount, whitelistNpubs.length) + unclaimedPrivateInviteCount;
-    if (
-      delegation.capabilities.includes("issue_blind_tokens")
-      && expectedInviteeCount === 0
-      && whitelistNpubs.length === 0
-      && workerBearerInviteCodes.length === 0
-    ) {
-      return null;
-    }
     const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
     return {
       workerNpub: delegation.workerNpub,

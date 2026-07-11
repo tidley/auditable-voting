@@ -4096,6 +4096,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       .filter((entry) => entry.credentialsPerVoter === 2)
       .map((entry) => entry.invitedNpub.trim())
       .filter((entry) => entry.length > 0);
+    const ballotGroupsByNpub = Object.fromEntries(
+      Object.values(coordinatorState?.whitelist ?? {})
+        .map((entry) => [entry.invitedNpub.trim(), normaliseQuestionnaireBallotGroup(entry.ballotGroup)] as const)
+        .filter((entry): entry is readonly [string, string] => entry[0].length > 0 && Boolean(entry[1])),
+    );
     const bearerInviteCodes = Object.values(coordinatorState?.bearerInviteCodes ?? {});
     const unclaimedPrivateInviteCount = bearerInviteCodes
       .filter((entry) => entry.state !== "revoked")
@@ -4104,9 +4109,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
-    const hasWorkerEligibilityConfig = expectedInviteeCount > 0 || whitelistNpubs.length > 0 || bearerInviteCodes.length > 0;
     const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot | null = needsElectionConfigDm
-      && (!delegatedWorkerCapabilities.includes("issue_blind_tokens") || hasWorkerEligibilityConfig)
       ? {
         type: "worker_election_config",
         schemaVersion: 1,
@@ -4117,6 +4120,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         expectedInviteeCount,
         whitelistNpubs,
         proxyVoterNpubs,
+        ballotGroupsByNpub,
         bearerInviteCodes,
         eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")

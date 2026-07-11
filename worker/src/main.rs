@@ -1182,6 +1182,15 @@ fn is_empty_worker_election_config_without_eligibility(
     if snapshot.expected_invitee_count != Some(0) {
         return false;
     }
+    let carries_worker_material = snapshot.blind_signing_private_key.is_some()
+        || snapshot.definition_reference.is_some()
+        || snapshot.definition.is_some();
+    let existing_has_eligibility = known_expected_invitee_count(election).is_some()
+        || !election.whitelist_npubs.is_empty()
+        || !election.bearer_invite_codes.is_empty();
+    if carries_worker_material && !existing_has_eligibility {
+        return false;
+    }
     let requires_eligibility = snapshot.eligibility_required == Some(true)
         || election
             .capabilities
@@ -4356,7 +4365,7 @@ fn prune_seen_control_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::QuestionnaireBlindPrivateKey;
+    use crate::model::{QuestionnaireBlindPrivateKey, QuestionnaireDefinitionReference};
     use blind_rsa_signatures::{DefaultRng, KeyPairSha384PSSDeterministic};
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
@@ -5350,6 +5359,61 @@ mod tests {
         );
         assert!(election.eligibility_configured);
         assert!(!election.eligibility_required);
+    }
+
+    #[test]
+    fn empty_blind_worker_election_config_with_key_material_can_apply_initially() {
+        let mut election = ElectionRuntimeState::default();
+        let snapshot = WorkerElectionConfigSnapshot {
+            message_type: "worker_election_config".to_string(),
+            schema_version: 1,
+            election_id: "q_worker_definition".to_string(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
+                .to_string(),
+            worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
+            expected_invitee_count: Some(0),
+            whitelist_npubs: Some(vec![]),
+            proxy_voter_npubs: None,
+            ballot_groups_by_npub: None,
+            bearer_invite_codes: Some(vec![]),
+            eligibility_required: Some(true),
+            blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                scheme: "rsa-blind-pss-sha384".to_string(),
+                key_id: "private-key-id".to_string(),
+                jwk: json!({}),
+                private_jwk: json!({}),
+            }),
+            definition_reference: Some(QuestionnaireDefinitionReference {
+                questionnaire_id: "q_worker_definition".to_string(),
+                coordinator_npub: Some(
+                    "npub1coordinator000000000000000000000000000000000000000000".to_string(),
+                ),
+                relays: Some(vec!["wss://relay.nostr.net".to_string()]),
+                definition_hash: Some("definition-hash".to_string()),
+                definition_event_id: Some("definition-event".to_string()),
+                created_at: Some(1_781_200_000),
+            }),
+            definition: None,
+            sent_at: "2026-06-15T20:09:03.000Z".to_string(),
+        };
+
+        assert!(apply_worker_election_config(&mut election, &snapshot));
+        assert_eq!(election.expected_invitee_count, Some(0));
+        assert!(election.eligibility_configured);
+        assert!(election.eligibility_required);
+        assert_eq!(
+            election
+                .blind_signing_private_key
+                .as_ref()
+                .map(|key| key.key_id.as_str()),
+            Some("private-key-id"),
+        );
+        assert_eq!(election.definition_hash.as_deref(), Some("definition-hash"));
+        assert_eq!(
+            election.definition_event_id.as_deref(),
+            Some("definition-event")
+        );
     }
 
     fn active_public_submission_election() -> ElectionRuntimeState {

@@ -1299,7 +1299,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
         coordinatorNpub={coordinatorNpub}
         coordinatorNsec={coordinatorNsec}
         draftQuestionnaireId={questionnaireId}
-        knownVoterCount={1}
+        knownVoterCount={0}
       />,
     );
 
@@ -1309,6 +1309,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledWith(expect.objectContaining({
         snapshot: expect.objectContaining({
           delegationId: activeDelegation.delegationId,
+          expectedInviteeCount: 0,
           blindSigningPrivateKey: expect.objectContaining({
             keyId: blindKey.keyId,
           }),
