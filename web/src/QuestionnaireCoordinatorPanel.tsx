@@ -217,6 +217,12 @@ function withNormalisedQuestionBallotGroup(question: QuestionnaireQuestionDraft)
   };
 }
 
+function sameStringSet(left: string[], right: string[]) {
+  const leftSet = new Set(left.map((entry) => entry.trim()).filter(Boolean));
+  const rightSet = new Set(right.map((entry) => entry.trim()).filter(Boolean));
+  return leftSet.size === rightSet.size && [...leftSet].every((entry) => rightSet.has(entry));
+}
+
 function createYesNoQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
   return {
     questionId,
@@ -3955,7 +3961,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     const electionId = questionnaireId.trim();
     const coordinatorNsecTrimmed = coordinatorNsec.trim();
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
-    const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
+    const existingActiveDelegation = activeWorkerDelegation?.electionId === electionId
+      ? activeWorkerDelegation
+      : null;
+    const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub)
+      || normaliseWorkerNpub(existingActiveDelegation?.workerNpub ?? "");
     const expiryMinutes = delegatedWorkerExpiryEnabled
       ? Number.parseInt(delegatedWorkerExpiryMinutes, 10)
       : Number.NaN;
@@ -3981,20 +3991,31 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       return;
     }
     const workerDmRelays = deriveWorkerDmRelays(delegatedWorkerControlRelays);
-    const delegation = createWorkerDelegationCertificate({
-      electionId,
-      coordinatorNpub: coordinatorNpubTrimmed,
-      workerNpub,
-      capabilities: delegatedWorkerCapabilities,
-      controlRelays,
-      expiresAt: new Date(
-        Date.now() + (
-          delegatedWorkerExpiryEnabled
-            ? expiryMinutes
-            : QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES
-        ) * 60 * 1000,
-      ).toISOString(),
-    });
+    const existingActiveDelegationExpiresAtMs = Date.parse(existingActiveDelegation?.expiresAt ?? "");
+    const canReuseActiveDelegation = Boolean(
+      existingActiveDelegation
+      && lastWorkerRevocationState !== "revoked"
+      && (!Number.isFinite(existingActiveDelegationExpiresAtMs) || existingActiveDelegationExpiresAtMs > Date.now())
+      && normaliseWorkerNpub(existingActiveDelegation.workerNpub) === workerNpub
+      && sameStringSet(existingActiveDelegation.capabilities, delegatedWorkerCapabilities)
+      && sameStringSet(existingActiveDelegation.controlRelays, controlRelays),
+    );
+    const delegation = canReuseActiveDelegation && existingActiveDelegation
+      ? existingActiveDelegation
+      : createWorkerDelegationCertificate({
+        electionId,
+        coordinatorNpub: coordinatorNpubTrimmed,
+        workerNpub,
+        capabilities: delegatedWorkerCapabilities,
+        controlRelays,
+        expiresAt: new Date(
+          Date.now() + (
+            delegatedWorkerExpiryEnabled
+              ? expiryMinutes
+              : QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES
+          ) * 60 * 1000,
+        ).toISOString(),
+      });
     const needsElectionConfigDm = delegatedWorkerCapabilities.includes("issue_blind_tokens")
       || delegatedWorkerCapabilities.includes("close_questionnaire")
       || delegatedWorkerCapabilities.includes("publish_result_summary");
@@ -4166,7 +4187,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     if (
       !isProxyBuildPage
       || delegationMode !== "delegated_worker"
-      || activeWorkerDelegation
       || autoConfirmWorkerInFlightRef.current
     ) {
       return;
@@ -4215,6 +4235,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       coordinatorNpubTrimmed,
       recognisedNpub,
       coordinatorState?.blindSigningPrivateKey?.keyId ?? "no-blind-key",
+      activeWorkerDelegation?.delegationId ?? "new-delegation",
       delegatedWorkerCapabilities.join(","),
     ].join(":");
     if (autoConfirmWorkerKeyRef.current === autoConfirmKey) {

@@ -780,6 +780,10 @@ code {
   white-space: nowrap;
 }
 
+.simple-voter-topbar-questionnaire-id.has-ballot {
+  color: #8fb8b5;
+}
+
 .simple-current-role-summary {
   margin: 0 0 0 auto;
   min-width: 0;

@@ -672,6 +672,7 @@ type QuestionnaireOptionAVoterPanelProps = {
   onMessageOrganiser?: (coordinatorNpub?: string) => void;
   onBackToJoin?: () => void;
   onActiveQuestionnaireIdChange?: (questionnaireId: string) => void;
+  onBallotReceivedChange?: (received: boolean) => void;
 };
 
 type PrivateInviteBlockState = {
@@ -3608,6 +3609,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const questionnaireCredentialReady = perQuestionMode
     ? allQuestionCredentialsReadyForQuestionnaire
     : Boolean(snapshotForAction?.credentialReady);
+  useEffect(() => {
+    props.onBallotReceivedChange?.(questionnaireCredentialReady);
+  }, [props.onBallotReceivedChange, questionnaireCredentialReady]);
+  useEffect(() => () => {
+    props.onBallotReceivedChange?.(false);
+  }, [props.onBallotReceivedChange]);
   const questionnaireHasAnyResponse = questions.some(questionHasResponse);
   const canSubmitNow = (
     perQuestionMode

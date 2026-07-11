@@ -76,6 +76,7 @@ import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
 import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
+import { createWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -1199,5 +1200,120 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       coordinatorNpub,
       electionId: "q_proxy_key_recovery",
     })?.blindSigningPrivateKey?.keyId).toBe(publishedBlindKey.keyId);
+  });
+
+  it("resends worker config for the active delegation instead of minting a new delegation", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerNpub = nip19.npubEncode("4".repeat(64));
+    const blindKey = await generateQuestionnaireBlindKeyPair();
+    const questionnaireId = "q_proxy_config_resend";
+    const definition = {
+      ...makeDefinition({
+        questionnaireId,
+        title: "Proxy config resend",
+        coordinatorNpub,
+      }),
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindKey),
+    };
+    const capabilities: WorkerCapability[] = [
+      "issue_blind_tokens",
+      "verify_public_submissions",
+      "publish_submission_decisions",
+      "close_questionnaire",
+      "publish_result_summary",
+    ];
+    const controlRelays = [
+      "wss://vm-1734.lnvps.cloud/",
+      "wss://relay.nostr.net",
+      "wss://nos.lol",
+      "wss://relay.nostr.info",
+      "wss://relay.damus.io",
+      "wss://relay.primal.net",
+    ];
+    const activeDelegation = createWorkerDelegationCertificate({
+      electionId: questionnaireId,
+      coordinatorNpub,
+      workerNpub,
+      capabilities,
+      controlRelays,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    storeCachedQuestionnaireDefinition(definition);
+    const election = {
+      electionId: questionnaireId,
+      title: "Proxy config resend",
+      description: "",
+      state: "draft" as const,
+      openedAt: null,
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: definition.blindSigningPublicKey,
+    };
+    upsertElectionSummary(election);
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        election,
+        whitelist: {},
+        bearerInviteCodes: {},
+        pendingBlindRequests: {},
+        issuedBlindResponses: {},
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        blindSigningPrivateKey: blindKey,
+        lastUpdatedAt: "2026-07-11T14:50:00.000Z",
+      },
+    });
+    upsertStoredWorkerDelegation({
+      electionId: questionnaireId,
+      mode: "delegated_worker",
+      activeDelegation,
+      lastRevocation: null,
+      lastUpdatedAt: "2026-07-11T14:50:00.000Z",
+    });
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId,
+        title: "Proxy config resend",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        delegationMode: "delegated_worker",
+        delegatedWorkerNpub: workerNpub,
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        draftQuestionnaireId={questionnaireId}
+        knownVoterCount={1}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm configuration" }));
+
+    await waitFor(() => {
+      expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledWith(expect.objectContaining({
+        snapshot: expect.objectContaining({
+          delegationId: activeDelegation.delegationId,
+          blindSigningPrivateKey: expect.objectContaining({
+            keyId: blindKey.keyId,
+          }),
+        }),
+      }));
+    });
   });
 });

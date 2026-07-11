@@ -261,6 +261,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [auditorPage, setAuditorPage] = useState<AuditorPage>("gallery");
   const [voterMessagesUnread, setVoterMessagesUnread] = useState(false);
   const [activeVoterQuestionnaireId, setActiveVoterQuestionnaireId] = useState("");
+  const [activeVoterBallotReceived, setActiveVoterBallotReceived] = useState(false);
+  const activeVoterQuestionnaireIdRef = useRef("");
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
   const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState<"qr" | null>(null);
   const [accountIdentityQrSrc, setAccountIdentityQrSrc] = useState<string | null>(null);
@@ -472,9 +474,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   }, []);
   const handleActiveVoterQuestionnaireIdChange = useCallback((questionnaireId: string) => {
     const nextQuestionnaireId = questionnaireId.trim();
-    setActiveVoterQuestionnaireId((current) => (
-      current === nextQuestionnaireId ? current : nextQuestionnaireId
-    ));
+    if (activeVoterQuestionnaireIdRef.current === nextQuestionnaireId) {
+      return;
+    }
+    activeVoterQuestionnaireIdRef.current = nextQuestionnaireId;
+    setActiveVoterQuestionnaireId(nextQuestionnaireId);
+    setActiveVoterBallotReceived(false);
   }, []);
 
   useEffect(() => {
@@ -1071,7 +1076,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               <div id='simple-auditor-topbar-actions' className='simple-auditor-topbar-actions' />
             ) : null}
             {role === "voter" && activeVoterQuestionnaireId ? (
-              <p className='simple-voter-topbar-questionnaire-id' title={activeVoterQuestionnaireId}>
+              <p
+                className={`simple-voter-topbar-questionnaire-id${activeVoterBallotReceived ? " has-ballot" : ""}`}
+                title={activeVoterQuestionnaireId}
+              >
                 {formatQuestionnaireDisplayId(activeVoterQuestionnaireId)}
               </p>
             ) : null}
@@ -1098,6 +1106,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           onActiveTabChange={setVoterTab}
           onIdentityChange={handleVoterIdentityChange}
           onActiveQuestionnaireIdChange={handleActiveVoterQuestionnaireIdChange}
+          onBallotReceivedChange={setActiveVoterBallotReceived}
           onUnreadMessagesChange={setVoterMessagesUnread}
           showSectionTabs={false}
         />
