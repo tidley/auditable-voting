@@ -1,5 +1,6 @@
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import {
+  relayCanAttempt,
   recordRelayOutcome,
 } from "./relayBackoff";
 
@@ -9,6 +10,10 @@ const RELAY_WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
 let activeConnectingWebSockets = 0;
 let activeOpenWebSockets = 0;
 const relaySocketCounts = new Map<string, number>();
+const relayConnectionAttempts = new Map<string, number>();
+const relayConnectionSuccesses = new Map<string, number>();
+const relayConnectionFailures = new Map<string, number>();
+const relayConnectionSkipped = new Map<string, number>();
 
 function normalizeRelayUrl(input: unknown) {
   try {
@@ -25,6 +30,32 @@ function decrementRelaySocketCount(relay: string) {
     return;
   }
   relaySocketCounts.set(relay, current - 1);
+}
+
+function incrementCounter(map: Map<string, number>, relay: string) {
+  map.set(relay, (map.get(relay) ?? 0) + 1);
+}
+
+function getRelayManagerSnapshot() {
+  const relays = new Set([
+    ...relaySocketCounts.keys(),
+    ...relayConnectionAttempts.keys(),
+    ...relayConnectionSuccesses.keys(),
+    ...relayConnectionFailures.keys(),
+    ...relayConnectionSkipped.keys(),
+  ]);
+  return {
+    activeConnectingWebSockets,
+    activeOpenWebSockets,
+    relays: [...relays].sort().map((relay) => ({
+      relay,
+      activeSockets: relaySocketCounts.get(relay) ?? 0,
+      attempts: relayConnectionAttempts.get(relay) ?? 0,
+      successes: relayConnectionSuccesses.get(relay) ?? 0,
+      failures: relayConnectionFailures.get(relay) ?? 0,
+      skipped: relayConnectionSkipped.get(relay) ?? 0,
+    })),
+  };
 }
 
 function configureSafeWebSocketImplementation() {
@@ -47,6 +78,7 @@ function configureSafeWebSocketImplementation() {
     constructor(url: string | URL, protocols?: string | string[]) {
       super(url, protocols);
       this.relayUrl = normalizeRelayUrl(url);
+      incrementCounter(relayConnectionAttempts, this.relayUrl);
       const existingRelaySockets = relaySocketCounts.get(this.relayUrl) ?? 0;
       relaySocketCounts.set(this.relayUrl, existingRelaySockets + 1);
       activeConnectingWebSockets += 1;
@@ -57,11 +89,13 @@ function configureSafeWebSocketImplementation() {
         this.finishConnecting();
         activeOpenWebSockets += 1;
         this.countedOpen = true;
+        incrementCounter(relayConnectionSuccesses, this.relayUrl);
         recordRelayOutcome(this.relayUrl, true);
       });
 
       this.addEventListener("error", () => {
         if (!this.localRejectReason) {
+          incrementCounter(relayConnectionFailures, this.relayUrl);
           recordRelayOutcome(this.relayUrl, false, "websocket error");
         }
       });
@@ -78,12 +112,14 @@ function configureSafeWebSocketImplementation() {
           return;
         }
         if (!this.closedCleanlyByGuard && !event.wasClean && event.code !== 1000) {
+          incrementCounter(relayConnectionFailures, this.relayUrl);
           recordRelayOutcome(this.relayUrl, false, event.reason || `websocket closed with code ${event.code}`);
         }
       });
 
       this.connectTimer = globalThis.setTimeout(() => {
         if (this.readyState === WebSocket.CONNECTING) {
+          incrementCounter(relayConnectionFailures, this.relayUrl);
           recordRelayOutcome(this.relayUrl, false, `relay connection timed out after ${RELAY_WEBSOCKET_CONNECT_TIMEOUT_MS}ms`);
           this.localRejectReason = "relay connection timed out";
           this.closeFromGuard();
@@ -142,10 +178,22 @@ export function getSharedNostrPool() {
     sharedNostrPool = new SimplePool({
       enablePing: true,
       enableReconnect: true,
+      allowConnectingToRelay: (relay) => {
+        const relayUrl = normalizeRelayUrl(relay);
+        if (!relayCanAttempt(relayUrl)) {
+          incrementCounter(relayConnectionSkipped, relayUrl);
+          return false;
+        }
+        return true;
+      },
     });
   }
 
   return sharedNostrPool;
+}
+
+export function getSharedNostrRelayManagerSnapshot() {
+  return getRelayManagerSnapshot();
 }
 
 export function resetSharedNostrPoolForTests() {
@@ -154,4 +202,8 @@ export function resetSharedNostrPoolForTests() {
   activeConnectingWebSockets = 0;
   activeOpenWebSockets = 0;
   relaySocketCounts.clear();
+  relayConnectionAttempts.clear();
+  relayConnectionSuccesses.clear();
+  relayConnectionFailures.clear();
+  relayConnectionSkipped.clear();
 }

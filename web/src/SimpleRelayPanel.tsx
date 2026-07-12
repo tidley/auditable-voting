@@ -8,6 +8,7 @@ import {
 import { SIMPLE_MAILBOX_RELAYS } from './simpleMailbox';
 import { SIMPLE_DM_RELAYS } from './simpleShardDm';
 import { SIMPLE_PUBLIC_RELAYS } from './simpleVotingSession';
+import { getSharedNostrRelayManagerSnapshot } from './sharedNostrPool';
 import { UiButton, UiSwitch, UiTextField } from './ui/DesignLayer';
 
 type RelayStrength = 'checking' | 'strong' | 'fair' | 'weak' | 'offline';
@@ -20,7 +21,7 @@ type RelayProbe = {
 };
 
 const RELAY_PROBE_TIMEOUT_MS = 10000;
-const RELAY_PROBE_CONCURRENCY = 6;
+const RELAY_PROBE_CONCURRENCY = 2;
 const RELAY_PROBE_ATTEMPTS = 2;
 
 function classifyRelayStrength(latencyMs: number): RelayStrength {
@@ -215,6 +216,13 @@ export default function SimpleRelayPanel({
     [displayedQuestionnaireRelays, dmRelays, mailboxRelays, publicRelays],
   );
   const [probesByRelay, setProbesByRelay] = useState<Map<string, RelayProbe>>(() => new Map());
+  const [relayManagerSnapshot, setRelayManagerSnapshot] = useState(() => getSharedNostrRelayManagerSnapshot());
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setRelayManagerSnapshot(getSharedNostrRelayManagerSnapshot());
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     setProbesByRelay(new Map(allDisplayedRelays.map((relay) => [relay, {
@@ -330,6 +338,42 @@ export default function SimpleRelayPanel({
           />
         </div>
       ) : null}
+      <div className='simple-relay-group' aria-label='Relay connection diagnostics'>
+        <h3 className='simple-relay-heading'>Connection diagnostics</h3>
+        <p className='simple-voter-note'>
+          Open sockets: {relayManagerSnapshot.activeOpenWebSockets}; connecting: {relayManagerSnapshot.activeConnectingWebSockets}.
+        </p>
+        {relayManagerSnapshot.relays.length > 0 ? (
+          <div className='simple-voter-table-wrap'>
+            <table className='simple-voter-table'>
+              <thead>
+                <tr>
+                  <th scope='col'>Relay</th>
+                  <th scope='col'>Active</th>
+                  <th scope='col'>Attempts</th>
+                  <th scope='col'>OK</th>
+                  <th scope='col'>Failed</th>
+                  <th scope='col'>Skipped</th>
+                </tr>
+              </thead>
+              <tbody>
+                {relayManagerSnapshot.relays.map((entry) => (
+                  <tr key={entry.relay}>
+                    <th scope='row'>{entry.relay}</th>
+                    <td>{entry.activeSockets}</td>
+                    <td>{entry.attempts}</td>
+                    <td>{entry.successes}</td>
+                    <td>{entry.failures}</td>
+                    <td>{entry.skipped}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className='simple-voter-note'>No relay connections have been attempted in this tab yet.</p>
+        )}
+      </div>
       <RelayProbeList title='Public relays' relays={publicRelays} probesByRelay={probesByRelay} />
       <RelayProbeList title='DM relays' relays={dmRelays} probesByRelay={probesByRelay} />
       <RelayProbeList title='Mailbox relays' relays={mailboxRelays} probesByRelay={probesByRelay} />

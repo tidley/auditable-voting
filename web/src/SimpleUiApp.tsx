@@ -658,7 +658,16 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const hasConfiguredCoordinators = configuredCoordinatorTargets.length > 0;
   const voteTabActive = activeTab === "vote";
   const questionnaireModeActive = questionnaireContext.hasDefinition;
-  const shouldActivateStartupRelayTraffic = (voteTabActive || hasConfiguredCoordinators) && !questionnaireModeActive;
+  const shouldActivateStartupRelayTrafficRaw = (voteTabActive || hasConfiguredCoordinators) && !questionnaireModeActive;
+  const [shouldActivateStartupRelayTraffic, setShouldActivateStartupRelayTraffic] = useState(false);
+  useEffect(() => {
+    if (!shouldActivateStartupRelayTrafficRaw) {
+      setShouldActivateStartupRelayTraffic(false);
+      return;
+    }
+    const timeoutId = window.setTimeout(() => setShouldActivateStartupRelayTraffic(true), 750);
+    return () => window.clearTimeout(timeoutId);
+  }, [shouldActivateStartupRelayTrafficRaw]);
   const hasUnreadMessages = useHelplineUnreadIndicator({
     actorNsec: messagesVoterNsec,
     allowedPeerNpubs: messageCoordinatorTargets,
