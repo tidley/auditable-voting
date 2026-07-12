@@ -1562,7 +1562,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_cached_definition"]} />);
 
     await screen.findByText(/Cached question prompt/);
-    expect(screen.queryByText("Waiting for questions to be published.")).toBeNull();
+    expect(screen.queryByText("Retrieving questions.")).toBeNull();
   });
 
   it("marks the selected yes/no answer visually", async () => {
@@ -1847,7 +1847,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_issued_definition"]} localVoterNpub={localVoterNpub} />);
 
     await screen.findByText(/Issued definition prompt/);
-    expect(screen.queryByText("Waiting for questions to be published.")).toBeNull();
+    expect(screen.queryByText("Retrieving questions.")).toBeNull();
   });
 
   it("keeps submit disabled while a credential exists but no questions are rendered", async () => {
@@ -1891,8 +1891,8 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_missing_definition"]} localVoterNpub={localVoterNpub} />);
 
-    await screen.findByText("Waiting for questions to be published.");
-    expect((screen.getByRole("button", { name: "Please answer all required questions" }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByText("Retrieving questions.");
+    expect((screen.getByRole("button", { name: "Answer required questions to continue" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the submitted responder marker with QR after submission", async () => {

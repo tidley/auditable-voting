@@ -398,7 +398,7 @@ const MANUAL_BALLOT_RESEND_DELAY_MS = 10_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [3_000, 8_000, 20_000, 45_000] as const;
 const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 30_000;
 const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 20_000;
-const AUTO_BALLOT_WAIT_FOREGROUND_REFRESH_MS = 5_000;
+const AUTO_BALLOT_WAIT_FOREGROUND_REFRESH_MS = 15_000;
 const AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS = 5_000;
 const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 30_000;
 const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 15_000;
@@ -1603,7 +1603,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             poll();
           }
         }
-      }, 60000);
+      }, AUTO_BALLOT_WAIT_FOREGROUND_REFRESH_MS);
     };
     poll();
     return () => {
@@ -4512,7 +4512,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <p className='simple-voter-note'>
           {snapshot?.submissionAccepted === true
             ? "Response accepted. Questionnaire details are not loaded in this browser."
-            : "Waiting for questions to be published."}
+            : "Retrieving questions."}
         </p>
       ) : (
         <div className='simple-questionnaire-voter-list'>
