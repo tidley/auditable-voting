@@ -7167,6 +7167,35 @@ code {
   line-height: 1.45;
 }
 
+.simple-questionnaire-voter-landing {
+  min-height: min(58vh, 520px);
+  align-content: start;
+  gap: 28px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.simple-questionnaire-voter-id-value {
+  margin: 0;
+  color: var(--simple-teal);
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: clamp(1.35rem, 6vw, 2.6rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.simple-questionnaire-voter-landing-action {
+  display: flex;
+  justify-content: stretch;
+  margin-top: auto;
+}
+
+.simple-questionnaire-voter-landing-action .simple-voter-primary {
+  width: 100%;
+  min-height: 56px;
+}
+
 .simple-optiona-voter-controls {
   justify-content: flex-end;
   margin-top: 16px;

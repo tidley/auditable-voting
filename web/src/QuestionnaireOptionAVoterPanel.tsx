@@ -793,6 +793,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     maxLength?: number;
     encryptResponses?: boolean;
   }>>([]);
+  const [questionnaireStarted, setQuestionnaireStarted] = useState(false);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [activeCredentialIndex, setActiveCredentialIndex] = useState(1);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -862,6 +863,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   };
   const linkedContextElectionId = inviteContext.electionId?.trim() ?? "";
   const currentQuestionnaireId = snapshot?.electionId?.trim() || electionId.trim() || linkedContextElectionId || latestAnnouncedQuestionnaireId.trim();
+  useEffect(() => {
+    setQuestionnaireStarted(false);
+  }, [currentQuestionnaireId]);
   const draftPersistenceVoterNpub = signedInNpub.trim() || snapshot?.invitedNpub?.trim() || props.localVoterNpub?.trim() || "";
   const draftPersistenceKey = useMemo(
     () => optionAVoterDraftStorageKey(currentQuestionnaireId, draftPersistenceVoterNpub),
@@ -4276,6 +4280,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const showQuestionnaireDescription = Boolean(
     questionnaireDescriptionText && questionnaireDescriptionText !== questionnaireHeadingText,
   );
+  const showQuestionnaireLanding = questions.length > 0
+    && !questionnaireStarted
+    && !responseSubmittedForCurrentQuestionnaire
+    && !allQuestionResponsesSubmitted;
   const ballotStatusSection = (
     <section id='questionnaire-ballot-status' className='simple-settings-card' aria-label='Ballot status'>
       <h4 className='simple-voter-section-title'>Ballot status</h4>
@@ -4500,14 +4508,33 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </section>
       ) : null}
       {privateInviteBlockCard}
-      <section className='simple-questionnaire-voter-overview' aria-label='Questionnaire summary'>
-        <div className='simple-questionnaire-voter-title-block'>
-          <h4 className='simple-questionnaire-voter-prompt'>{questionnaireHeadingText}</h4>
-          {showQuestionnaireDescription ? (
-            <p className='simple-questionnaire-voter-description'>{questionnaireDescriptionText}</p>
-          ) : null}
-        </div>
-      </section>
+      {showQuestionnaireLanding ? (
+        <section className='simple-questionnaire-voter-overview simple-questionnaire-voter-landing' aria-label='Questionnaire start'>
+          <div className='simple-questionnaire-voter-title-block'>
+            <p className='simple-account-menu-kicker'>Voter ID</p>
+            <p className='simple-questionnaire-voter-id-value'>
+              {voterIdentityForDetails ? deriveActorDisplayId(voterIdentityForDetails) : "pending"}
+            </p>
+          </div>
+          <div className='simple-questionnaire-voter-title-block'>
+            <p className='simple-account-menu-kicker'>Questionnaire</p>
+            <h4 className='simple-questionnaire-voter-prompt'>{questionnaireHeadingText}</h4>
+            {showQuestionnaireDescription ? (
+              <p className='simple-questionnaire-voter-description'>{questionnaireDescriptionText}</p>
+            ) : null}
+          </div>
+          <div className='simple-questionnaire-voter-landing-action'>
+            <UiButton
+              icon='chevronRight'
+              iconPosition='end'
+              className='simple-voter-primary'
+              onPress={() => setQuestionnaireStarted(true)}
+            >
+              Start
+            </UiButton>
+          </div>
+        </section>
+      ) : null}
 
       {questions.length === 0 ? (
         <p className='simple-voter-note'>
@@ -4515,7 +4542,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             ? "Response accepted. Questionnaire details are not loaded in this browser."
             : "Retrieving questions."}
         </p>
-      ) : (
+      ) : showQuestionnaireLanding ? null : (
         <div className='simple-questionnaire-voter-list'>
           {showQuestionNavigation ? (
             <div className='simple-questionnaire-question-stepper is-single-group' aria-label='Question progress'>
@@ -4662,7 +4689,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </div>
       )}
 
-      {showVoteActionButton || showAnswerNextButton ? (
+      {!showQuestionnaireLanding && (showVoteActionButton || showAnswerNextButton) ? (
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
         {showVoteActionButton ? (
           <UiButton

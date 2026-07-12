@@ -1680,6 +1680,10 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_waiting_button_copy"]} />);
 
+    expect(await screen.findByRole("button", { name: "Start" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    expect(screen.queryByText("Cached questionnaire")).toBeNull();
+    expect(screen.queryByText("Cached description")).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Yes" }));
 
     const submitButton = screen.getByRole("button", { name: "1/3 Confirming identity" }) as HTMLButtonElement;
@@ -1783,6 +1787,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
   });
 
   it("renders questions from the blind issuance definition when public definition fetch is empty", async () => {
+    const user = userEvent.setup();
     const localVoterNpub = "npub1" + "e".repeat(58);
     const definition = {
       schemaVersion: 1 as const,
@@ -1846,7 +1851,12 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_issued_definition"]} localVoterNpub={localVoterNpub} />);
 
+    expect(await screen.findByText("Issued questionnaire")).toBeTruthy();
+    expect(screen.getByText("Definition delivered with issuance")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Start" }));
     await screen.findByText(/Issued definition prompt/);
+    expect(screen.queryByText("Issued questionnaire")).toBeNull();
+    expect(screen.queryByText("Definition delivered with issuance")).toBeNull();
     expect(screen.queryByText("Retrieving questions.")).toBeNull();
   });
 
@@ -2476,6 +2486,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_proxy_together"]} localVoterNpub={localVoterNpub} />);
 
+    await user.click(await screen.findByRole("button", { name: "Start" }));
     const firstVote = await screen.findByRole("region", { name: "Separate vote 1 of 2" });
     const secondVote = screen.getByRole("region", { name: "Separate vote 2 of 2" });
     await user.click(within(firstVote).getByRole("button", { name: "Yes" }));
