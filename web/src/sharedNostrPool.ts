@@ -1,15 +1,11 @@
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import {
   recordRelayOutcome,
-  relayCanAttempt,
-  relayCooldownRemainingMs,
 } from "./relayBackoff";
 
 let sharedNostrPool: SimplePool | null = null;
 let safeWebSocketConfigured = false;
-const RELAY_WEBSOCKET_CONNECT_TIMEOUT_MS = 5_000;
-const RELAY_WEBSOCKET_MAX_CONNECTING = 6;
-const RELAY_WEBSOCKET_MAX_OPEN = 12;
+const RELAY_WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
 let activeConnectingWebSockets = 0;
 let activeOpenWebSockets = 0;
 const relaySocketCounts = new Map<string, number>();
@@ -85,25 +81,6 @@ function configureSafeWebSocketImplementation() {
           recordRelayOutcome(this.relayUrl, false, event.reason || `websocket closed with code ${event.code}`);
         }
       });
-
-      const cooldownMs = relayCooldownRemainingMs(this.relayUrl);
-      if (!relayCanAttempt(this.relayUrl)) {
-        this.localRejectReason = `relay circuit open for ${cooldownMs}ms`;
-        this.closeFromGuard();
-        return;
-      }
-
-      if (existingRelaySockets > 0) {
-        this.localRejectReason = "relay already has an active socket";
-        this.closeFromGuard();
-        return;
-      }
-
-      if (activeConnectingWebSockets > RELAY_WEBSOCKET_MAX_CONNECTING || activeOpenWebSockets >= RELAY_WEBSOCKET_MAX_OPEN) {
-        this.localRejectReason = "browser relay connection cap reached";
-        this.closeFromGuard();
-        return;
-      }
 
       this.connectTimer = globalThis.setTimeout(() => {
         if (this.readyState === WebSocket.CONNECTING) {
