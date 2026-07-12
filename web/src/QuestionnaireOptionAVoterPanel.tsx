@@ -3621,7 +3621,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ? Boolean(snapshotForAction?.loginVerified && activeQuestionCredentialReady)
       : flags.canSubmitVote
   )
-    && (perQuestionMode ? requiredQuestionsAnsweredForAction : allQuestionsAnsweredForQuestionnaire)
+    && (perQuestionMode ? requiredQuestionsAnsweredForAction : requiredQuestionsAnswered)
     && (perQuestionMode ? answerableQuestionsHaveResponseForAction : questionnaireHasAnyResponse)
     && !responseSubmittedForCurrentQuestionnaire;
   const canAdvanceQuestion = perQuestionMode && responseSubmittedForCurrentQuestionnaire && !allQuestionResponsesSubmitted;
@@ -3641,7 +3641,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && hasAdjacentQuestion
     && nextQuestionIndex < 0;
   const showSubmitFromQuestionNav = isLastQuestionInQuestionNav
-    && allQuestionsAnsweredForQuestionnaire
+    && requiredQuestionsAnswered
+    && questionnaireHasAnyResponse
     && !allQuestionResponsesSubmitted;
   const showViewResultsFromQuestionNav = isLastQuestionInQuestionNav && canViewResults;
   const canSubmitFromQuestionNav = showSubmitFromQuestionNav
