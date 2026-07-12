@@ -3403,12 +3403,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
           </section>
         ) : null}
 
-        {activeTab === 'vote' ? (
-          <section
-            className='simple-voter-tab-panel'
-            role='tabpanel'
-            aria-label='Vote'
-          >
+        <section
+          className='simple-voter-tab-panel'
+          role='tabpanel'
+          aria-label='Vote'
+          hidden={activeTab !== 'vote'}
+          aria-hidden={activeTab !== 'vote'}
+        >
             <QuestionnaireVoterPanel
               onContextChange={handleQuestionnaireContextChange}
               participationHistory={questionnaireParticipationHistory}
@@ -3642,8 +3643,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               </div>
             )
             )}
-          </section>
-        ) : null}
+        </section>
 
         {activeTab === 'messages' ? (
           <section
