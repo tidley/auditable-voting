@@ -781,7 +781,7 @@ code {
 }
 
 .simple-voter-topbar-questionnaire-id.has-ballot {
-  color: #8fb8b5;
+  color: var(--simple-teal);
 }
 
 .simple-current-role-summary {
