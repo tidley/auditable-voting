@@ -338,7 +338,9 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     }
     publicLinkFreshVoterDispatchedRef.current = true;
     markFreshVoterCreatedForPublicLink();
-    window.dispatchEvent(new Event("auditable-voting:voter-new"));
+    window.dispatchEvent(new CustomEvent("auditable-voting:voter-new", {
+      detail: { preserveInviteContext: true },
+    }));
   }, [role]);
 
   useEffect(() => {

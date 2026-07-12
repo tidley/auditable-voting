@@ -1678,7 +1678,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     sentTicketReceiptAckIdsRef.current.clear();
   }
 
-  function refreshIdentity() {
+  function refreshIdentity(options?: { preserveInviteContext?: boolean }) {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
     }
@@ -1694,7 +1694,10 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     setVoterKeypair(nextKeypair);
     setIdentityStatus(null);
     setBackupStatus(null);
-    clearVoterSessionState({ clearManualCoordinators: true, clearInviteContext: true });
+    clearVoterSessionState({
+      clearManualCoordinators: true,
+      clearInviteContext: options?.preserveInviteContext !== true,
+    });
   }
 
   function signOutSignerSession() {
@@ -1734,8 +1737,9 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     const handleSignOut = () => {
       signOutSignerSession();
     };
-    const handleNewIdentity = () => {
-      refreshIdentity();
+    const handleNewIdentity = (event: Event) => {
+      const detail = (event as CustomEvent<{ preserveInviteContext?: boolean }>).detail;
+      refreshIdentity({ preserveInviteContext: detail?.preserveInviteContext === true });
     };
     window.addEventListener("auditable-voting:voter-login", handleLogin);
     window.addEventListener("auditable-voting:voter-signout", handleSignOut);

@@ -167,9 +167,9 @@ describe("SimpleAppShell invite-link login", () => {
   });
 
   it("creates a fresh voter identity once for a direct public questionnaire link", async () => {
-    const newIdentityEvents: string[] = [];
-    const handleNewIdentity = () => {
-      newIdentityEvents.push("voter");
+    const newIdentityEvents: Array<{ preserveInviteContext?: boolean }> = [];
+    const handleNewIdentity = (event: Event) => {
+      newIdentityEvents.push((event as CustomEvent<{ preserveInviteContext?: boolean }>).detail ?? {});
     };
     window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
     window.history.pushState(null, "", "/?role=voter&q=q_public_link&request_ballot=1");
@@ -179,7 +179,7 @@ describe("SimpleAppShell invite-link login", () => {
       render(<SimpleAppShell />);
 
       await waitFor(() => {
-        expect(newIdentityEvents).toEqual(["voter"]);
+        expect(newIdentityEvents).toEqual([{ preserveInviteContext: true }]);
       });
       expect(new URLSearchParams(window.location.search).get("fresh_voter")).toBe("1");
     } finally {
