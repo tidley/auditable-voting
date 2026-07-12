@@ -649,7 +649,7 @@ function questionHelperText(question: {
   minimumRanked?: number;
 }) {
   if (question.type === "yes_no") {
-    return "Please select the option that best applies.";
+    return "";
   }
   if (question.type === "multiple_choice") {
     return question.multiSelect ? "Select all options that apply." : "Select one option.";
