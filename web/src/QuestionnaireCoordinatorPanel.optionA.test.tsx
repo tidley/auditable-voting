@@ -365,8 +365,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
 
     const quickStart = await screen.findByLabelText("Quick start command") as HTMLTextAreaElement;
-    expect(quickStart.value).toContain('WORKER_RELAYS="wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.primal.net"');
-    expect(quickStart.value).toContain('WORKER_DM_RELAYS="wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com,wss://nos.lol,wss://nostr.mom,wss://relay.primal.net"');
+    expect(quickStart.value).toContain('WORKER_RELAYS="wss://relay.nostr.net,wss://nos.lol,wss://relay.primal.net"');
+    expect(quickStart.value).toContain('WORKER_DM_RELAYS="wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com,wss://nos.lol,wss://relay.primal.net"');
     expect(screen.queryByText("Audit proxy downloads")).toBeNull();
     expect(screen.queryByLabelText("Direct command-line launch")).toBeNull();
   });

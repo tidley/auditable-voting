@@ -479,7 +479,6 @@ type StoredQuestionnaireDraft = {
 const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
   "wss://relay.nostr.net",
   "wss://nos.lol",
-  "wss://relay.nostr.info",
   "wss://relay.primal.net",
 ]);
 const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
@@ -487,8 +486,6 @@ const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://nip17.com",
   "wss://relay.0xchat.com",
   "wss://nos.lol",
-  "wss://nostr.mom",
-  "wss://relay.primal.net",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
