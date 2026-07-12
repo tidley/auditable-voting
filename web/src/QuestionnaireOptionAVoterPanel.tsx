@@ -617,10 +617,10 @@ export function formatVoteActionButtonText(input: {
     return "1/3 Loading ballot key";
   }
   if (!input.ballotRequestSent) {
-    return "1/3 Requesting ballot";
+    return "Requesting ballot";
   }
   if (!input.credentialReady) {
-    return "2/3 Awaiting ballot";
+    return "Awaiting ballot";
   }
   return "3/3 Preparing response";
 }
@@ -3711,7 +3711,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const questionNavSubmitStatus = canSubmitFromQuestionNav
     ? questionNavSubmitHint
     : !questionnaireCredentialReady
-      ? snapshotForAction?.blindRequestSent ? "2/3 Awaiting ballot" : "1/3 Requesting ballot"
+      ? snapshotForAction?.blindRequestSent ? "Awaiting ballot" : "Requesting ballot"
       : formattedVoteActionButtonText;
   const voteActionButtonText = responseSubmittedForCurrentQuestionnaire || (perQuestionMode && allQuestionResponsesSubmitted) || submitInFlight
     ? formattedVoteActionButtonText

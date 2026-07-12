@@ -163,7 +163,7 @@ describe("SimpleAppShell invite-link login", () => {
 
     expect(screen.getByTestId("simple-voter-app").textContent).toContain("vote");
     expect(screen.queryByRole("button", { name: "Continue as Voter" })).toBeNull();
-    expect(screen.getByText("Voter pending")).toBeTruthy();
+    expect(screen.getByText("pending")).toBeTruthy();
   });
 
   it("uses the voter identity label as the profile menu trigger", async () => {
@@ -179,7 +179,7 @@ describe("SimpleAppShell invite-link login", () => {
 
     expect(screen.queryByRole("button", { name: "Show full voter npub QR" })).toBeNull();
     const identityButton = await screen.findByRole("button", { name: /voter profile menu/i });
-    expect(identityButton.textContent).toMatch(/^Voter /);
+    expect(identityButton.textContent).toBe("BBB-BBB");
     expect(identityButton.querySelector(".simple-account-menu-trigger-icon")).toBeTruthy();
 
     await user.click(identityButton);
@@ -309,7 +309,7 @@ describe("SimpleAppShell invite-link login", () => {
       render(<SimpleAppShell />);
 
       expect(screen.getByTestId("simple-voter-app").textContent).toContain("configure");
-      expect(screen.getByText("Voter pending")).toBeTruthy();
+      expect(screen.getByText("pending")).toBeTruthy();
       expect(screen.queryByText(/Voter \//)).toBeNull();
       expect(screen.queryByRole("tablist", { name: "Main actions" })).toBeNull();
       expect(screen.queryByRole("menuitem", { name: "How it works" })).toBeNull();

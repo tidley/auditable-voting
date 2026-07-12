@@ -12,6 +12,24 @@ import {
 const querySync = vi.fn();
 const publish = vi.fn();
 const subscribeMany = vi.fn();
+const localStorageMock = vi.hoisted(() => {
+  const store = new Map<string, string>();
+  return {
+    clear: vi.fn(() => store.clear()),
+    getItem: vi.fn((key: string) => store.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      store.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      store.delete(key);
+    }),
+  };
+});
+
+Object.defineProperty(globalThis, "localStorage", {
+  value: localStorageMock,
+  configurable: true,
+});
 
 vi.mock("./sharedNostrPool", () => ({
   getSharedNostrPool: () => ({ querySync, publish, subscribeMany }),
@@ -20,6 +38,7 @@ vi.mock("./sharedNostrPool", () => ({
 describe("simpleHelplineDm", () => {
   beforeEach(() => {
     resetHelplineDmMessageFeedsForTests();
+    localStorage.clear();
     querySync.mockReset();
     querySync.mockResolvedValue([]);
     publish.mockReset();
@@ -116,6 +135,59 @@ describe("simpleHelplineDm", () => {
     });
 
     expect(messages.map((message) => message.body)).toEqual(["Can you check my invite?"]);
+  });
+
+  it("remembers sent messages when relays do not return the sender copy", async () => {
+    const senderSecret = generateSecretKey();
+    const senderNsec = nip19.nsecEncode(senderSecret);
+    const recipientSecret = generateSecretKey();
+    const recipientNpub = nip19.npubEncode(getPublicKey(recipientSecret));
+    publish.mockImplementation(() => [Promise.resolve(undefined)]);
+    querySync.mockResolvedValue([]);
+
+    await sendHelplineDmMessage({
+      senderNsec,
+      recipientNpub,
+      message: "Remember this sent DM",
+      relays: ["wss://relay.example"],
+    });
+
+    const messages = await fetchHelplineDmMessages({
+      actorNsec: senderNsec,
+      relays: ["wss://relay.example"],
+    });
+
+    expect(messages.map((message) => message.body)).toEqual(["Remember this sent DM"]);
+    expect(messages[0]?.direction).toBe("sent");
+  });
+
+  it("replays cached sent messages to new subscribers", async () => {
+    const senderSecret = generateSecretKey();
+    const senderNsec = nip19.nsecEncode(senderSecret);
+    const recipientSecret = generateSecretKey();
+    const recipientNpub = nip19.npubEncode(getPublicKey(recipientSecret));
+    publish.mockImplementation(() => [Promise.resolve(undefined)]);
+    querySync.mockResolvedValue([]);
+
+    await sendHelplineDmMessage({
+      senderNsec,
+      recipientNpub,
+      message: "Cached subscriber DM",
+      relays: ["wss://relay.example"],
+    });
+
+    resetHelplineDmMessageFeedsForTests();
+    const snapshots: HelplineDmMessage[][] = [];
+    const unsubscribe = subscribeHelplineDmMessages({
+      actorNsec: senderNsec,
+      relays: ["wss://relay.example"],
+      onMessages: (messages) => snapshots.push(messages),
+    });
+
+    await vi.waitFor(() => {
+      expect(snapshots.at(-1)?.map((message) => message.body)).toEqual(["Cached subscriber DM"]);
+    });
+    unsubscribe();
   });
 
   it("shares one actor feed between listeners and replays cached live messages", async () => {

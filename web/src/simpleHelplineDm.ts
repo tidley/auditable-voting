@@ -26,6 +26,8 @@ const HELPLINE_DM_READ_RELAYS_MAX = 5;
 const HELPLINE_DM_LIVE_LOOKBACK_SECONDS = 60;
 const HELPLINE_DM_LIVE_LIMIT = 50;
 const HELPLINE_DM_SUBJECT = "Auditable Voting helpline";
+const HELPLINE_DM_SENT_CACHE_PREFIX = "auditableVoting.helpline.sent.v1:";
+const HELPLINE_DM_SENT_CACHE_LIMIT = 100;
 
 export type HelplineDmMessage = {
   id: string;
@@ -238,6 +240,46 @@ function sortMessagesChronologically(messages: HelplineDmMessage[]) {
   });
 }
 
+function sentCacheKey(actorNpub: string) {
+  return `${HELPLINE_DM_SENT_CACHE_PREFIX}${actorNpub}`;
+}
+
+function readSentMessageCache(actorNpub: string) {
+  if (typeof localStorage === "undefined") {
+    return [] as HelplineDmMessage[];
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(sentCacheKey(actorNpub)) ?? "[]") as HelplineDmMessage[];
+    return Array.isArray(parsed)
+      ? parsed.filter((message) => message?.direction === "sent" && message.senderNpub === actorNpub && Boolean(message.id))
+      : [];
+  } catch {
+    return [] as HelplineDmMessage[];
+  }
+}
+
+function writeSentMessageCache(actorNpub: string, messages: HelplineDmMessage[]) {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+  try {
+    const sent = mergeHelplineDmMessages(messages)
+      .filter((message) => message.direction === "sent" && message.senderNpub === actorNpub)
+      .slice(-HELPLINE_DM_SENT_CACHE_LIMIT);
+    localStorage.setItem(sentCacheKey(actorNpub), JSON.stringify(sent));
+  } catch {
+    // Message persistence is a UI convenience; relay delivery remains authoritative.
+  }
+}
+
+function rememberSentMessage(message: HelplineDmMessage) {
+  writeSentMessageCache(message.senderNpub, [...readSentMessageCache(message.senderNpub), message]);
+}
+
+function mergeWithSentMessageCache(actorNpub: string, messages: HelplineDmMessage[]) {
+  return mergeHelplineDmMessages([...messages, ...readSentMessageCache(actorNpub)]);
+}
+
 export function mergeHelplineDmMessages(messages: HelplineDmMessage[]) {
   const byId = new Map<string, HelplineDmMessage>();
   for (const message of messages) {
@@ -289,7 +331,7 @@ function helplineDmFeedKey(input: {
 }
 
 function messagesForListener(feed: HelplineDmFeed, listener: HelplineDmFeedListener) {
-  const messages = [...feed.messages.values()].filter((message) => {
+  const messages = mergeWithSentMessageCache(feed.actor.npub, [...feed.messages.values()]).filter((message) => {
     if (listener.allowedPeers.size === 0) {
       return true;
     }
@@ -403,6 +445,9 @@ function startHelplineDmFeed(feed: HelplineDmFeed) {
       for (const message of fetched) {
         feed.messages.set(message.id, message);
       }
+      for (const message of readSentMessageCache(feed.actor.npub)) {
+        feed.messages.set(message.id, message);
+      }
       feed.historyLoaded = true;
       publishFeedMessages(feed);
     } catch (error) {
@@ -482,22 +527,24 @@ export async function sendHelplineDmMessage(input: {
   for (const result of relayResults) {
     recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
   }
+  const message: HelplineDmMessage = {
+    id: rumorId,
+    dmEventId: events.find((event) => event.tags.some((tag) => tag[0] === "p" && tag[1] === sender.publicHex))?.id
+      ?? events[0]?.id
+      ?? rumorId,
+    senderNpub: sender.npub,
+    recipientNpubs: [input.recipientNpub],
+    peerNpub: input.recipientNpub,
+    direction: "sent",
+    body,
+    subject,
+    createdAt: new Date(createdAtSeconds * 1000).toISOString(),
+  };
+  rememberSentMessage(message);
 
   return {
     eventIds: events.map((event) => event.id),
-    message: {
-      id: rumorId,
-      dmEventId: events.find((event) => event.tags.some((tag) => tag[0] === "p" && tag[1] === sender.publicHex))?.id
-        ?? events[0]?.id
-        ?? rumorId,
-      senderNpub: sender.npub,
-      recipientNpubs: [input.recipientNpub],
-      peerNpub: input.recipientNpub,
-      direction: "sent",
-      body,
-      subject,
-      createdAt: new Date(createdAtSeconds * 1000).toISOString(),
-    },
+    message,
     successes: relayResults.filter((entry) => entry.success).length,
     failures: relayResults.filter((entry) => !entry.success).length,
     relayResults,
@@ -514,13 +561,16 @@ export async function fetchHelplineDmMessages(input: {
   const actor = decodeNsecSecretKey(input.actorNsec);
   const inboxRelays = await resolveRecipientInboxRelays(actor.npub, input.relays);
   const dmRelays = selectDmReadRelays(inboxRelays);
-  return fetchHelplineDmMessagesFromRelays({
+  const messages = await fetchHelplineDmMessagesFromRelays({
     actor,
     dmRelays,
     limit: input.limit,
     allowedPeerNpubs: input.allowedPeerNpubs,
     hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
   });
+  const allowedPeers = allowedPeerSet(input.allowedPeerNpubs);
+  return mergeWithSentMessageCache(actor.npub, messages)
+    .filter((message) => allowedPeers.size === 0 || allowedPeers.has(message.peerNpub));
 }
 
 export function subscribeHelplineDmMessages(input: {

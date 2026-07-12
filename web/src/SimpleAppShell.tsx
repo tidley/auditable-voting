@@ -289,7 +289,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       : "Open organiser profile menu"
     : role === "voter"
       ? accountIdentityNpub
-        ? `Open voter profile menu for Voter ${accountIdentityLabel}${voterMessagesUnread ? ", new message" : ""}`
+        ? `Open voter profile menu for ${accountIdentityLabel}${voterMessagesUnread ? ", new message" : ""}`
         : `Open voter profile menu${voterMessagesUnread ? ", new message" : ""}`
       : "Menu";
   const isPublicVoterInvite = role === "voter" && hasVoterInviteContextInUrl();
@@ -842,7 +842,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         ) : role === "voter" ? (
           <>
             <span className='simple-account-menu-trigger-icon is-compat-hidden' aria-hidden='true' />
-            <span className='simple-account-menu-trigger-text'>{`Voter ${accountIdentityLabel}`}</span>
+            <span className='simple-account-menu-trigger-text'>{accountIdentityLabel}</span>
           </>
         ) : (
           "Menu"
