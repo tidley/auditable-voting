@@ -2148,7 +2148,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!runtime) {
       return false;
     }
-    const fallbackInvite = findBestLocalInvite(voterNpub);
+    const publicQuestionnaireInvite = await buildPublicQuestionnaireInvite(voterNpub);
+    const fallbackInvite = publicQuestionnaireInvite ?? findBestLocalInvite(voterNpub);
     const bootstrapNpub = fallbackInvite?.invitedNpub?.trim() || voterNpub;
     const bootstrapped = runtime.bootstrapWithLocalIdentity({
       invitedNpub: bootstrapNpub,

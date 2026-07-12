@@ -186,7 +186,7 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
       setStatus(
         result.successes > 0
           ? `Message sent (${result.successes}/${result.relayResults.length} relay writes).`
-          : "Message was signed but no relay accepted it.",
+          : "Message saved locally, but no relay accepted it. Check your connection and retry.",
       );
     } catch {
       setStatus("Could not send message.");

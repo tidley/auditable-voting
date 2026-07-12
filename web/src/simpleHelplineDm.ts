@@ -19,7 +19,7 @@ import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
-const HELPLINE_DM_PUBLISH_MAX_WAIT_MS = 1500;
+const HELPLINE_DM_PUBLISH_MAX_WAIT_MS = 5000;
 const HELPLINE_DM_PUBLISH_STAGGER_MS = 250;
 const HELPLINE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const HELPLINE_DM_READ_RELAYS_MAX = 5;
