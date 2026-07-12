@@ -11,6 +11,10 @@ const relayHealth = new Map<string, RelayHealth>();
 const RELAY_MAX_PENALTY_MS = 30 * 60_000;
 const RELAY_FAILURES_BEFORE_COOLDOWN = 2;
 const RELAY_JITTER_RATIO = 0.2;
+const BROWSER_NOISY_RELAYS = new Set([
+  "wss://vm-1734.lnvps.cloud/",
+  "wss://relay.damus.io",
+]);
 
 function normalizeRelay(relay: string) {
   return normalizeRelaysRust([relay])[0] ?? relay.trim();
@@ -130,7 +134,7 @@ export async function withRelayOutcomes<T>(relays: string[], task: Promise<T>): 
 }
 
 export function rankRelaysByBackoff(relays: string[]) {
-  const normalized = normalizeRelaysRust(relays);
+  const normalized = normalizeRelaysRust(relays).filter((relay) => !BROWSER_NOISY_RELAYS.has(relay));
   const now = Date.now();
   const healthy: string[] = [];
   const unhealthy: Array<{ relay: string; cooldownUntil: number }> = [];

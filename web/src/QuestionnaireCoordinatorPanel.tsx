@@ -477,15 +477,12 @@ type StoredQuestionnaireDraft = {
 };
 
 const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
-  "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",
-  "wss://relay.damus.io",
   "wss://relay.primal.net",
 ]);
 const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
-  "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
   "wss://nip17.com",
   "wss://relay.0xchat.com",

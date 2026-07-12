@@ -42,7 +42,6 @@ const QUESTIONNAIRE_PUBLIC_QUERY_PAGE_LIMIT = 500;
 const QUESTIONNAIRE_PUBLIC_QUERY_MAX_PAGES = 16;
 const QUESTIONNAIRE_PUBLIC_QUERY_TIME_BUDGET_MS = 6_000;
 const QUESTIONNAIRE_PUBLIC_READ_UNINDEXED_TAG_RELAYS = new Set([
-  "wss://relay.damus.io",
   "wss://relay.primal.net",
   "wss://nostr.wine",
   "wss://nostr.mom",
