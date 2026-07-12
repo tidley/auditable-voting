@@ -22,7 +22,7 @@ import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/audi
 const HELPLINE_DM_PUBLISH_MAX_WAIT_MS = 5000;
 const HELPLINE_DM_PUBLISH_STAGGER_MS = 250;
 const HELPLINE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
-const HELPLINE_DM_READ_RELAYS_MAX = 5;
+const HELPLINE_DM_READ_RELAYS_MAX = 7;
 const HELPLINE_DM_LIVE_LOOKBACK_SECONDS = 60;
 const HELPLINE_DM_LIVE_LIMIT = 50;
 const HELPLINE_DM_SUBJECT = "Auditable Voting helpline";

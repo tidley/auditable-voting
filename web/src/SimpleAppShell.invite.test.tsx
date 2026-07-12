@@ -166,6 +166,27 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.getByText("pending")).toBeTruthy();
   });
 
+  it("creates a fresh voter identity once for a direct public questionnaire link", async () => {
+    const newIdentityEvents: string[] = [];
+    const handleNewIdentity = () => {
+      newIdentityEvents.push("voter");
+    };
+    window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
+    window.history.pushState(null, "", "/?role=voter&q=q_public_link&request_ballot=1");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    try {
+      render(<SimpleAppShell />);
+
+      await waitFor(() => {
+        expect(newIdentityEvents).toEqual(["voter"]);
+      });
+      expect(new URLSearchParams(window.location.search).get("fresh_voter")).toBe("1");
+    } finally {
+      window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
+    }
+  });
+
   it("uses the voter identity label as the profile menu trigger", async () => {
     const user = userEvent.setup();
     const voterNpub = "npub1" + "b".repeat(58);

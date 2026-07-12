@@ -43,6 +43,7 @@ const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string; icon: string 
   { tab: "settings", label: "Settings", icon: "settings" },
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
+const PUBLIC_LINK_FRESH_VOTER_PARAM = "fresh_voter";
 
 function voterTabIconName(icon: string): UiIconName {
   if (icon === "messages") {
@@ -107,6 +108,27 @@ function readLinkedQuestionnaireIdFromUrl() {
   return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
 }
 
+function shouldCreateFreshVoterForPublicLink() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return Boolean(
+    hasVoterInviteContextInUrl()
+    && params.get(PUBLIC_LINK_FRESH_VOTER_PARAM) !== "1"
+    && !params.get("nsec")?.trim()
+  );
+}
+
+function markFreshVoterCreatedForPublicLink() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set(PUBLIC_LINK_FRESH_VOTER_PARAM, "1");
+  window.history.replaceState({}, "", url.toString());
+}
+
 function writeRoleToUrl(role: SimpleRole) {
   if (typeof window === "undefined") {
     return;
@@ -135,6 +157,7 @@ function clearVoterInviteUrlContext() {
     "code",
     "request_ballot",
     "auto_request",
+    PUBLIC_LINK_FRESH_VOTER_PARAM,
   ]) {
     url.searchParams.delete(key);
   }
@@ -280,6 +303,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [gatewayShowConnectQr, setGatewayShowConnectQr] = useState(false);
   const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const roleSwitchWrapRef = useRef<HTMLDivElement | null>(null);
+  const publicLinkFreshVoterDispatchedRef = useRef(false);
   const preferredSignerLabel = useMemo(() => (isMobileBrowser() ? "Amber" : "NOS2X-FOX"), []);
   const preferredSignerIsAmber = preferredSignerLabel === "Amber";
   const accountIdentityLabel = accountIdentityNpub ? deriveActorDisplayId(accountIdentityNpub) : "pending";
@@ -306,6 +330,15 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     if (role !== "auditor") {
       setAuditorPage("gallery");
     }
+  }, [role]);
+
+  useEffect(() => {
+    if (role !== "voter" || publicLinkFreshVoterDispatchedRef.current || !shouldCreateFreshVoterForPublicLink()) {
+      return;
+    }
+    publicLinkFreshVoterDispatchedRef.current = true;
+    markFreshVoterCreatedForPublicLink();
+    window.dispatchEvent(new Event("auditable-voting:voter-new"));
   }, [role]);
 
   useEffect(() => {

@@ -8,11 +8,25 @@ const packageJson = JSON.parse(
   readFileSync(resolve(__dirname, "package.json"), "utf8"),
 ) as { version: string };
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: process.env.VITE_BASE_PATH || "/",
   define: {
     __APP_VERSION__: JSON.stringify(packageJson.version),
   },
+  resolve: mode === "test"
+    ? {
+      alias: [
+        {
+          find: "./wasm/auditableVotingCore",
+          replacement: resolve(__dirname, "src/wasm/auditableVotingCore.mock.ts"),
+        },
+        {
+          find: /.*\/wasm\/auditableVotingCore$/,
+          replacement: resolve(__dirname, "src/wasm/auditableVotingCore.mock.ts"),
+        },
+      ],
+    }
+    : undefined,
   plugins: [react(), wasm()],
   build: {
     target: "es2022",
@@ -35,4 +49,4 @@ export default defineConfig({
       }
     }
   }
-});
+}));

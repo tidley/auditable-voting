@@ -134,6 +134,7 @@ import type {
   BallotSubmission,
   BearerInviteCodeEntry,
   BearerInviteCodeState,
+  BlindBallotIssuance,
   ElectionSummary,
   QuestionnaireAnswer,
   WhitelistClaimState,
@@ -147,6 +148,7 @@ import {
   loadAdmittedVoters,
   loadCoordinatorState,
   loadElectionSummary,
+  readBlindIssuanceAckRecord,
   removeAdmittedVoter,
   saveAdmittedVoters,
   updateAdmittedVoter,
@@ -591,6 +593,38 @@ function whitelistStatusIndicator(state: WhitelistClaimState): StatusIndicatorVi
         label: "Whitelisted",
       };
   }
+}
+
+function ballotReceivedStatusIndicator(): StatusIndicatorView {
+  return {
+    className: "simple-vote-status-icon simple-status-indicator is-voter-received",
+    icon: "B",
+    label: "Ballot received",
+  };
+}
+
+function hasAcknowledgedBlindIssuanceForNpub(
+  issuedBlindResponses: Record<string, BlindBallotIssuance> | undefined,
+  invitedNpub: string,
+  electionId: string,
+) {
+  const normalizedNpub = invitedNpub.trim();
+  const normalizedElectionId = electionId.trim();
+  if (!normalizedNpub || !normalizedElectionId) {
+    return false;
+  }
+  return Object.values(issuedBlindResponses ?? {}).some((issuance) => {
+    if (issuance.invitedNpub !== normalizedNpub || issuance.electionId !== normalizedElectionId) {
+      return false;
+    }
+    const ack = readBlindIssuanceAckRecord(issuance.requestId);
+    return Boolean(
+      ack
+      && ack.electionId === issuance.electionId
+      && ack.invitedNpub === issuance.invitedNpub
+      && ack.issuanceId === issuance.issuanceId,
+    );
+  });
 }
 
 function pendingAuthorisationStatusIndicator(): StatusIndicatorView {
@@ -2157,6 +2191,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
       const privateInviteActive = privateInviteEntry?.state === "available";
       const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
+      const ballotReceivedAck = currentQuestionnaireEntry?.claimState === "blind_signature_issued"
+        && hasAcknowledgedBlindIssuanceForNpub(
+          optionACoordinatorRuntime?.getSnapshot()?.issuedBlindResponses,
+          participant.npub,
+          optionAElectionId,
+        );
       const privateInviteStatusIndicator = privateInviteEntry
         ? privateInviteVoterStatusIndicator({
           state: privateInviteEntry.state,
@@ -2168,7 +2208,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const statusIndicator = pendingAuthorization
         ? pendingAuthorisationStatusIndicator()
         : currentQuestionnaireEntry
-          ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
+          ? ballotReceivedAck
+            ? ballotReceivedStatusIndicator()
+            : whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
           : privateInviteStatusIndicator
             ? privateInviteStatusIndicator
             : null;

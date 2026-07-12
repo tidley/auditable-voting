@@ -489,14 +489,15 @@ const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://relay.nostr.net",
   "wss://nip17.com",
   "wss://relay.0xchat.com",
+  "wss://nos.lol",
+  "wss://nostr.mom",
+  "wss://relay.primal.net",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
 ]);
 const WORKER_DM_DISCOURAGED_RELAYS = new Set([
-  "wss://nos.lol",
   "wss://relay.damus.io",
-  "wss://relay.primal.net",
 ]);
 const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
@@ -578,7 +579,7 @@ function deriveWorkerDmRelays(workerRelays: string) {
   const relays = sanitizeWorkerRelays(workerRelays)
     .filter((relay) => !WORKER_DM_REJECTING_RELAYS.has(relay))
     .filter((relay) => !WORKER_DM_DISCOURAGED_RELAYS.has(relay));
-  return normalizeRelaysRust([...relays, ...DEFAULT_WORKER_DM_RELAYS]);
+  return normalizeRelaysRust([...DEFAULT_WORKER_DM_RELAYS, ...relays]);
 }
 
 function questionnaireSessionSortTimeMs(id: string, eventCreatedAtById?: Map<string, number>) {
