@@ -639,6 +639,16 @@ function mergeInvitesByKey(...groups: ElectionInviteMessage[][]) {
   return [...byKey.values()];
 }
 
+function nextPaint() {
+  return new Promise<void>((resolve) => {
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+      setTimeout(resolve, 0);
+      return;
+    }
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 function inviteGrantsProxyCredential(invite: ElectionInviteMessage | null | undefined, questionnaireId: string) {
   return Boolean(invite?.electionId === questionnaireId && invite.credentialsPerVoter === 2);
 }
@@ -2807,6 +2817,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     setSubmitInFlight(true);
     try {
+      await nextPaint();
       const submitQuestionIds = perQuestionMode
         ? options?.submitAllQuestions
           ? questions.map((question) => question.questionId)

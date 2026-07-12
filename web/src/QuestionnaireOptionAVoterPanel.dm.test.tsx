@@ -2498,13 +2498,15 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await user.click(await screen.findByRole("button", { name: "Submit 2 separate votes" }));
 
-    expect(submitCalls.map((call) => call.options?.credentialIndex)).toEqual([1, 2]);
-    expect(submitCalls.map((call) => call.options?.questionIds)).toEqual([["q1"], ["q1"]]);
-    expect(submitCalls.map((call) => call.requiredQuestionIds)).toEqual([["q1"], ["q1"]]);
-    expect(draftBatches).toEqual([
-      [{ questionId: "q1", type: "yes_no", answer: "yes" }],
-      [{ questionId: "q1", type: "yes_no", answer: "no" }],
-    ]);
+    await waitFor(() => {
+      expect(submitCalls.map((call) => call.options?.credentialIndex)).toEqual([1, 2]);
+      expect(submitCalls.map((call) => call.options?.questionIds)).toEqual([["q1"], ["q1"]]);
+      expect(submitCalls.map((call) => call.requiredQuestionIds)).toEqual([["q1"], ["q1"]]);
+      expect(draftBatches).toEqual([
+        [{ questionId: "q1", type: "yes_no", answer: "yes" }],
+        [{ questionId: "q1", type: "yes_no", answer: "no" }],
+      ]);
+    });
   });
 
   it("picks up a later proxy-voter invite while a public-link ballot request is pending", async () => {
