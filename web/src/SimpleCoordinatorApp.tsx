@@ -6147,7 +6147,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const ballotGroup = Object.prototype.hasOwnProperty.call(stagedSettings ?? {}, "ballotGroup")
         ? normaliseQuestionnaireBallotGroup(stagedSettings?.ballotGroup)
         : normaliseQuestionnaireBallotGroup(roster[normalizedInvitedNpub]?.ballotGroup);
+      optionACoordinatorRuntime.addWhitelistNpub(normalizedInvitedNpub, { credentialsPerVoter, ballotGroup });
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      const initialWorkerConfigSync = syncActiveWorkerElectionConfig().catch(() => false);
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
+      await initialWorkerConfigSync;
       await syncActiveWorkerElectionConfig().catch(() => false);
       setPendingParticipantSettingsByNpub((current) => {
         if (!current[normalizedInvitedNpub]) {
