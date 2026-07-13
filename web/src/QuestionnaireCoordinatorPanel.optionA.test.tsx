@@ -318,9 +318,47 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const quickStart = screen.getByLabelText("Quick start command") as HTMLTextAreaElement;
     expect(quickStart.value).toContain(workerNsecInput.value);
+    expect(quickStart.value).toContain("AUDITABLE_VOTING_WORKER_STATE_DIR:-./.worker-state/");
+    expect(quickStart.value).toContain(workerNpubInput.value);
     expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net');
     expect((screen.getByRole("button", { name: "Confirm configuration" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Confirm unlocks after its heartbeat appears/i)).toBeTruthy();
+  });
+
+  it("does not replace the generated setup account with an older proxy heartbeat", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const oldWorkerNpub = nip19.npubEncode("4".repeat(64));
+    vi.mocked(fetchOptionAWorkerStatusDmsWithNsec).mockResolvedValue([{
+      type: "worker_status",
+      schemaVersion: 1,
+      workerNpub: oldWorkerNpub,
+      coordinatorNpub,
+      workerVersion: "0.1.37",
+      state: "active",
+      heartbeatAt: new Date().toISOString(),
+      delegationId: "delegation_old_worker",
+      delegationState: "active",
+      activeElectionId: "q_old",
+    }]);
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        view='build'
+        buildPage='proxy'
+      />,
+    );
+
+    await waitFor(() => expect(fetchOptionAWorkerStatusDmsWithNsec).toHaveBeenCalled());
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
+    const generatedWorkerNpub = (screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value;
+    const quickStart = screen.getByLabelText("Quick start command") as HTMLTextAreaElement;
+    expect(generatedWorkerNpub).toMatch(/^npub1/);
+    expect(generatedWorkerNpub).not.toBe(oldWorkerNpub);
+    expect(quickStart.value).toContain(generatedWorkerNpub);
   });
 
   it("refreshes a manually generated proxy account when the setup page is reopened", async () => {

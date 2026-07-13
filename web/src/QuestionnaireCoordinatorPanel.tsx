@@ -611,6 +611,14 @@ function deriveWorkerNpubFromNsec(value: string) {
   return secretKey ? nip19.npubEncode(getPublicKey(secretKey)) : "";
 }
 
+function createWorkerCredentials() {
+  const secretKey = generateSecretKey();
+  return {
+    nsec: nip19.nsecEncode(secretKey),
+    npub: nip19.npubEncode(getPublicKey(secretKey)),
+  };
+}
+
 function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
   const fallbackId = readStoredQuestionnaireDraftId();
   if (typeof window === "undefined") {
@@ -893,7 +901,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.36";
+const WORKER_MINIMUM_VERSION = "0.1.38";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -905,6 +913,7 @@ function buildWorkerDirectCommand(input: {
 }) {
   const coordinatorNpub = input.coordinatorNpub.trim() || "npub1...";
   const workerNsec = input.workerNsec.trim() || "nsec1...";
+  const workerNpub = deriveWorkerNpubFromNsec(workerNsec) || "npub1worker";
   const workerRelays = sanitizeWorkerRelays(input.workerRelays).join(",");
   const workerDmRelays = deriveWorkerDmRelays(input.workerRelays).join(",");
 
@@ -920,7 +929,7 @@ function buildWorkerDirectCommand(input: {
       `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
       `$env:WORKER_DM_RELAYS='${escapeForPowerShellSingleQuotedString(workerDmRelays)}'`,
       `$env:WORKER_POLL_SECONDS='${WORKER_DEFAULT_POLL_SECONDS}'`,
-      "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR='.worker-state' }",
+      `if ($env:AUDITABLE_VOTING_WORKER_STATE_DIR) { $env:WORKER_STATE_DIR=$env:AUDITABLE_VOTING_WORKER_STATE_DIR } else { $env:WORKER_STATE_DIR='.worker-state\\${escapeForPowerShellSingleQuotedString(coordinatorNpub)}\\${escapeForPowerShellSingleQuotedString(workerNpub)}' }`,
       "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
       "$ExecutablePath = $null",
       `if (Test-Path '.\\${escapedBinaryFilename}') {`,
@@ -954,6 +963,7 @@ function buildWorkerDirectCommand(input: {
     ? escapeForDoubleQuotedBash(legacyBinaryFilename)
     : "";
   const escapedWorkerNsec = escapeForDoubleQuotedBash(workerNsec);
+  const escapedWorkerNpub = escapeForDoubleQuotedBash(workerNpub);
   const escapedCoordinatorNpub = escapeForDoubleQuotedBash(coordinatorNpub);
   const escapedWorkerRelays = escapeForDoubleQuotedBash(workerRelays);
   const escapedWorkerDmRelays = escapeForDoubleQuotedBash(workerDmRelays);
@@ -1000,7 +1010,7 @@ function buildWorkerDirectCommand(input: {
     `  export WORKER_RELAYS="${escapedWorkerRelays}"`,
     `  export WORKER_DM_RELAYS="${escapedWorkerDmRelays}"`,
     `  export WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}"`,
-    '  export WORKER_STATE_DIR="${WORKER_STATE_DIR:-./.worker-state}"',
+    `  export WORKER_STATE_DIR="\${AUDITABLE_VOTING_WORKER_STATE_DIR:-./.worker-state/${escapedCoordinatorNpub}/${escapedWorkerNpub}}"`,
     '  mkdir -p "$WORKER_STATE_DIR" || return 1',
     '  echo "Audit proxy version: $WORKER_VERSION"',
     '  echo "Starting audit proxy..."',
@@ -1380,6 +1390,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const buildPage = props.buildPage ?? "questionnaire";
   const isProxyBuildPage = view === "build" && buildPage === "proxy";
   const storedDraft = useMemo(() => readStoredQuestionnaireDraft(), []);
+  const initialWorkerCredentials = useMemo(() => (
+    isProxyBuildPage
+      ? createWorkerCredentials()
+      : {
+          nsec: storedDraft.generatedWorkerNsec ?? "",
+          npub: storedDraft.generatedWorkerNpub ?? "",
+        }
+  ), [isProxyBuildPage, storedDraft.generatedWorkerNpub, storedDraft.generatedWorkerNsec]);
   const [questionnaireId, setQuestionnaireId] = useState(() => (
     props.initialQuestionnaireId?.trim() || storedDraft.questionnaireId
   ));
@@ -1391,8 +1409,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const questionnaireRelaysInput = props.questionnaireRelaysInput ?? storedDraft.questionnaireRelays ?? "";
   const [useDefaultSetupRelays, setUseDefaultSetupRelays] = useState(() => normalizeQuestionnaireRelays(questionnaireRelaysInput).length === 0);
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
-  const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(storedDraft.delegationMode ?? "browser_only");
-  const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(storedDraft.delegatedWorkerNpub ?? "");
+  const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(
+    isProxyBuildPage ? "delegated_worker" : storedDraft.delegationMode ?? "browser_only",
+  );
+  const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(
+    isProxyBuildPage ? initialWorkerCredentials.npub : storedDraft.delegatedWorkerNpub ?? "",
+  );
   const [delegatedWorkerControlRelays, setDelegatedWorkerControlRelays] = useState(storedDraft.delegatedWorkerControlRelays ?? "");
   const [delegatedWorkerExpiryEnabled, setDelegatedWorkerExpiryEnabled] = useState(storedDraft.delegatedWorkerExpiryEnabled ?? false);
   const [delegatedWorkerExpiryMinutes, setDelegatedWorkerExpiryMinutes] = useState(storedDraft.delegatedWorkerExpiryMinutes ?? "");
@@ -1406,8 +1428,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [workerMoreOptionsCollapsed, setWorkerMoreOptionsCollapsed] = useState(true);
   const [auditProxyExpandSignal, setAuditProxyExpandSignal] = useState(0);
   const [selectedWorkerDownloadTarget, setSelectedWorkerDownloadTarget] = useState<WorkerLauncherTargetKey>("linuxX64");
-  const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState(storedDraft.generatedWorkerNsec ?? "");
-  const [generatedWorkerNpub, setGeneratedWorkerNpub] = useState(storedDraft.generatedWorkerNpub ?? "");
+  const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState(initialWorkerCredentials.nsec);
+  const [generatedWorkerNpub, setGeneratedWorkerNpub] = useState(initialWorkerCredentials.npub);
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
@@ -1794,7 +1816,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, [generatedWorkerNpub]);
 
   useEffect(() => {
-    if (delegationMode !== "delegated_worker" || activeWorkerDelegation || availableWorkerStatuses.length === 0) {
+    if (isProxyBuildPage || delegationMode !== "delegated_worker" || activeWorkerDelegation || availableWorkerStatuses.length === 0) {
       return;
     }
     const selectedWorkerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
@@ -1807,6 +1829,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     availableWorkerStatuses,
     delegatedWorkerNpub,
     delegationMode,
+    isProxyBuildPage,
     selectAvailableWorkerStatus,
   ]);
 
@@ -4336,27 +4359,12 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   }
 
   function generateWorkerCredentials() {
-    const secretKey = generateSecretKey();
-    const nsec = nip19.nsecEncode(secretKey);
-    const npub = nip19.npubEncode(getPublicKey(secretKey));
-    setGeneratedWorkerNsec(nsec);
-    setGeneratedWorkerNpub(npub);
+    const credentials = createWorkerCredentials();
+    setGeneratedWorkerNsec(credentials.nsec);
+    setGeneratedWorkerNpub(credentials.npub);
     setDelegationMode("delegated_worker");
-    setDelegatedWorkerNpub(npub);
+    setDelegatedWorkerNpub(credentials.npub);
   }
-
-  const proxyPageCredentialRefreshRef = useRef(false);
-  useEffect(() => {
-    if (!isProxyBuildPage) {
-      proxyPageCredentialRefreshRef.current = false;
-      return;
-    }
-    if (proxyPageCredentialRefreshRef.current) {
-      return;
-    }
-    proxyPageCredentialRefreshRef.current = true;
-    generateWorkerCredentials();
-  }, [isProxyBuildPage]);
 
   function setupAuditProxyFromChecklist() {
     setDelegationMode("delegated_worker");
@@ -5257,7 +5265,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     </UiButton>
                   </div>
                   <p className='simple-voter-note'>
-                    State is kept in <code>.worker-state</code> beside the binary by default. Delete that folder to reset local proxy state, or override <code>WORKER_STATE_DIR</code>.
+                    State is isolated by organiser and proxy account under <code>.worker-state</code>. Override the location with <code>AUDITABLE_VOTING_WORKER_STATE_DIR</code>.
                   </p>
                 </section>
 

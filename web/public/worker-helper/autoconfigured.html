@@ -243,7 +243,7 @@
 
       const DEFAULT_WORKER_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
       const DEFAULT_WORKER_POLL_SECONDS = "5";
-      const WORKER_MINIMUM_VERSION = "0.1.35";
+      const WORKER_MINIMUM_VERSION = "0.1.38";
       const WORKER_RELEASE_DOWNLOAD_URL = `${RELEASE_BASE_URL}/auditable-voting-worker-linux-x64.tar.gz`;
 
       const requiredVersionNode = document.getElementById("required-version");
@@ -261,6 +261,7 @@
         workerPollSeconds,
       }) {
         const nsecPlaceholder = "nsec1...";
+        const workerStateKey = workerNpub || "unconfigured-worker";
         const sanitizedWorkerRelays = sanitizeWorkerControlRelays(workerRelays);
         const sanitizedWorkerDmRelays = sanitizeWorkerDmRelays(workerDmRelays, workerRelays);
         if (target.shell === "powershell") {
@@ -290,7 +291,7 @@
             `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${escapeForPowerShellSingleQuotedString(sanitizedWorkerRelays)}' }`,
             `if (-not $env:WORKER_DM_RELAYS) { $env:WORKER_DM_RELAYS = '${escapeForPowerShellSingleQuotedString(sanitizedWorkerDmRelays)}' }`,
             `if (-not $env:WORKER_POLL_SECONDS) { $env:WORKER_POLL_SECONDS = '${escapeForPowerShellSingleQuotedString(workerPollSeconds)}' }`,
-            "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
+            `if ($env:AUDITABLE_VOTING_WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = $env:AUDITABLE_VOTING_WORKER_STATE_DIR } else { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state\\${escapeForPowerShellSingleQuotedString(coordinatorNpub)}\\${escapeForPowerShellSingleQuotedString(workerStateKey)}') }`,
             "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
             "",
             "if (Test-Path $BinaryPath) {",
@@ -358,7 +359,7 @@
           `export WORKER_RELAYS="\${WORKER_RELAYS:-${escapeForDoubleQuotedBash(sanitizedWorkerRelays)}}"`,
           `export WORKER_DM_RELAYS="\${WORKER_DM_RELAYS:-${escapeForDoubleQuotedBash(sanitizedWorkerDmRelays)}}"`,
           `export WORKER_POLL_SECONDS="\${WORKER_POLL_SECONDS:-${escapeForDoubleQuotedBash(workerPollSeconds)}}"`,
-          'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
+          `export WORKER_STATE_DIR="\${AUDITABLE_VOTING_WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state/${escapeForDoubleQuotedBash(coordinatorNpub)}/${escapeForDoubleQuotedBash(workerStateKey)}}"`,
           'mkdir -p "$WORKER_STATE_DIR"',
           "",
           'if [ -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',

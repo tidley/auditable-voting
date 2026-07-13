@@ -150,7 +150,7 @@ cargo run
 
 Useful optional environment variables:
 
-- `WORKER_STATE_DIR`
+- `WORKER_STATE_DIR`; keep it unique to one worker/organiser identity pair. Generated quick-start commands namespace state automatically and the worker resets persisted election state if either identity changes.
 - `WORKER_HEARTBEAT_SECONDS`
 - `WORKER_POLL_SECONDS` (generated launchers set this to `5`)
 - `WORKER_RELAYS` for public questionnaire and delegation relay reads

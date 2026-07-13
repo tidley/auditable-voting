@@ -568,6 +568,15 @@ fn build_worker_log_filter() -> EnvFilter {
     filter
 }
 
+fn persistent_state_identity_mismatch(
+    state: &WorkerPersistentState,
+    worker_npub: &str,
+    coordinator_npub: &str,
+) -> bool {
+    (!state.worker_npub.is_empty() && state.worker_npub != worker_npub)
+        || (!state.coordinator_npub.is_empty() && state.coordinator_npub != coordinator_npub)
+}
+
 fn apply_worker_election_config(
     election: &mut ElectionRuntimeState,
     snapshot: &WorkerElectionConfigSnapshot,
@@ -1716,6 +1725,16 @@ async fn main() -> Result<()> {
 
     let store = Arc::new(WorkerStore::open(&config.worker_state_dir)?);
     let mut persistent = store.load()?;
+    if persistent_state_identity_mismatch(&persistent, &worker_npub, &config.coordinator_npub) {
+        warn!(
+            "worker state identity changed; resetting persisted election state: previous_worker={}, current_worker={}, previous_coordinator={}, current_coordinator={}",
+            persistent.worker_npub,
+            worker_npub,
+            persistent.coordinator_npub,
+            config.coordinator_npub,
+        );
+        persistent = WorkerPersistentState::default();
+    }
     persistent.worker_npub = worker_npub.clone();
     persistent.coordinator_npub = config.coordinator_npub.clone();
     persistent.relays = config
@@ -4392,6 +4411,41 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn persisted_state_is_reset_when_worker_identity_changes() {
+        let state = WorkerPersistentState {
+            worker_npub: "npub1oldworker".to_string(),
+            coordinator_npub: "npub1coordinator".to_string(),
+            ..WorkerPersistentState::default()
+        };
+
+        assert!(persistent_state_identity_mismatch(
+            &state,
+            "npub1newworker",
+            "npub1coordinator"
+        ));
+    }
+
+    #[test]
+    fn persisted_state_accepts_matching_or_legacy_identity() {
+        let matching = WorkerPersistentState {
+            worker_npub: "npub1worker".to_string(),
+            coordinator_npub: "npub1coordinator".to_string(),
+            ..WorkerPersistentState::default()
+        };
+
+        assert!(!persistent_state_identity_mismatch(
+            &matching,
+            "npub1worker",
+            "npub1coordinator"
+        ));
+        assert!(!persistent_state_identity_mismatch(
+            &WorkerPersistentState::default(),
+            "npub1worker",
+            "npub1coordinator"
+        ));
+    }
 
     fn sample_request() -> BlindBallotRequest {
         BlindBallotRequest {
