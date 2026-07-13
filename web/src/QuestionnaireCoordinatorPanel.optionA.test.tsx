@@ -321,8 +321,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(quickStart.value).toContain("AUDITABLE_VOTING_WORKER_STATE_DIR:-./.worker-state/");
     expect(quickStart.value).toContain(workerNpubInput.value);
     expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net');
-    expect((screen.getByRole("button", { name: "Confirm configuration" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/Confirm unlocks after its heartbeat appears/i)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Confirm configuration" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(/Press confirm at any time/i)).toBeTruthy();
   });
 
   it("does not replace the generated setup account with an older proxy heartbeat", async () => {

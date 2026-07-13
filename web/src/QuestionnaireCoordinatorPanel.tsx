@@ -2923,17 +2923,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     }
     return availableWorkerStatuses.find((entry) => entry.workerNpub === workerNpub) ?? null;
   }, [availableWorkerStatuses, delegatedWorkerNpub]);
-  const selectedWorkerHeartbeatMs = Date.parse(selectedWorkerStatus?.heartbeatAt ?? "");
-  const selectedWorkerHeartbeatIsRecent = Number.isFinite(selectedWorkerHeartbeatMs)
-    && Date.now() - selectedWorkerHeartbeatMs <= WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS;
-  const activeDelegationMatchesSelectedWorker = Boolean(
-    activeWorkerDelegation
-    && normaliseWorkerNpub(activeWorkerDelegation.workerNpub) === normaliseWorkerNpub(delegatedWorkerNpub),
-  );
-  const canManuallyConfirmWorker = !isProxyBuildPage
-    || selectedWorkerHeartbeatIsRecent
-    || activeDelegationMatchesSelectedWorker;
-
   const delegationStatusLabel = useMemo(() => {
     if (lastWorkerRevocationState === "revoked") {
       return "Revoked";
@@ -5250,16 +5239,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <div>
                       <h4 className='simple-delegate-confirm-title'>Confirm configuration</h4>
                       <p className='simple-voter-note'>
-                        {canManuallyConfirmWorker
-                          ? "This usually happens automatically after the proxy starts. Press confirm if auto-confirm has not fired."
-                          : "Start this proxy account with the quick start command. Confirm unlocks after its heartbeat appears."}
+                        This usually happens automatically after the proxy starts. Press confirm at any time if auto-confirm has not fired.
                       </p>
                     </div>
                     <UiButton
                       icon='check'
                       className='simple-voter-primary simple-voter-primary-wide simple-delegate-confirm-button'
                       onPress={() => void delegateToWorker()}
-                      isDisabled={!canManuallyConfirmWorker}
                     >
                       Confirm configuration
                     </UiButton>
