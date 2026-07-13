@@ -44,7 +44,7 @@ import { decodeNsec } from "./nostrIdentity";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
 import { tryWriteClipboard } from "./clipboard";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
-import { UiButton, UiIcon, UiSelect, UiSwitch, UiTextArea } from "./ui/DesignLayer";
+import { UiButton, UiIcon, UiSelect, UiTextArea } from "./ui/DesignLayer";
 import {
   hashQuestionnaireInviteCode,
   hashQuestionnairePrivateInviteClaim,
@@ -328,6 +328,31 @@ function filterQuestionsForBallotGroup<T extends { requiredScope?: string | null
   return questions.filter((question) => questionVisibleForBallotGroup(question, activeBallotGroup));
 }
 
+export function ballotGroupFromReceivedCredential(
+  state: Pick<VoterElectionLocalState, "blindIssuance" | "blindIssuances"> | null | undefined,
+): string | null | undefined {
+  const issuances = [
+    state?.blindIssuance ?? null,
+    ...Object.values(state?.blindIssuances ?? {}),
+  ];
+  let hasExplicitScope = false;
+  for (const issuance of issuances) {
+    const scope = issuance?.ballotScope;
+    if (!scope) {
+      continue;
+    }
+    if (Array.isArray(scope.allowedScopes) || scope.ballotGroup !== undefined) {
+      hasExplicitScope = true;
+    }
+    const dedicatedScope = normaliseQuestionnaireAllowedScopes(scope.allowedScopes, scope.ballotGroup)
+      .find((entry) => entry !== "0");
+    if (dedicatedScope) {
+      return dedicatedScope;
+    }
+  }
+  return hasExplicitScope ? null : undefined;
+}
+
 function latestDefinitionFromEntries(entries: Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>) {
   return [...entries].sort((a, b) => (b.event.created_at ?? 0) - (a.event.created_at ?? 0))[0]?.definition ?? null;
 }
@@ -605,7 +630,7 @@ export function formatVoteActionButtonText(input: {
     return "Answer required questions to continue";
   }
   if (input.canSubmitNow) {
-    return "Submit response";
+    return "Submit";
   }
   if (!snapshot?.loginVerified) {
     return "1/3 Confirming identity";
@@ -911,11 +936,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const currentDefinition = autoRequestDefinition
     ?? (questionnaireDefinition?.questionnaireId === currentQuestionnaireId ? questionnaireDefinition : null)
     ?? (currentQuestionnaireId ? readCachedQuestionnaireDefinition(currentQuestionnaireId) : null);
-  const activeBallotGroup = normaliseQuestionnaireBallotGroup(snapshot?.inviteMessage?.ballotGroup)
-    ?? normaliseQuestionnaireBallotGroup(activeInvite?.ballotGroup)
-    ?? normaliseQuestionnaireBallotGroup(inviteContext.invite?.ballotGroup)
-    ?? normaliseQuestionnaireBallotGroup(inviteContext.ballotGroup)
-    ?? normaliseQuestionnaireBallotGroup(snapshot?.privateInviteBallotGroup);
+  const receivedCredentialBallotGroup = ballotGroupFromReceivedCredential(snapshot);
+  const activeBallotGroup = receivedCredentialBallotGroup !== undefined
+    ? receivedCredentialBallotGroup
+    : normaliseQuestionnaireBallotGroup(snapshot?.inviteMessage?.ballotGroup)
+      ?? normaliseQuestionnaireBallotGroup(activeInvite?.ballotGroup)
+      ?? normaliseQuestionnaireBallotGroup(inviteContext.invite?.ballotGroup)
+      ?? normaliseQuestionnaireBallotGroup(inviteContext.ballotGroup)
+      ?? normaliseQuestionnaireBallotGroup(snapshot?.privateInviteBallotGroup);
   const perQuestionMode = questionnaireUsesPerQuestionCredentials(currentDefinition);
   const proxyCredentialInvite = [
     snapshot?.inviteMessage,
@@ -2404,34 +2432,40 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setRefreshNonce((value) => value + 1);
   }
 
-  function publishProvisionalAnswers(questionIds: string[], credentialIndex = activeCredentialIndex) {
-    if (!runtime || questionIds.length === 0) {
-      return;
-    }
-    void runtime.publishProvisionalResponses(questionIds, { credentialIndex }).catch((error) => {
-      console.debug("Questionnaire provisional response publish failed", error);
-    });
-  }
-
-  function publishCurrentProvisionalAnswers(questionIds = activeQuestionIds) {
+  async function publishProvisionalAnswers(questionIds: string[], credentialIndex = activeCredentialIndex) {
     if (!runtime || questionIds.length === 0) {
       return false;
     }
-    let published = false;
+    try {
+      const published = await runtime.publishProvisionalResponses(questionIds, { credentialIndex });
+      return Boolean(published?.successes);
+    } catch (error) {
+      console.debug("Questionnaire provisional response publish failed", error);
+      return false;
+    }
+  }
+
+  async function publishCurrentProvisionalAnswers(questionIds = activeQuestionIds) {
+    if (!runtime || questionIds.length === 0) {
+      return false;
+    }
     if (showProxyBallotsTogether) {
+      let attempted = false;
       for (const credentialIndex of proxyCredentialIndexesToSubmit) {
         const draftResponses = buildDraftResponsesForCredential(credentialIndex, questionIds);
         if (draftResponses.length === 0) {
           continue;
         }
+        attempted = true;
         runtime.updateDraftResponses(draftResponses);
-        publishProvisionalAnswers(questionIds, credentialIndex);
-        published = true;
+        if (!await publishProvisionalAnswers(questionIds, credentialIndex)) {
+          return false;
+        }
       }
-      if (published) {
+      if (attempted) {
         setRefreshNonce((value) => value + 1);
       }
-      return published;
+      return attempted;
     }
     const draftResponses = buildDraftResponsesForCredential(activeCredentialIndex, questionIds);
     if (draftResponses.length === 0) {
@@ -2439,8 +2473,30 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     runtime.updateDraftResponses(draftResponses);
     setRefreshNonce((value) => value + 1);
-    publishProvisionalAnswers(questionIds, activeCredentialIndex);
-    return true;
+    return publishProvisionalAnswers(questionIds, activeCredentialIndex);
+  }
+
+  function publishCurrentProvisionalAnswersInBackground(questionIds: string[]) {
+    void (async () => {
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (await publishCurrentProvisionalAnswers(questionIds)) {
+          return;
+        }
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 1200 * (attempt + 1)));
+      }
+    })();
+  }
+
+  function advanceAfterPublishing(questionIds: string[], nextQuestionIndex: number) {
+    if (nextQuestionIndex < 0) {
+      return;
+    }
+    const hasCurrentAnswer = showProxyBallotsTogether ? proxyActiveQuestionHasResponse : activeQuestionHasResponse;
+    if (!activeQuestionSubmitted && hasCurrentAnswer) {
+      publishCurrentProvisionalAnswersInBackground(questionIds);
+    }
+    setStatus(null);
+    setActiveQuestionIndex(nextQuestionIndex);
   }
 
   function addRankedAnswer(questionId: string, optionId: string, credentialIndex = activeCredentialIndex) {
@@ -3675,14 +3731,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const activeQuestionProgressPercent = questions.length > 0
     ? `${Math.min(100, Math.max(0, ((activeQuestionIndex + 1) / questions.length) * 100))}%`
     : "0%";
-  const combinedProxySubmitLabel = showProxyBallotsTogether && canSubmitNow
-    ? proxyCredentialIndexesToSubmit.length > 1
-      ? `Submit ${proxyCredentialIndexesToSubmit.length} separate votes`
-      : "Submit remaining vote"
-    : "";
-  const questionNavSubmitHint = showProxyBallotsTogether && proxyCredentialIndexesToSubmit.length > 1
-    ? `${proxyCredentialIndexesToSubmit.length} separate votes ready`
-    : "Ballot ready";
+  const combinedProxySubmitLabel = showProxyBallotsTogether && canSubmitNow ? "Submit" : "";
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
     || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
     || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
@@ -3724,11 +3773,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     canAdvanceQuestionBeforeSubmit,
     submitInFlight,
   });
-  const questionNavSubmitStatus = canSubmitFromQuestionNav
-    ? questionNavSubmitHint
-    : !questionnaireCredentialReady
-      ? snapshotForAction?.blindRequestSent ? "Awaiting ballot" : "Requesting ballot"
-      : formattedVoteActionButtonText;
   const voteActionButtonText = responseSubmittedForCurrentQuestionnaire || (perQuestionMode && allQuestionResponsesSubmitted) || submitInFlight
     ? formattedVoteActionButtonText
     : requiredAnswerPrompt || combinedProxySubmitLabel || formattedVoteActionButtonText;
@@ -4185,41 +4229,22 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </div>
       );
     }
-    const encryptionRequired = Boolean(question.encryptResponses);
-    const encryptionEnabled = encryptionRequired || Boolean(encryptFreeTextByQuestionId[key]);
     return (
-      <>
-        <UiTextArea
-          textAreaClassName='simple-voter-input simple-questionnaire-free-text'
-          isDisabled={questionSubmitted}
-          textAreaProps={{
-            rows: 3,
-            maxLength: question.maxLength ?? 500,
-            value: typeof value === "string" ? value : "",
-            onChange: (event) => {
-              if (questionSubmitted) {
-                return;
-              }
-              setAnswers((current) => ({ ...current, [key]: event.target.value }));
-            },
-          }}
-        />
-        <UiSwitch
-          className='simple-questionnaire-choice-row'
-          label={encryptionRequired ? "Encryption required by organiser" : "Encrypt for organiser"}
-          isSelected={encryptionEnabled}
-          isDisabled={encryptionRequired || questionSubmitted}
-          onChange={(checked) => {
-            if (encryptionRequired || questionSubmitted) {
+      <UiTextArea
+        textAreaClassName='simple-voter-input simple-questionnaire-free-text'
+        isDisabled={questionSubmitted}
+        textAreaProps={{
+          rows: 3,
+          maxLength: question.maxLength ?? 500,
+          value: typeof value === "string" ? value : "",
+          onChange: (event) => {
+            if (questionSubmitted) {
               return;
             }
-            setEncryptFreeTextByQuestionId((current) => ({
-              ...current,
-              [key]: checked,
-            }));
-          }}
-        />
-      </>
+            setAnswers((current) => ({ ...current, [key]: event.target.value }));
+          },
+        }}
+      />
     );
   }
   const advancedReceiptRows = [
@@ -4559,9 +4584,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <div className='simple-questionnaire-voter-list'>
           {showQuestionNavigation ? (
             <div className='simple-questionnaire-question-stepper is-single-group' aria-label='Question progress'>
-              <p className='simple-questionnaire-question-progress'>
-                {activeQuestionProgressLabel}
-              </p>
+              <div className='simple-questionnaire-question-progress-row'>
+                <p className='simple-questionnaire-question-progress'>
+                  {activeQuestionProgressLabel}
+                </p>
+                {activeQuestionSubmitted ? <SubmittedStateLabel /> : null}
+              </div>
               <div className='simple-questionnaire-progress-track' aria-hidden='true'>
                 <span style={{ width: activeQuestionProgressPercent }} />
               </div>
@@ -4573,11 +4601,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 ? credentialIndexes.every((credentialIndex) => submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex)))
                 : submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
               : responseSubmittedForCurrentQuestionnaire;
-            const questionAccepted = perQuestionMode
-              ? showProxyBallotsTogether
-                ? credentialIndexes.every((credentialIndex) => acceptedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex)))
-                : acceptedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
-              : acceptedQuestionIds.has(question.questionId);
             const ballotCredentialIndexes = showProxyBallotsTogether ? credentialIndexes : [activeCredentialIndex];
             const questionRequirement = question.required ? "Required" : "Optional";
             return (
@@ -4588,20 +4611,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   <h4 className='simple-questionnaire-voter-prompt'>{question.prompt || "Untitled question"}</h4>
                   <p className='simple-questionnaire-voter-helper'>{questionHelperText(question)}</p>
                 </div>
-                {showProxyBallotsTogether ? (
-                  questionSubmitted ? (
-                    <SubmittedStateLabel />
-                  ) : null
-                ) : (() => {
-                  const requirementLabel = questionAccepted
-                    ? null
-                    : questionSubmitted
-                      ? "Submitted"
-                      : null;
-                  return requirementLabel ? (
-                    <SubmittedStateLabel>{requirementLabel}</SubmittedStateLabel>
-                  ) : null;
-                })()}
               </div>
               {showProxyBallotsTogether ? (
                 <div className='simple-questionnaire-proxy-vote-grid'>
@@ -4685,15 +4694,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     return;
                   }
                   if (nextQuestionIndex >= 0) {
-                    publishCurrentProvisionalAnswers();
-                    setActiveQuestionIndex(nextQuestionIndex);
+                    void advanceAfterPublishing(activeQuestionIds, nextQuestionIndex);
                   }
                 }}
               >
                 <span className='simple-questionnaire-stepper-copy'>
                   <strong>{showViewResultsFromQuestionNav ? "View results" : showSubmitFromQuestionNav ? submitInFlight ? "Submitting..." : "Submit" : "Next"}</strong>
-                  {showViewResultsFromQuestionNav ? null : (
-                    <small>{showSubmitFromQuestionNav ? questionNavSubmitStatus : nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
+                  {showViewResultsFromQuestionNav || showSubmitFromQuestionNav ? null : (
+                    <small>{nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
                   )}
                 </span>
               </UiButton>
@@ -4715,9 +4723,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 return;
               }
               if (canAdvanceQuestionBeforeSubmit) {
-                publishCurrentProvisionalAnswers(activeQuestionIds);
                 if (nextQuestionIndexInActiveGroup >= 0) {
-                  setActiveQuestionIndex(nextQuestionIndexInActiveGroup);
+                  void advanceAfterPublishing(activeQuestionIds, nextQuestionIndexInActiveGroup);
                 }
                 return;
               }

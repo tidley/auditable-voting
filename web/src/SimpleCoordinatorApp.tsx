@@ -614,7 +614,7 @@ function whitelistStatusIndicator(state: WhitelistClaimState): StatusIndicatorVi
 
 function ballotReceivedStatusIndicator(): StatusIndicatorView {
   return {
-    className: "simple-vote-status-icon simple-status-indicator is-voter-received",
+    className: "simple-vote-status-icon simple-status-indicator is-ballot-received",
     icon: "B",
     label: "Ballot received",
   };

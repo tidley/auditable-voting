@@ -204,9 +204,9 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
       ) : peerNpubs.length === 0 ? (
         <div className='simple-messages-empty-state'>
           <p className='simple-voter-empty'>
-            {props.role === "voter"
+            {status || (props.role === "voter"
               ? "Add or open an organiser before sending a message."
-              : "No voter messages have arrived yet."}
+              : "No voter messages have arrived yet.")}
           </p>
         </div>
       ) : (

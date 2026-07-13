@@ -128,9 +128,9 @@ If ballot access gets stuck, open **Menu** then **Settings**. **Ballot details**
 
 Answer the questions.
 
-For free-text questions, use **Encrypt for organiser** if the answer should not be public. If the organiser requires encryption, Vote keeps that option switched on.
+Free-text responses are encrypted automatically when the organiser requires it.
 
-When the button is ready, click **Submit response**.
+When the button is ready, click **Submit**.
 
 If it is not ready, the button explains why. For example:
 
@@ -227,7 +227,7 @@ The system is designed so that:
 2. Publish a questionnaire
 3. Share the **General invite link**
 4. Open **Voter** from the invite
-5. Submit a response with **Submit response**
+5. Submit a response with **Submit**
 6. Check **Submitted Votes** in Observer
 7. Publish and verify the final result
 8. Compare your result with another participant

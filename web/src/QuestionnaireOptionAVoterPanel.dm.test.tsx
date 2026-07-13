@@ -99,7 +99,10 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
   ]),
 }));
 
-import QuestionnaireOptionAVoterPanel, { formatVoteActionButtonText } from "./QuestionnaireOptionAVoterPanel";
+import QuestionnaireOptionAVoterPanel, {
+  ballotGroupFromReceivedCredential,
+  formatVoteActionButtonText,
+} from "./QuestionnaireOptionAVoterPanel";
 import { QuestionnaireOptionAVoterRuntime } from "./questionnaireOptionARuntime";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchQuestionnaireDefinitions, fetchQuestionnairePrivateInviteStatus } from "./questionnaireTransport";
@@ -157,6 +160,34 @@ afterEach(() => {
 });
 
 describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
+  it("uses the signed received credential scope when invite context is absent", () => {
+    const issuance = {
+      type: "blind_ballot_response" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_scoped",
+      requestId: "request_scoped",
+      issuanceId: "issuance_scoped",
+      invitedNpub: "npub1voter",
+      blindSigningKeyId: "key_scoped",
+      blindSignature: "signature_scoped",
+      ballotScope: { allowedScopes: ["0", "3"] },
+      issuedAt: "2026-07-13T00:00:00.000Z",
+    };
+
+    expect(ballotGroupFromReceivedCredential({
+      blindIssuance: issuance,
+      blindIssuances: {},
+    })).toBe("3");
+    expect(ballotGroupFromReceivedCredential({
+      blindIssuance: { ...issuance, ballotScope: { allowedScopes: ["0"] } },
+      blindIssuances: {},
+    })).toBe(null);
+    expect(ballotGroupFromReceivedCredential({
+      blindIssuance: { ...issuance, ballotScope: null },
+      blindIssuances: {},
+    })).toBe(undefined);
+  });
+
   it("shows an in-flight submit label until the next action state is available", () => {
     const baseInput = {
       snapshot: null,
@@ -2220,9 +2251,12 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       lastUpdatedAt: "2026-06-15T23:02:00.000Z",
     });
 
-    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_complete"]} localVoterNpub={localVoterNpub} />);
+    const { container } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_complete"]} localVoterNpub={localVoterNpub} />);
 
     expect(await screen.findByText("Question 1 of 2")).toBeTruthy();
+    const progress = screen.getByLabelText("Question progress");
+    expect(within(progress).getByText("Submitted")).toBeTruthy();
+    expect(container.querySelector(".simple-questionnaire-voter-heading")?.textContent).not.toContain("Submitted");
     expect(screen.queryByText(/Complete/)).toBeNull();
     expect(screen.getAllByText("First grouped question").length).toBeGreaterThan(0);
     expect(screen.queryByText("Second grouped question")).toBeNull();
@@ -2236,7 +2270,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const receiptRegion = await screen.findByRole("region", { name: "Vote receipt details" });
     expect(within(receiptRegion).queryByText("Second grouped question")).toBeNull();
     expect(within(receiptRegion).getByText("Submitted")).toBeTruthy();
-    expect(within(receiptRegion).getByText("Anonymous voting identity")).toBeTruthy();
+    expect(within(receiptRegion).getByRole("img", { name: "Anonymous voting identity" })).toBeTruthy();
   });
 
   it("advances answered grouped ballot questions before showing the final required gate", async () => {
@@ -2369,13 +2403,22 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         keyId: "blind_key",
         jwk: { kty: "RSA", e: "AQAB", n: "test" },
       },
-      questions: [{
-        questionId: "q1",
-        type: "yes_no" as const,
-        prompt: "Approve proxy item?",
-        required: true,
-        ballotSlot: { slotId: "proxy-item", slotIndex: 1, version: 1 },
-      }],
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no" as const,
+          prompt: "Approve proxy item?",
+          required: true,
+          ballotSlot: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q2",
+          type: "yes_no" as const,
+          prompt: "Confirm proxy item?",
+          required: true,
+          ballotSlot: { slotId: "proxy-item", slotIndex: 1, version: 1 },
+        },
+      ],
     };
     storeCachedQuestionnaireDefinition(definition);
     optionAStorageMocks.loadVoterState.mockReturnValue({
@@ -2470,6 +2513,14 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       .mockImplementation((responses) => {
         draftBatches.push(responses);
       });
+    const provisionalCalls: Array<{ questionIds: string[]; credentialIndex: number | undefined }> = [];
+    const provisionalResolvers: Array<() => void> = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "publishProvisionalResponses")
+      .mockImplementation(async (questionIds, options) => {
+        provisionalCalls.push({ questionIds, credentialIndex: options?.credentialIndex });
+        await new Promise<void>((resolve) => provisionalResolvers.push(resolve));
+        return { successes: 1 } as Awaited<ReturnType<QuestionnaireOptionAVoterRuntime["publishProvisionalResponses"]>>;
+      });
     const submitCalls: Array<{
       requiredQuestionIds: string[];
       options: Parameters<QuestionnaireOptionAVoterRuntime["submitVote"]>[1];
@@ -2496,15 +2547,37 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(within(secondVote).getByRole("button", { name: "No" }).getAttribute("aria-pressed")).toBe("true");
     });
 
-    await user.click(await screen.findByRole("button", { name: "Submit 2 separate votes" }));
+    await user.click(await screen.findByRole("button", { name: /Next/ }));
+    await waitFor(() => expect(provisionalCalls).toEqual([{ questionIds: ["q1"], credentialIndex: 1 }]));
+    expect(await screen.findByText("Question 2 of 2")).toBeTruthy();
+    await act(async () => provisionalResolvers.shift()?.());
+    await waitFor(() => expect(provisionalCalls).toEqual([
+      { questionIds: ["q1"], credentialIndex: 1 },
+      { questionIds: ["q1"], credentialIndex: 2 },
+    ]));
+    await act(async () => provisionalResolvers.shift()?.());
+
+    const firstSecondVote = screen.getByRole("region", { name: "Separate vote 1 of 2" });
+    const secondSecondVote = screen.getByRole("region", { name: "Separate vote 2 of 2" });
+    await user.click(within(firstSecondVote).getByRole("button", { name: "No" }));
+    await user.click(within(secondSecondVote).getByRole("button", { name: "Yes" }));
+    await user.click(await screen.findByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
       expect(submitCalls.map((call) => call.options?.credentialIndex)).toEqual([1, 2]);
-      expect(submitCalls.map((call) => call.options?.questionIds)).toEqual([["q1"], ["q1"]]);
-      expect(submitCalls.map((call) => call.requiredQuestionIds)).toEqual([["q1"], ["q1"]]);
+      expect(submitCalls.map((call) => call.options?.questionIds)).toEqual([["q1", "q2"], ["q1", "q2"]]);
+      expect(submitCalls.map((call) => call.requiredQuestionIds)).toEqual([["q1", "q2"], ["q1", "q2"]]);
       expect(draftBatches).toEqual([
         [{ questionId: "q1", type: "yes_no", answer: "yes" }],
         [{ questionId: "q1", type: "yes_no", answer: "no" }],
+        [
+          { questionId: "q1", type: "yes_no", answer: "yes" },
+          { questionId: "q2", type: "yes_no", answer: "no" },
+        ],
+        [
+          { questionId: "q1", type: "yes_no", answer: "no" },
+          { questionId: "q2", type: "yes_no", answer: "yes" },
+        ],
       ]);
     });
   });

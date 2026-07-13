@@ -6027,6 +6027,12 @@ code {
   border-color: transparent;
 }
 
+.simple-admitted-voter-status.simple-status-indicator.is-ballot-received {
+  color: var(--simple-green);
+  background: transparent;
+  border-color: transparent;
+}
+
 .simple-admitted-voter-status.simple-status-indicator.is-voter-issued,
 .simple-admitted-voter-status.simple-status-indicator.is-voter-whitelisted {
   color: var(--simple-teal);
@@ -7023,14 +7029,28 @@ code {
 
 .simple-questionnaire-question-progress {
   justify-self: center;
-  margin: 0 0 8px;
+  margin: 0;
   padding: 0;
   border-radius: 0;
   background: transparent;
   color: var(--simple-text);
   font-size: 0.94rem;
-  font-weight: 800;
+  font-weight: 600;
+  line-height: 1.4;
   text-align: center;
+}
+
+.simple-questionnaire-question-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.simple-questionnaire-question-progress-row .simple-questionnaire-voter-requirement {
+  flex: 0 0 auto;
+  margin: 0;
 }
 
 .simple-questionnaire-progress-track {
@@ -7091,14 +7111,15 @@ code {
 .simple-questionnaire-stepper-copy strong {
   color: var(--simple-text);
   font-size: 0.94rem;
-  line-height: 1;
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .simple-questionnaire-stepper-copy small {
   color: var(--simple-muted);
   font-size: 0.74rem;
-  font-weight: 750;
-  line-height: 1;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .simple-questionnaire-stepper-button-next:not(:disabled) {
@@ -7141,6 +7162,14 @@ code {
 .simple-optiona-voter-page {
   display: grid;
   gap: 22px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+}
+
+.simple-optiona-voter-page .av-ui-button {
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .simple-questionnaire-invite-switcher {
@@ -7204,9 +7233,9 @@ code {
   color: #f8fafc;
   font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
   font-size: clamp(1.35rem, 6vw, 2.6rem);
-  font-weight: 900;
-  line-height: 1;
-  letter-spacing: -0.04em;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0;
 }
 
 .simple-questionnaire-voter-landing-action {
@@ -8107,8 +8136,8 @@ code {
     0 0 0 1px rgba(45, 212, 191, 0.08);
   color: #2dd4bf;
   font-size: 1.18rem;
-  font-weight: 900;
-  letter-spacing: 0.01em;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .simple-questionnaire-voter-heading-copy {
@@ -8126,8 +8155,8 @@ code {
   margin: 0;
   color: var(--simple-teal);
   font-size: 0.85rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-weight: 600;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -8157,9 +8186,9 @@ code {
   background: transparent;
   color: var(--simple-teal);
   font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.3;
   text-transform: uppercase;
 }
 
@@ -8220,7 +8249,8 @@ code {
   min-width: 0;
   color: var(--simple-text);
   font-size: 0.9rem;
-  line-height: 1.15;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .simple-questionnaire-proxy-vote-heading .simple-questionnaire-voter-requirement {
@@ -8237,15 +8267,16 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: 1.45rem;
-  line-height: 1.18;
-  font-weight: 800;
+  line-height: 1.32;
+  font-weight: 600;
 }
 
 .simple-questionnaire-voter-helper {
   margin: 0;
   color: var(--simple-muted);
   font-size: 1rem;
-  line-height: 1.35;
+  font-weight: 400;
+  line-height: 1.55;
 }
 
 .simple-questionnaire-yes-no-grid {
@@ -8261,7 +8292,7 @@ code {
   padding: 0 22px;
   border-radius: 10px;
   font-size: 1.02rem;
-  font-weight: 850;
+  font-weight: 600;
 }
 
 .simple-questionnaire-yes-no-grid .av-ui-icon,
@@ -8344,7 +8375,8 @@ code {
   background: var(--simple-surface);
   color: var(--simple-text);
   font-size: 1.02rem;
-  line-height: 1.35;
+  font-weight: 400;
+  line-height: 1.5;
   cursor: pointer;
 }
 
@@ -8360,7 +8392,7 @@ code {
   border-color: rgba(45, 212, 191, 0.52);
   background: rgba(45, 212, 191, 0.08);
   color: var(--simple-text);
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .simple-questionnaire-choice-row.is-selected input[type="checkbox"],
@@ -8434,7 +8466,7 @@ code {
   margin: -4px 0 0;
   color: var(--simple-teal);
   font-size: 0.95rem;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .simple-questionnaire-rank-voter-grid {
@@ -8488,7 +8520,7 @@ code {
   gap: 6px;
   min-width: 0;
   overflow-wrap: anywhere;
-  font-weight: 900;
+  font-weight: 600;
 }
 
 .simple-questionnaire-rank-inline-number {
@@ -8500,7 +8532,7 @@ code {
   justify-self: end;
   color: var(--simple-teal);
   font-size: 0.86rem;
-  font-weight: 900;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -10682,6 +10714,12 @@ code {
   color: #431407;
   background: var(--simple-amber);
   border-color: var(--simple-amber);
+}
+
+.simple-status-indicator.is-ballot-received {
+  color: #052e16;
+  background: var(--simple-green);
+  border-color: var(--simple-green);
 }
 
 .simple-imported-contact-list {

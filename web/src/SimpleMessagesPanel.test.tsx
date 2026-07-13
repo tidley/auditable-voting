@@ -40,6 +40,19 @@ afterEach(() => {
 });
 
 describe("SimpleMessagesPanel", () => {
+  it("shows loading instead of an empty organiser inbox before relay history arrives", async () => {
+    render(
+      <SimpleMessagesPanel
+        role='coordinator'
+        actorNpub='npub1coordinator'
+        actorNsec='nsec1coordinator'
+      />,
+    );
+
+    expect(await screen.findByText("Loading messages...")).toBeTruthy();
+    expect(screen.queryByText("No voter messages have arrived yet.")).toBeNull();
+  });
+
   it("does not subscribe voter messages until an organiser target is known", () => {
     render(
       <SimpleMessagesPanel

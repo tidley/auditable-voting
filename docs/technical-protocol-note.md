@@ -78,7 +78,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 2. Open the pending questionnaire.
 3. Click **Request ballot** if the blind credential request does not start automatically. Current per-question questionnaires request a bundle with one scoped credential per ballot index, or two per index when that voter is marked as a proxy voter; large request bundles may be compressed before NIP-17 encryption, with plain JSON kept as the fallback.
 4. Wait for the ballot credentials to be ready.
-5. Answer the visible ballot group and click **Submit response**. In per-question questionnaires, questions sharing a ballot index submit together, then Vote moves to the next unanswered ballot index.
+5. Answer the visible ballot group and click **Submit**. In per-question questionnaires, questions sharing a ballot index submit together, then Vote moves to the next unanswered ballot index.
 6. After submission, Vote keeps submitted answers visible and locks the controls for those questions.
 7. When several questionnaires from the organiser are available, Vote labels the selector by round and local status, and **Answer next** opens the next unanswered questionnaire.
 8. **Messages** is limited to the organiser target for the active public questionnaire link. With one organiser it opens directly to the thread; Enter sends and Shift+Enter inserts a line break.
