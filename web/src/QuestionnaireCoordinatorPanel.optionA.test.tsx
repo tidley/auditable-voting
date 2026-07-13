@@ -319,6 +319,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const quickStart = screen.getByLabelText("Quick start command") as HTMLTextAreaElement;
     expect(quickStart.value).toContain(workerNsecInput.value);
     expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net');
+    expect((screen.getByRole("button", { name: "Confirm configuration" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Confirm unlocks after its heartbeat appears/i)).toBeTruthy();
   });
 
   it("refreshes a manually generated proxy account when the setup page is reopened", async () => {
