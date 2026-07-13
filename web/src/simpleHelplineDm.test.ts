@@ -215,6 +215,7 @@ describe("simpleHelplineDm", () => {
       expect(querySync).toHaveBeenCalledTimes(1);
       expect(subscribeMany).toHaveBeenCalledTimes(1);
     });
+    expect(subscribeMany.mock.calls[0]?.[1]).not.toHaveProperty("since");
 
     const liveMessage = nip17.wrapEvent(
       peerSecret,

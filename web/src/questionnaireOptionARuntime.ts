@@ -4105,6 +4105,32 @@ export class QuestionnaireOptionACoordinatorRuntime {
       ackedAt: ack.ackedAt,
     });
     this.issuanceDmRepublishRequests.delete(ack.requestId);
+    const request = this.state?.pendingBlindRequests[ack.requestId] ?? null;
+    const whitelistEntry = this.state?.whitelist[ack.invitedNpub] ?? null;
+    const confirmsKnownRequest = Boolean(
+      this.state
+      && request
+      && whitelistEntry
+      && ack.electionId === this.electionId
+      && request.electionId === ack.electionId
+      && request.invitedNpub === ack.invitedNpub,
+    );
+    if (this.state && request && whitelistEntry && confirmsKnownRequest) {
+      const alreadyPastIssuance = ["vote_received", "vote_accepted", "vote_rejected"].includes(whitelistEntry.claimState);
+      this.state = {
+        ...this.state,
+        whitelist: {
+          ...this.state.whitelist,
+          [ack.invitedNpub]: {
+            ...whitelistEntry,
+            claimState: alreadyPastIssuance ? whitelistEntry.claimState : "blind_signature_issued",
+            issuanceId: ack.issuanceId,
+          },
+        },
+        lastUpdatedAt: ack.ackedAt,
+      };
+      this.persistCoordinatorState("blind_issuance_ack_received");
+    }
     optionAFlowLog("coordinator", "blind_issuance_ack_received", {
       electionId: ack.electionId,
       requestId: ack.requestId,

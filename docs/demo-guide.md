@@ -62,7 +62,7 @@ Use these pages:
 
 Open **Organiser**.
 
-If the same people will answer several questionnaires, open **Session** and use **Voters** to add their voter identities first. Use **Invite voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful, and leave **Auto-ballot** ticked for voters who should receive the next session. After the first questionnaire is published, use **Add session** under **Questionnaire** for follow-up questionnaires. It keeps the current setup, generates a fresh Questionnaire ID, shows one action, **Publish to invited voters**, and returns Organiser to **Session** after publishing. Voters still receive a fresh blind ballot credential for each questionnaire.
+If the same people will answer several questionnaires, open **Session** and use **Voters** to add their voter identities first. Use **Invite voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful. Every participant receives later sessions until removed. After the first questionnaire is published, use **Add session** under **Questionnaire** for follow-up questionnaires. It keeps the current setup, generates a fresh Questionnaire ID, shows one action, **Publish to invited voters**, and returns Organiser to **Session** after publishing. Voters still receive a fresh blind ballot credential for each questionnaire.
 
 Fill in:
 
@@ -77,7 +77,7 @@ The **Readiness checklist** should show:
 - **At least one question added**
 - **Questions complete**
 
-Click **Publish questionnaire**. When the draft is ready and Auto-ballot voters are selected, **Publish + apply invited voters** appears so the invited-voter roster can be green-lit immediately for this questionnaire.
+Click **Publish questionnaire**. When the draft is ready and at least one voter is invited, **Publish + apply invited voters** appears so the invited-voter roster can be green-lit immediately for this questionnaire.
 
 When it appears, click **Open vote**.
 

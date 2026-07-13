@@ -132,7 +132,6 @@ export type AdmittedVoterRecord = {
   admittedAt: string;
   source?: "manual" | "contact" | "private_invite" | "import" | null;
   note?: string | null;
-  autoApply?: boolean;
   proxyVoter?: boolean;
   ballotGroup?: string | null;
   lastUpdatedAt: string;
@@ -157,7 +156,6 @@ function normaliseAdmittedVoterRecord(record: AdmittedVoterRecord): AdmittedVote
     admittedAt: record.admittedAt?.trim() || now,
     source: record.source ?? null,
     note: typeof record.note === "string" ? record.note : null,
-    autoApply: record.autoApply !== false,
     proxyVoter: record.proxyVoter === true,
     ballotGroup: normaliseBallotGroup(record.ballotGroup),
     lastUpdatedAt: record.lastUpdatedAt?.trim() || record.admittedAt?.trim() || now,
@@ -257,7 +255,6 @@ export function upsertAdmittedVoters(input: {
       admittedAt: existing?.admittedAt ?? now,
       source: existing?.source ?? input.source ?? null,
       note: existing?.note ?? null,
-      autoApply: existing?.autoApply !== false,
       proxyVoter: existing?.proxyVoter === true,
       ballotGroup: existing?.ballotGroup ?? null,
       lastUpdatedAt: now,
@@ -273,7 +270,7 @@ export function upsertAdmittedVoters(input: {
 export function updateAdmittedVoter(input: {
   coordinatorNpub: Npub;
   npub: Npub;
-  patch: Pick<Partial<AdmittedVoterRecord>, "note" | "autoApply" | "proxyVoter" | "ballotGroup">;
+  patch: Pick<Partial<AdmittedVoterRecord>, "note" | "proxyVoter" | "ballotGroup">;
 }) {
   const current = loadAdmittedVoters({ coordinatorNpub: input.coordinatorNpub });
   const npub = input.npub.trim();
@@ -286,7 +283,6 @@ export function updateAdmittedVoter(input: {
     [npub]: {
       ...existing,
       note: typeof input.patch.note === "string" ? input.patch.note : existing.note ?? null,
-      autoApply: typeof input.patch.autoApply === "boolean" ? input.patch.autoApply : existing.autoApply !== false,
       proxyVoter: typeof input.patch.proxyVoter === "boolean" ? input.patch.proxyVoter : existing.proxyVoter === true,
       ballotGroup: input.patch.ballotGroup !== undefined ? normaliseBallotGroup(input.patch.ballotGroup) : existing.ballotGroup ?? null,
       lastUpdatedAt: new Date().toISOString(),

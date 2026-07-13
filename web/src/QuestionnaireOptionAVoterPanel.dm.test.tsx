@@ -1680,7 +1680,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_waiting_button_copy"]} />);
 
-    expect(await screen.findByRole("button", { name: "Start" })).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Start" })).className).toContain("av-ui-button-primary");
     await user.click(screen.getByRole("button", { name: "Start" }));
     expect(screen.queryByText("Cached questionnaire")).toBeNull();
     expect(screen.queryByText("Cached description")).toBeNull();

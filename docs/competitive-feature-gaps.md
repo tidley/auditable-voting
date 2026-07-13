@@ -102,7 +102,7 @@ The main commercial gap is not the core cryptographic model. It is the surroundi
 For the likely near-term use case of around 60 voters answering around 20 questions, prioritise:
 
 1. Clone/duplicate questionnaire and batch question import.
-2. Persistent admitted-voter roster with CSV import, labels, groups, and auto-ballot eligibility.
+2. Persistent admitted-voter roster with CSV import, labels, groups, and automatic carry-forward until removal.
 3. Organiser live-session controls: publish current question, move to next question, and show voter progress.
 4. Voter sequence navigation that clearly shows current question, completed questions, and next unanswered questionnaire.
 5. Turnout dashboard covering invited, requested, issued, submitted, accepted, and invalid states.

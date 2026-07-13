@@ -23,7 +23,6 @@ const HELPLINE_DM_PUBLISH_MAX_WAIT_MS = 5000;
 const HELPLINE_DM_PUBLISH_STAGGER_MS = 250;
 const HELPLINE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const HELPLINE_DM_READ_RELAYS_MAX = 4;
-const HELPLINE_DM_LIVE_LOOKBACK_SECONDS = 60;
 const HELPLINE_DM_LIVE_LIMIT = 50;
 const HELPLINE_DM_SUBJECT = "Auditable Voting helpline";
 const HELPLINE_DM_SENT_CACHE_PREFIX = "auditableVoting.helpline.sent.v1:";
@@ -409,11 +408,9 @@ function startHelplineDmFeed(feed: HelplineDmFeed) {
     }
     const dmRelays = selectDmReadRelays(inboxRelays);
     const pool = getSharedNostrPool();
-    const since = Math.max(0, Math.floor(Date.now() / 1000) - HELPLINE_DM_LIVE_LOOKBACK_SECONDS);
     feed.subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
       "#p": [feed.actor.publicHex],
-      since,
       limit: Math.min(feed.limit, HELPLINE_DM_LIVE_LIMIT),
     }, {
       onevent: (wrappedEvent) => {

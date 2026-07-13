@@ -22,10 +22,12 @@ import {
 } from "./questionnaireOptionAStorage";
 import {
   fetchOptionABallotSubmissionDmsWithNsec,
+  fetchOptionABlindIssuanceAckDms,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
   publishOptionABlindIssuanceBundleDm,
   publishOptionABlindIssuanceDm,
+  publishOptionABlindIssuanceAckDm,
   publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
   publishOptionAVoterStateDm,
@@ -2434,6 +2436,17 @@ describe("questionnaireOptionARuntime", () => {
     expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: voterNpub,
     }));
+    await vi.waitFor(() => {
+      expect(publishOptionABlindIssuanceAckDm).toHaveBeenCalled();
+    });
+    const issuanceAck = vi.mocked(publishOptionABlindIssuanceAckDm).mock.calls.at(-1)?.[0].ack;
+    expect(issuanceAck).toBeTruthy();
+    vi.mocked(fetchOptionABlindIssuanceAckDms).mockResolvedValueOnce(issuanceAck ? [issuanceAck] : []);
+    await coordinator.syncBlindIssuanceAcksFromDm();
+    expect(coordinator.getSnapshot()?.whitelist[voterNpub]).toMatchObject({
+      claimState: "blind_signature_issued",
+      issuanceId: issuanceAck?.issuanceId,
+    });
 
     await voter.submitVote(["q1"]);
     const submission = voter.getSnapshot()?.submission;

@@ -2695,6 +2695,10 @@ code {
   gap: 18px;
 }
 
+.simple-voter-tab-panel[hidden] {
+  display: none;
+}
+
 .simple-questionnaire-panel {
   display: grid;
   gap: 18px;
@@ -7197,7 +7201,7 @@ code {
 
 .simple-questionnaire-voter-id-value {
   margin: 0;
-  color: var(--simple-teal);
+  color: #f8fafc;
   font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
   font-size: clamp(1.35rem, 6vw, 2.6rem);
   font-weight: 900;

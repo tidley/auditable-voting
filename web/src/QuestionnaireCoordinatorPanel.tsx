@@ -5113,7 +5113,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
 	            <aside className='simple-questionnaire-build-aside'>
 	              <section className='simple-questionnaire-build-side-card simple-questionnaire-build-actions'>
 	                {showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish ? (
-	                  <p className='simple-voter-note'>Enable Auto-ballot for at least one voter before publishing this round.</p>
+	                  <p className='simple-voter-note'>Add at least one invited voter before publishing this round.</p>
 	                ) : null}
 	                {!coordinatorNsec.trim() ? (
 	                  <p className='simple-voter-note'>Organiser key is not loaded yet.</p>

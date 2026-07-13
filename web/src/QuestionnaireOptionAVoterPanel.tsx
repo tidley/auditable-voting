@@ -4539,6 +4539,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             <UiButton
               icon='chevronRight'
               iconPosition='end'
+              variant='primary'
               className='simple-voter-primary simple-questionnaire-answer-next'
               onPress={() => setQuestionnaireStarted(true)}
             >
