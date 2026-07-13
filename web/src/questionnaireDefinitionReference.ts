@@ -32,6 +32,14 @@ export function questionnaireDefinitionHash(definition: QuestionnaireDefinition)
   return sha256HexRust(stableJsonStringify(definition as unknown as JsonValue));
 }
 
+export function questionnaireDefinitionEventHash(content: string) {
+  const parsed = JSON.parse(content) as JsonValue;
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new Error("Questionnaire definition event content must be a JSON object.");
+  }
+  return sha256HexRust(stableJsonStringify(parsed));
+}
+
 export function selectNewestMatchingQuestionnaireDefinition(
   questionnaireId: string,
   definitions: Array<QuestionnaireDefinition | null | undefined>,
@@ -51,6 +59,7 @@ export function selectNewestMatchingQuestionnaireDefinition(
 export function buildQuestionnaireDefinitionReference(input: {
   definition: QuestionnaireDefinition;
   definitionEventId?: string | null;
+  definitionHash?: string | null;
   relays?: string[] | null;
 }): QuestionnaireDefinitionReference {
   const relays = input.relays ?? input.definition.questionnaireRelays ?? [];
@@ -58,7 +67,7 @@ export function buildQuestionnaireDefinitionReference(input: {
     questionnaireId: input.definition.questionnaireId,
     coordinatorNpub: input.definition.coordinatorPubkey,
     relays: relays.length > 0 ? relays : undefined,
-    definitionHash: questionnaireDefinitionHash(input.definition),
+    definitionHash: input.definitionHash?.trim() || questionnaireDefinitionHash(input.definition),
     definitionEventId: input.definitionEventId?.trim() || null,
     createdAt: Number.isFinite(input.definition.createdAt) ? input.definition.createdAt : null,
   };

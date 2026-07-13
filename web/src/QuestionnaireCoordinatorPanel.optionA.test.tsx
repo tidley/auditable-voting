@@ -75,7 +75,7 @@ import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCac
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
-import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
+import { questionnaireDefinitionEventHash, questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 import { createWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
 
 function makeDefinition(input: {
@@ -1256,6 +1256,20 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       }),
       blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindKey),
     };
+    const staleCachedDefinition = {
+      ...definition,
+      title: "Stale local proxy config",
+      createdAt: definition.createdAt + 1000,
+    };
+    const publishedDefinitionEvent = {
+      id: "published-proxy-config-event",
+      pubkey: getPublicKey(coordinatorSecret),
+      created_at: definition.createdAt,
+      kind: QUESTIONNAIRE_DEFINITION_KIND,
+      tags: [["q", questionnaireId], ["questionnaire-id", questionnaireId]],
+      content: JSON.stringify(definition),
+      sig: "0".repeat(128),
+    };
     const capabilities: WorkerCapability[] = [
       "issue_blind_tokens",
       "verify_public_submissions",
@@ -1279,7 +1293,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       controlRelays,
       expiresAt: "2099-01-01T00:00:00.000Z",
     });
-    storeCachedQuestionnaireDefinition(definition);
+    storeCachedQuestionnaireDefinition(staleCachedDefinition);
+    sharedNostrPoolMocks.querySync.mockResolvedValue([publishedDefinitionEvent]);
     const election = {
       electionId: questionnaireId,
       title: "Proxy config resend",
@@ -1356,5 +1371,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     const configInput = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0];
     expect(configInput?.snapshot.expectedInviteeCount).toBeUndefined();
+    expect(configInput?.snapshot.definitionReference?.definitionEventId).toBe(publishedDefinitionEvent.id);
+    expect(configInput?.snapshot.definitionReference?.definitionHash).toBe(questionnaireDefinitionEventHash(publishedDefinitionEvent.content));
+    expect(configInput?.snapshot.definitionReference?.definitionHash).not.toBe(questionnaireDefinitionHash(staleCachedDefinition));
   });
 });

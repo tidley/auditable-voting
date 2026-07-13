@@ -25,6 +25,7 @@ import type {
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import { questionnaireDefinitionEventHash } from "./questionnaireDefinitionReference";
 import { verifyQuestionnaireBlindSignature } from "./questionnaireBlindSignature";
 import { buildQuestionnaireBlindTokenSignedMessage } from "./questionnaireBlindToken";
 import {
@@ -165,6 +166,34 @@ export async function fetchQuestionnaireDefinitions(input: {
   return events
     .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
     .filter((entry): entry is { event: NostrEvent; definition: QuestionnaireDefinition } => Boolean(entry.definition));
+}
+
+export async function fetchLatestQuestionnaireDefinitionByCoordinator(input: {
+  questionnaireId: string;
+  coordinatorNpub: string;
+  relays?: string[];
+}) {
+  const coordinatorHex = toHexPubkey(input.coordinatorNpub);
+  if (!coordinatorHex) {
+    return null;
+  }
+  const entries = await fetchQuestionnaireDefinitions({
+    questionnaireId: input.questionnaireId,
+    relays: input.relays,
+    limit: 100,
+    preferKindOnly: true,
+  });
+  const latest = entries
+    .filter((entry) => entry.event.pubkey === coordinatorHex)
+    .filter((entry) => toHexPubkey(entry.definition.coordinatorPubkey) === coordinatorHex)
+    .filter((entry) => entry.definition.questionnaireId === input.questionnaireId)
+    .sort((left, right) => (
+      Number(right.event.created_at ?? right.definition.createdAt ?? 0)
+      - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
+    ))[0] ?? null;
+  return latest
+    ? { ...latest, definitionHash: questionnaireDefinitionEventHash(latest.event.content) }
+    : null;
 }
 
 export async function fetchQuestionnaireParticipantCount(input: {

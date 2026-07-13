@@ -115,6 +115,7 @@ import {
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import {
   buildQuestionnaireDefinitionReference,
+  questionnaireDefinitionEventHash,
   questionnaireDefinitionHash,
 } from "./questionnaireDefinitionReference";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
@@ -141,6 +142,7 @@ import {
   fetchQuestionnaireActiveWorkerDelegationForCapability,
   fetchQuestionnaireBlindResponses,
   fetchQuestionnaireDefinitions,
+  fetchLatestQuestionnaireDefinitionByCoordinator,
   fetchQuestionnaireSubmissionDecisions,
 } from "./questionnaireTransport";
 import {
@@ -1147,7 +1149,7 @@ export class QuestionnaireOptionAVoterRuntime {
         .filter((entry) => entry.definition.questionnaireId === input.state.electionId)
         .filter((entry) => {
           const expectedHash = input.state.inviteMessage?.definitionReference?.definitionHash?.trim() ?? "";
-          return !expectedHash || questionnaireDefinitionHash(entry.definition) === expectedHash;
+          return !expectedHash || questionnaireDefinitionEventHash(entry.event.content) === expectedHash;
         })
         .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]?.definition ?? null;
       if (latest) {
@@ -4830,9 +4832,17 @@ export class QuestionnaireOptionACoordinatorRuntime {
     const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(this.state.whitelist[normalizedInvitedNpub]?.credentialsPerVoter);
     const ballotGroup = normaliseQuestionnaireBallotGroup(this.state.whitelist[normalizedInvitedNpub]?.ballotGroup);
     const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
-    const definitionReference = cachedDefinition
+    const publishedDefinitionEntry = await fetchLatestQuestionnaireDefinitionByCoordinator({
+      questionnaireId: this.electionId,
+      coordinatorNpub: this.coordinatorNpub,
+      relays: getPreferredQuestionnaireRelays(this.electionId),
+    }).catch(() => null);
+    const referenceDefinition = publishedDefinitionEntry?.definition ?? cachedDefinition;
+    const definitionReference = referenceDefinition
       ? buildQuestionnaireDefinitionReference({
-        definition: cachedDefinition,
+        definition: referenceDefinition,
+        definitionEventId: publishedDefinitionEntry?.event.id ?? null,
+        definitionHash: publishedDefinitionEntry?.definitionHash ?? null,
         relays: getPreferredQuestionnaireRelays(this.electionId),
       })
       : {

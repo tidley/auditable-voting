@@ -29,6 +29,7 @@ import {
 import type { BallotScope, BlindBallotIssuance, BlindBallotRequest, ElectionInviteMessage } from "../src/questionnaireOptionA";
 import { publishOptionAInviteDm } from "../src/questionnaireOptionAInviteDm";
 import { buildInviteUrl } from "../src/questionnaireInvite";
+import { buildQuestionnaireDefinitionReference, questionnaireDefinitionEventHash } from "../src/questionnaireDefinitionReference";
 import {
   QUESTIONNAIRE_RESULT_SUMMARY_KIND,
   publishQuestionnaireDefinition,
@@ -790,6 +791,12 @@ async function main() {
       relays,
     });
     assert(publishedDefinition.successes > 0, "expected questionnaire definition publish to succeed on at least one relay");
+    const definitionReference = buildQuestionnaireDefinitionReference({
+      definition,
+      definitionEventId: publishedDefinition.eventId,
+      definitionHash: questionnaireDefinitionEventHash(publishedDefinition.event.content),
+      relays,
+    });
 
     const publishedState = await publishQuestionnaireState({
       coordinatorNsec: coordinator.nsec,
@@ -870,7 +877,7 @@ async function main() {
       bearerInviteCodes: [],
       eligibilityRequired: true,
       blindSigningPrivateKey,
-      definition,
+      definitionReference,
       sentAt: new Date().toISOString(),
     };
     let configApplied = false;
@@ -945,7 +952,7 @@ async function main() {
         coordinatorNpub: coordinator.npub,
         blindSigningPublicKey,
         issueBlindTokensWorker,
-        definition,
+        definitionReference,
         ...(index < proxyVoterCount ? { credentialsPerVoter: 2 as const } : {}),
         ...(ballotGroup ? { ballotGroup } : {}),
         expiresAt: null,

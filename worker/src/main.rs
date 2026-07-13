@@ -3012,13 +3012,13 @@ impl WorkerRuntime {
         };
         let definition_hash = questionnaire_definition_hash(&definition);
         let mut state = self.state.lock().await;
-        let election = state
-            .elections
-            .entry(questionnaire_id.clone())
-            .or_insert_with(ElectionRuntimeState::default);
-        if election.election_id.is_empty() {
-            election.election_id = questionnaire_id.clone();
-        }
+        let Some(election) = state.elections.get_mut(&questionnaire_id) else {
+            debug!(
+                "public questionnaire definition ignored for undelegated election: election_id={}, event_id={}",
+                questionnaire_id, event.id
+            );
+            return Ok(false);
+        };
         if let Some(expected_hash) = election
             .definition_hash
             .as_ref()
@@ -5060,6 +5060,25 @@ mod tests {
                 Some(event.id.to_hex().as_str())
             );
         }
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[tokio::test]
+    async fn public_definition_event_ignores_undelegated_election() {
+        let coordinator_keys = Keys::generate();
+        let definition = public_definition("q_public_definition_undelegated", "key-live");
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+        let event = public_definition_event(&coordinator_keys, &definition);
+
+        assert!(!runtime
+            .process_public_definition_event(&event)
+            .await
+            .expect("process definition"));
+
+        let state = runtime.state.lock().await;
+        assert!(!state.elections.contains_key("q_public_definition_undelegated"));
+        drop(state);
         let _ = fs::remove_dir_all(state_dir);
     }
 

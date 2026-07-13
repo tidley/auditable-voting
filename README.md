@@ -150,7 +150,7 @@ cargo run
 
 Useful optional environment variables:
 
-- `WORKER_STATE_DIR`; keep it unique to one worker/organiser identity pair. Generated quick-start commands namespace state automatically and the worker resets persisted election state if either identity changes.
+- `WORKER_STATE_DIR`; keep it unique to one worker/organiser identity pair. Generated quick-start commands namespace state automatically and the worker resets persisted election state if either identity changes. Ordinary restarts preserve issuance and accepted-vote records; historical public definitions replayed by relays are ignored unless that election is delegated to the worker. Invites and worker configuration reference the latest organiser-signed public definition event and hash its exact published JSON rather than a newer browser-local draft.
 - `WORKER_HEARTBEAT_SECONDS`
 - `WORKER_POLL_SECONDS` (generated launchers set this to `5`)
 - `WORKER_RELAYS` for public questionnaire and delegation relay reads

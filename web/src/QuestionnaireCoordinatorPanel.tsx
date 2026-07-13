@@ -28,10 +28,10 @@ import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardResponseDetail } from "./QuestionnaireResultsDashboard";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
-import { buildQuestionnaireDefinitionReference, selectNewestMatchingQuestionnaireDefinition } from "./questionnaireDefinitionReference";
+import { buildQuestionnaireDefinitionReference, questionnaireDefinitionEventHash, selectNewestMatchingQuestionnaireDefinition } from "./questionnaireDefinitionReference";
 import { tryWriteClipboard } from "./clipboard";
 import { uploadQuestionnaireResultPack } from "./questionnaireResultPack";
-import { fetchQuestionnaireBlindResponses, fetchQuestionnaireProvisionalResponses } from "./questionnaireTransport";
+import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireBlindResponses, fetchQuestionnaireProvisionalResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions, verifyQuestionnaireBlindResponseProofs } from "./questionnaireTransport";
 import {
   decryptQuestionnaireBlindResponseAnswers,
@@ -901,7 +901,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.38";
+const WORKER_MINIMUM_VERSION = "0.1.39";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -3544,6 +3544,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             statusPrefix: "Vote published.",
             definitionOverride: definitionToPublish,
             definitionEventIdOverride: result.eventId,
+            definitionHashOverride: questionnaireDefinitionEventHash(result.event.content),
           });
         }
       } else {
@@ -3980,6 +3981,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     statusPrefix?: string;
     definitionOverride?: QuestionnaireDefinition | null;
     definitionEventIdOverride?: string | null;
+    definitionHashOverride?: string | null;
   }) {
     const electionId = questionnaireId.trim();
     const coordinatorNsecTrimmed = coordinatorNsec.trim();
@@ -4051,7 +4053,15 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     const justPublishedDefinition = options?.definitionOverride?.questionnaireId === electionId
       ? options.definitionOverride
       : null;
+    const publishedDefinitionEntry = justPublishedDefinition
+      ? null
+      : await fetchLatestQuestionnaireDefinitionByCoordinator({
+        questionnaireId: electionId,
+        coordinatorNpub: coordinatorNpubTrimmed,
+        relays: questionnaireRelayPublishHints,
+      }).catch(() => null);
     const workerConfigDefinition = justPublishedDefinition
+      ?? publishedDefinitionEntry?.definition
       ?? selectNewestMatchingQuestionnaireDefinition(electionId, [
         readCachedQuestionnaireDefinition(electionId),
         activePublishedDefinition,
@@ -4059,7 +4069,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     const workerDefinitionReference = workerConfigDefinition
       ? buildQuestionnaireDefinitionReference({
         definition: workerConfigDefinition,
-        definitionEventId: options?.definitionEventIdOverride ?? null,
+        definitionEventId: options?.definitionEventIdOverride ?? publishedDefinitionEntry?.event.id ?? null,
+        definitionHash: options?.definitionHashOverride ?? publishedDefinitionEntry?.definitionHash ?? null,
         relays: workerConfigDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
       })
       : null;

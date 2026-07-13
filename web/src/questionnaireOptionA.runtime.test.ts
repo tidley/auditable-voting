@@ -289,6 +289,7 @@ vi.mock("./questionnaireNostr", async () => {
 vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
   fetchQuestionnaireDefinitions: vi.fn().mockResolvedValue([]),
+  fetchLatestQuestionnaireDefinitionByCoordinator: vi.fn().mockResolvedValue(null),
   fetchQuestionnaireBlindResponses: vi.fn(async (input: { questionnaireId: string }) =>
     publicBlindResponseStore.entries.filter((entry) => entry.response.questionnaireId === input.questionnaireId)),
   fetchQuestionnaireProvisionalResponses: vi.fn().mockResolvedValue([]),

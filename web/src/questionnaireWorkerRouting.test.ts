@@ -10,7 +10,8 @@ vi.mock("./sharedNostrPool", () => ({
   }),
 }));
 
-import { fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
+import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
+import { questionnaireDefinitionEventHash } from "./questionnaireDefinitionReference";
 import { OPTIONA_WORKER_DELEGATION_KIND, type WorkerDelegationCertificate } from "./questionnaireWorkerDelegation";
 import { buildIssueBlindTokensWorkerRouting, mergeBlindRequestRoutingRelays } from "./questionnaireWorkerRouting";
 
@@ -99,6 +100,42 @@ describe("questionnaire worker routing", () => {
       "wss://relay.nostr.net",
       "wss://fallback.example",
     ]);
+  });
+
+  it("selects the latest definition signed and declared by the organiser", async () => {
+    const otherHex = "c".repeat(64);
+    const definition = {
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      questionnaireId: "q_public",
+      coordinatorPubkey: coordinatorNpub,
+      questions: [],
+    };
+    const validEvent = {
+      id: "valid-definition",
+      kind: 6420,
+      pubkey: coordinatorHex,
+      created_at: 20,
+      tags: [["q", "q_public"]],
+      content: JSON.stringify(definition),
+      sig: "sig",
+    } as NostrEvent;
+    const wrongAuthorEvent = {
+      ...validEvent,
+      id: "wrong-author-definition",
+      pubkey: otherHex,
+      created_at: 30,
+    };
+    querySync.mockResolvedValue([wrongAuthorEvent, validEvent]);
+
+    const found = await fetchLatestQuestionnaireDefinitionByCoordinator({
+      questionnaireId: "q_public",
+      coordinatorNpub,
+      relays: ["wss://relay.nostr.net"],
+    });
+
+    expect(found?.event.id).toBe("valid-definition");
+    expect(found?.definitionHash).toBe(questionnaireDefinitionEventHash(validEvent.content));
   });
 
   it("does not fall back to public control relays for blind request DMs", () => {
