@@ -4167,26 +4167,26 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         });
         configResultSummary = `, ${configDmResult.successes} config DM relay successes`;
       }
-      setActiveWorkerDelegation(delegation);
-      setLastWorkerRevocationState("pending_activation");
-      upsertStoredWorkerDelegation({
+      const storedDelegation = upsertStoredWorkerDelegation({
         electionId,
         mode: "delegated_worker",
         activeDelegation: delegation,
         lastRevocation: null,
         lastUpdatedAt: new Date().toISOString(),
-      });
+      })?.activeDelegation ?? delegation;
+      setActiveWorkerDelegation(storedDelegation);
+      setLastWorkerRevocationState("pending_activation");
       const existingSummary = loadElectionSummary(electionId);
       if (existingSummary) {
         upsertElectionSummary({
           ...existingSummary,
           issueBlindTokensWorker: delegatedWorkerCapabilities.includes("issue_blind_tokens")
             ? buildIssueBlindTokensWorkerRouting({
-              delegationId: delegation.delegationId,
-              workerNpub: delegation.workerNpub,
-              controlRelays: delegation.controlRelays,
+              delegationId: storedDelegation.delegationId,
+              workerNpub: storedDelegation.workerNpub,
+              controlRelays: storedDelegation.controlRelays,
               dmRelays: workerDmRelays,
-              expiresAt: delegation.expiresAt,
+              expiresAt: storedDelegation.expiresAt,
             })
             : null,
         });

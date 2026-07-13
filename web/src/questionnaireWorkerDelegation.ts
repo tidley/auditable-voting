@@ -117,15 +117,30 @@ export function loadStoredWorkerDelegation(electionId: string): StoredWorkerDele
 export function upsertStoredWorkerDelegation(input: StoredWorkerDelegation) {
   const electionId = input.electionId.trim();
   if (!electionId) {
-    return;
+    return null;
   }
   const store = readStore();
-  store[electionId] = {
+  const existing = store[electionId];
+  const existingIssuedAt = Date.parse(existing?.activeDelegation?.issuedAt ?? "");
+  const incomingIssuedAt = Date.parse(input.activeDelegation?.issuedAt ?? "");
+  if (
+    existing?.activeDelegation
+    && input.activeDelegation
+    && existing.activeDelegation.delegationId !== input.activeDelegation.delegationId
+    && Number.isFinite(existingIssuedAt)
+    && Number.isFinite(incomingIssuedAt)
+    && existingIssuedAt > incomingIssuedAt
+  ) {
+    return existing;
+  }
+  const next = {
     ...input,
     electionId,
     lastUpdatedAt: input.lastUpdatedAt || new Date().toISOString(),
   };
+  store[electionId] = next;
   writeStore(store);
+  return next;
 }
 
 export function isDelegatedWorkerCapabilityEnabled(input: {
