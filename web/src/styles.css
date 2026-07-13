@@ -6076,25 +6076,45 @@ code {
   padding-top: 4px;
 }
 
-.simple-admitted-voter-group-select {
+.simple-admitted-voter-ballot-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
   width: 100%;
-  min-height: 34px;
-  padding: 0 28px 0 10px;
+  min-width: 0;
+}
+
+.simple-admitted-voter-ballot-option {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0;
   border: 1px solid var(--simple-border);
-  border-radius: 7px;
+  border-radius: 6px;
   background: #07111b;
   color: var(--simple-text);
   font: inherit;
   font-size: 0.82rem;
   font-weight: 750;
+  line-height: 1;
+  cursor: pointer;
 }
 
-.simple-admitted-voter-group-select:focus-visible {
+.simple-admitted-voter-ballot-option:hover {
+  border-color: rgba(45, 212, 191, 0.45);
+}
+
+.simple-admitted-voter-ballot-option.is-selected {
+  border-color: rgba(45, 212, 191, 0.72);
+  background: rgba(45, 212, 191, 0.16);
+  color: #dffcf8;
+}
+
+.simple-admitted-voter-ballot-option:focus-visible {
   outline: 2px solid rgba(45, 212, 191, 0.42);
   outline-offset: 2px;
 }
 
-.av-ui-data-table td.is-ballot-group .simple-admitted-voter-group-select {
+.av-ui-data-table td.is-ballot-group .simple-admitted-voter-ballot-options {
   width: 100%;
   min-width: 0;
 }

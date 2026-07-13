@@ -4110,6 +4110,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
+    const workerExpectedInviteeCount = expectedInviteeCount > 0 ? expectedInviteeCount : undefined;
     const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot | null = needsElectionConfigDm
       ? {
         type: "worker_election_config",
@@ -4118,7 +4119,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         delegationId: delegation.delegationId,
         coordinatorNpub: coordinatorNpubTrimmed,
         workerNpub,
-        expectedInviteeCount,
+        expectedInviteeCount: workerExpectedInviteeCount,
         whitelistNpubs,
         proxyVoterNpubs,
         ballotGroupsByNpub,

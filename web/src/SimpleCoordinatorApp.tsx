@@ -297,7 +297,7 @@ function ParticipantBallotGroupSelect({
   onCommit: (ballotGroup: string) => void;
   onFocusStateChange: (id: string | null) => void;
 }) {
-  const selectRef = useRef<HTMLSelectElement | null>(null);
+  const groupRef = useRef<HTMLDivElement | null>(null);
   const focusedRef = useRef(false);
   const [localValue, setLocalValue] = useState(value);
 
@@ -312,48 +312,63 @@ function ParticipantBallotGroupSelect({
     if (!restoreFocus) {
       return;
     }
-    const select = selectRef.current;
-    if (!select || document.activeElement === select) {
+    const group = groupRef.current;
+    if (!group || group.contains(document.activeElement)) {
       return;
     }
-    select.focus({ preventScroll: true });
+    const selectedButton = group.querySelector<HTMLButtonElement>("button.is-selected");
+    (selectedButton ?? group.querySelector<HTMLButtonElement>("button"))?.focus({ preventScroll: true });
   }, [restoreFocus]);
 
   return (
-    <select
+    <div
       id={id}
-      ref={selectRef}
-      className='simple-admitted-voter-group-select'
-      aria-label='Ballot group'
-      value={localValue}
+      ref={groupRef}
+      className='simple-admitted-voter-ballot-options'
+      role='group'
+      aria-label='Ballot'
       onFocus={() => {
         focusedRef.current = true;
         onFocusStateChange(id);
       }}
-      onChange={(event) => {
-        const nextValue = event.currentTarget.value;
-        setLocalValue(nextValue);
-        onCommit(nextValue);
-        onFocusStateChange(id);
-      }}
-      onBlur={() => {
+      onBlur={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          return;
+        }
         focusedRef.current = false;
         onFocusStateChange(null);
       }}
     >
       {BALLOT_GROUP_OPTIONS.map((option) => (
-        <option key={option.value || "main"} value={option.value}>{option.label}</option>
+        <button
+          key={option.value || "main"}
+          type='button'
+          className={`simple-admitted-voter-ballot-option${localValue === option.value ? " is-selected" : ""}`}
+          aria-pressed={localValue === option.value}
+          aria-label={`Ballot ${option.label}`}
+          title={`Ballot ${option.label}`}
+          onClick={() => {
+            if (localValue === option.value) {
+              return;
+            }
+            setLocalValue(option.value);
+            onCommit(option.value);
+            onFocusStateChange(id);
+          }}
+        >
+          {option.shortLabel}
+        </button>
       ))}
-    </select>
+    </div>
   );
 }
 
 const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
 const BALLOT_GROUP_OPTIONS = [
-  { value: "", label: "Main" },
-  { value: "1", label: "1" },
-  { value: "2", label: "2" },
-  { value: "3", label: "3" },
+  { value: "", label: "Main", shortLabel: "M" },
+  { value: "1", label: "1", shortLabel: "1" },
+  { value: "2", label: "2", shortLabel: "2" },
+  { value: "3", label: "3", shortLabel: "3" },
 ];
 const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
@@ -5507,6 +5522,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, optionAKnownVoterCount, whitelistNpubs.length) + unclaimedPrivateInviteCount;
+    const workerExpectedInviteeCount = expectedInviteeCount > 0 ? expectedInviteeCount : undefined;
     const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
     return {
       workerNpub: delegation.workerNpub,
@@ -5518,7 +5534,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         delegationId: delegation.delegationId,
         coordinatorNpub,
         workerNpub: delegation.workerNpub,
-        expectedInviteeCount,
+        expectedInviteeCount: workerExpectedInviteeCount,
         whitelistNpubs,
         proxyVoterNpubs,
         ballotGroupsByNpub,

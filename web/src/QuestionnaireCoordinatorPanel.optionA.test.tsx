@@ -1308,12 +1308,13 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledWith(expect.objectContaining({
         snapshot: expect.objectContaining({
           delegationId: activeDelegation.delegationId,
-          expectedInviteeCount: 0,
           blindSigningPrivateKey: expect.objectContaining({
             keyId: blindKey.keyId,
           }),
         }),
       }));
     });
+    const configInput = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0];
+    expect(configInput?.snapshot.expectedInviteeCount).toBeUndefined();
   });
 });
