@@ -56,6 +56,7 @@ const WORKER_DEPENDENCY_LOG_OVERRIDES: &[&str] = &[
 const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
+const WORKER_RELAY_CONNECT_TIMEOUT_SECS: u64 = 8;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 const PUBLIC_ARCHIVE_SEND_TIMEOUT_SECS: u64 = 10;
 const BLOSSOM_AUTH_KIND: u16 = 24_242;
@@ -2579,6 +2580,24 @@ impl WorkerRuntime {
                     relay,
                     false,
                     "relay add",
+                    Some(&error.to_string()),
+                )
+                .await;
+                continue;
+            }
+            if let Err(error) = self
+                .client
+                .try_connect_relay(
+                    relay.clone(),
+                    Duration::from_secs(WORKER_RELAY_CONNECT_TIMEOUT_SECS),
+                )
+                .await
+            {
+                warn!("unable to connect effective relay {relay}: {error}");
+                self.record_relay_attempt_result(
+                    relay,
+                    false,
+                    "relay connect",
                     Some(&error.to_string()),
                 )
                 .await;
@@ -6803,6 +6822,27 @@ mod tests {
             worker_relay_retry_delay(1, Some("relay is initialized but not ready")),
             Duration::from_secs(120)
         );
+    }
+
+    #[tokio::test]
+    async fn ensure_relays_connected_attempts_new_relay_connection() {
+        let coordinator_keys = Keys::generate();
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+        let relay = RelayUrl::parse("ws://127.0.0.1:9").expect("relay URL");
+
+        runtime
+            .ensure_relays_connected(std::slice::from_ref(&relay))
+            .await;
+
+        let status = runtime
+            .client
+            .relay(relay)
+            .await
+            .expect("added relay")
+            .status();
+        assert_ne!(status, RelayStatus::Initialized);
+        fs::remove_dir_all(state_dir).ok();
     }
 
     #[test]
