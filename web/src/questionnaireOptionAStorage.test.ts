@@ -30,4 +30,19 @@ describe("admitted voter storage", () => {
     expect(loaded[legacyRecord.npub]?.npub).toBe(legacyRecord.npub);
     expect(loaded[legacyRecord.npub]).not.toHaveProperty("autoApply");
   });
+
+  it("preserves a custom voter-group assignment", () => {
+    const coordinatorNpub = "npub1coordinator";
+    const record: AdmittedVoterRecord = {
+      npub: "npub1groupedvoter",
+      admittedAt: "2026-07-13T00:00:00.000Z",
+      source: "private_invite",
+      ballotGroup: "group_north",
+      lastUpdatedAt: "2026-07-13T00:00:00.000Z",
+    };
+
+    saveAdmittedVoters({ coordinatorNpub, voters: { [record.npub]: record } });
+
+    expect(loadAdmittedVoters({ coordinatorNpub })[record.npub]?.ballotGroup).toBe("group_north");
+  });
 });

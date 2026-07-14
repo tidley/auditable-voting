@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   questionBallotCredentialScope,
+  normaliseQuestionnaireAllowedScopes,
+  normaliseQuestionnaireScope,
   normaliseQuestionBallotSlot,
   normalizeQuestionnaireDefinition,
   questionBallotScopeKey,
@@ -63,6 +65,54 @@ describe("questionnaireProtocol", () => {
     const result = validateQuestionnaireDefinition(buildDefinition());
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("supports questionnaire-defined voter groups while preserving legacy aliases", () => {
+    expect(normaliseQuestionnaireScope("A")).toBe("1");
+    expect(normaliseQuestionnaireScope("North_District")).toBe("north_district");
+    expect(normaliseQuestionnaireScope("invalid group")).toBeNull();
+    expect(normaliseQuestionnaireAllowedScopes(["group_z", "group_a"])).toEqual(["0", "group_a", "group_z"]);
+
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition(),
+      voterGroups: [{ id: "group_north", label: "North district" }],
+      questions: buildDefinition().questions.map((question, index) => index === 0
+        ? { ...question, requiredScope: "group_north", ballotGroup: "group_north" }
+        : question),
+    };
+    expect(validateQuestionnaireDefinition(definition)).toEqual({ valid: true, errors: [] });
+  });
+
+  it("rejects unknown and duplicate voter groups", () => {
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition(),
+      voterGroups: [
+        { id: "group_north", label: "North district" },
+        { id: "group_north", label: "North district copy" },
+      ],
+      questions: buildDefinition().questions.map((question, index) => index === 0
+        ? { ...question, requiredScope: "group_missing" }
+        : question),
+    };
+    const result = validateQuestionnaireDefinition(definition);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("voter_group_id_duplicate:group_north");
+    expect(result.errors).toContain("required_scope_unknown:q1");
+  });
+
+  it("accepts one hundred defined voter groups", () => {
+    const voterGroups = Array.from({ length: 100 }, (_, index) => ({
+      id: `group_${String(index + 1).padStart(3, "0")}`,
+      label: `Group ${index + 1}`,
+    }));
+    expect(validateQuestionnaireDefinition({
+      ...buildDefinition(),
+      voterGroups,
+      questions: [{
+        ...buildDefinition().questions[0],
+        requiredScope: voterGroups[99].id,
+      }],
+    }).valid).toBe(true);
   });
 
   it("allows one or two credentials per voter", () => {

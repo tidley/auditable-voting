@@ -262,9 +262,19 @@ fn normalize_scope_label(value: &str) -> Option<String> {
         "a" => Some("1".to_string()),
         "b" => Some("2".to_string()),
         "c" => Some("3".to_string()),
-        "1" | "2" | "3" => Some(normalized),
+        _ if valid_voter_group_id(&normalized) => Some(normalized),
         _ => None,
     }
+}
+
+fn valid_voter_group_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 64
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
 }
 
 fn normalize_allowed_scopes(
@@ -902,7 +912,7 @@ fn normalize_ballot_group(value: &str) -> Option<String> {
         "a" => Some("1".to_string()),
         "b" => Some("2".to_string()),
         "c" => Some("3".to_string()),
-        "1" | "2" | "3" => Some(normalized),
+        _ if valid_voter_group_id(&normalized) => Some(normalized),
         _ => None,
     }
 }
@@ -938,6 +948,17 @@ fn has_effective_eligibility_config(election: &ElectionRuntimeState) -> bool {
         || election.eligibility_required
         || !election.whitelist_npubs.is_empty()
         || !election.bearer_invite_codes.is_empty()
+}
+
+fn deferred_blind_request_ready_for_retry(
+    election: &ElectionRuntimeState,
+    request: &BlindBallotRequest,
+) -> bool {
+    election.whitelist_npubs.contains(&request.invited_npub)
+        || request
+            .invite_code_hash
+            .as_ref()
+            .is_some_and(|code_hash| election.bearer_invite_codes.contains_key(code_hash))
 }
 
 fn definition_uses_per_question_credentials(definition: &serde_json::Value) -> bool {
@@ -1861,6 +1882,9 @@ fn spawn_housekeeping_task(runtime: WorkerRuntime) -> JoinHandle<()> {
             if let Err(error) = runtime.finalize_completed_elections().await {
                 warn!("housekeeping completion check failed: {error}");
             }
+            if let Err(error) = runtime.process_eligible_deferred_blind_requests().await {
+                warn!("housekeeping deferred blind request retry failed: {error}");
+            }
             if let Err(error) = runtime.prune_local_state_cache().await {
                 warn!("housekeeping cache prune failed: {error}");
             }
@@ -2275,9 +2299,28 @@ impl WorkerRuntime {
                 .iter()
                 .map(|entry| entry.issuance.clone())
                 .collect::<Vec<_>>();
-            let successes = self
+            let successes = match self
                 .publish_prepared_blind_issuances(&recipient_npub, &issuances)
-                .await?;
+                .await
+            {
+                Ok(successes) => successes,
+                Err(error) => {
+                    warn!(
+                        "blind issuance publish failed; recipient requests remain deferred: election_id={}, recipient_npub={}, issuances={}, error={error}",
+                        election_id,
+                        recipient_npub,
+                        issuances.len(),
+                    );
+                    let mut state = self.state.lock().await;
+                    if let Some(election) = state.elections.get_mut(&election_id) {
+                        for entry in &entries {
+                            remember_deferred_blind_request(election, &entry.request);
+                        }
+                        self.store.save(&state)?;
+                    }
+                    continue;
+                }
+            };
             debug!(
                 "blind issuance batch published: election_id={}, recipient_npub={}, issuances={}, relay_successes={}",
                 election_id,
@@ -2301,6 +2344,38 @@ impl WorkerRuntime {
             }
         }
 
+        Ok(())
+    }
+
+    async fn process_eligible_deferred_blind_requests(&self) -> Result<()> {
+        let election_ids = {
+            let state = self.state.lock().await;
+            state
+                .elections
+                .iter()
+                .filter(|(_, election)| {
+                    !election.revoked
+                        && !is_expired(&election.expires_at)
+                        && election.blind_signing_private_key.is_some()
+                        && election.definition.is_some()
+                        && election
+                            .deferred_blind_requests
+                            .values()
+                            .any(|request| deferred_blind_request_ready_for_retry(election, request))
+                })
+                .map(|(election_id, _)| election_id.clone())
+                .collect::<Vec<_>>()
+        };
+        for election_id in election_ids {
+            if let Err(error) = self
+                .process_deferred_blind_requests_for_election(&election_id)
+                .await
+            {
+                warn!(
+                    "periodic deferred blind request replay failed for election {election_id}: {error}"
+                );
+            }
+        }
         Ok(())
     }
 
@@ -4673,6 +4748,17 @@ mod tests {
         fs::remove_dir_all(state_dir).ok();
     }
 
+    #[test]
+    fn deferred_blind_request_retry_waits_for_eligibility() {
+        let request = sample_request();
+        let mut election = ElectionRuntimeState::default();
+
+        assert!(!deferred_blind_request_ready_for_retry(&election, &request));
+
+        election.whitelist_npubs.insert(request.invited_npub.clone());
+        assert!(deferred_blind_request_ready_for_retry(&election, &request));
+    }
+
     #[tokio::test]
     async fn deferred_blind_request_can_issue_after_worker_config_arrives() {
         let coordinator_keys = Keys::generate();
@@ -6558,11 +6644,11 @@ mod tests {
         election.whitelist_npubs.insert("npub1voter".to_string());
         election
             .ballot_groups_by_npub
-            .insert("npub1voter".to_string(), "1".to_string());
+            .insert("npub1voter".to_string(), "group_north".to_string());
 
         let mut request = sample_request();
         request.invited_npub = "npub1voter".to_string();
-        request.ballot_scope = Some(json!({ "allowedScopes": ["0", "1"] }));
+        request.ballot_scope = Some(json!({ "allowedScopes": ["0", "group_north"] }));
         assert!(matches!(
             authorize_blind_request(&mut election, &request),
             BlindRequestAuthorization::Authorized { .. }
@@ -6570,7 +6656,7 @@ mod tests {
 
         let mut wrong_group_request = request.clone();
         wrong_group_request.request_id = "request_wrong_group".to_string();
-        wrong_group_request.ballot_scope = Some(json!({ "allowedScopes": ["0", "2"] }));
+        wrong_group_request.ballot_scope = Some(json!({ "allowedScopes": ["0", "group_south"] }));
         assert!(matches!(
             authorize_blind_request(&mut election, &wrong_group_request),
             BlindRequestAuthorization::Rejected

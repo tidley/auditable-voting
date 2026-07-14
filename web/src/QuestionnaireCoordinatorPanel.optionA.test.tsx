@@ -220,6 +220,27 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(stored.questions?.[1]?.ballotSlot?.version).toBe(stored.questions?.[2]?.ballotSlot?.version);
   });
 
+  it("defines a named voter group and assigns it to a question", async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+
+    fireEvent.change(screen.getByLabelText("New voter group"), { target: { value: "North district" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add group" }));
+
+    const groupSelect = screen.getByLabelText("Question 1 voter group") as HTMLSelectElement;
+    const groupOption = [...groupSelect.options].find((option) => option.text === "North district");
+    expect(groupOption?.value).toMatch(/^group_[a-f0-9]+$/);
+    fireEvent.change(groupSelect, { target: { value: groupOption?.value } });
+
+    await waitFor(() => {
+      const stored = JSON.parse(
+        window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1")) ?? "{}",
+      ) as { voterGroups?: Array<{ id: string; label: string }>; questions?: Array<{ requiredScope?: string }> };
+      expect(stored.voterGroups).toEqual([{ id: groupOption?.value, label: "North district" }]);
+      expect(stored.questions?.[0]?.requiredScope).toBe(groupOption?.value);
+    });
+    expect((screen.getByRole("button", { name: "Remove" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("does not show the JSON preview controls in the build actions", () => {
     render(<QuestionnaireCoordinatorPanel />);
 

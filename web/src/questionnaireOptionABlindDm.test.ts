@@ -505,6 +505,47 @@ describe("questionnaireOptionABlindDm", () => {
     expect(querySync).toHaveBeenCalledTimes(2);
   });
 
+  it("checks fallback relays when primary relays contain a different issuance", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+    const wrapIssuance = (requestId: string, issuanceId: string) => nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_blind_issuance_dm",
+        schemaVersion: 1,
+        issuance: {
+          type: "blind_ballot_response",
+          schemaVersion: 1,
+          electionId: "q_target_fallback",
+          requestId,
+          issuanceId,
+          invitedNpub: nip19.npubEncode(recipientHex),
+          blindSignature: `sig_${issuanceId}`,
+          issuedAt: new Date().toISOString(),
+        },
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A blind issuance",
+    );
+
+    querySync
+      .mockResolvedValueOnce([wrapIssuance("request_other", "issuance_other")])
+      .mockResolvedValueOnce([wrapIssuance("request_target", "issuance_target")]);
+
+    const fetchedIssuances = await fetchOptionABlindIssuanceDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_target_fallback",
+      targetRequestId: "request_target",
+      limit: 20,
+    });
+
+    expect(fetchedIssuances.some((issuance) => issuance.issuanceId === "issuance_target")).toBe(true);
+    expect(querySync).toHaveBeenCalledTimes(2);
+  });
+
   it("prefers NIP-17 relays that accept p-tag gift-wrap reads", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);
@@ -527,6 +568,7 @@ describe("questionnaireOptionABlindDm", () => {
       "wss://vm-1734.lnvps.cloud/",
       "wss://relay.nostr.net",
       "wss://relay.0xchat.com",
+      "wss://nos.lol",
     ]);
     expect(relays).not.toContain("wss://nip17.com");
     expect(relays).not.toContain("wss://relay.nostr.info");

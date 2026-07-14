@@ -97,6 +97,22 @@ describe("questionnaire invite sharing", () => {
     expect(parsed.credentialsPerVoter).toBe(2);
   });
 
+  it("preserves a predefined voter group in private code links", () => {
+    const url = buildQuestionnaireInviteUrl({
+      baseUrl: "https://vote.example/simple-coordinator.html?role=coordinator",
+      electionId: "q_public_123",
+      inviteCode: "ABC123private",
+      login: false,
+      autoRequestBallot: true,
+      ballotGroup: "group_north",
+    });
+    const parsed = parseInviteFromUrl(new URL(url).search);
+
+    expect(new URL(url).searchParams.get("ballot_group")).toBe("group_north");
+    expect(parsed.inviteCode).toBe("abc123private");
+    expect(parsed.ballotGroup).toBe("group_north");
+  });
+
   it("still parses coordinator routing from older private code links", () => {
     const parsed = parseInviteFromUrl("?role=voter&q=q_public_123&coordinator=npub1coordinator&invite_code=abc123private");
 

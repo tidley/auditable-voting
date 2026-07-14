@@ -130,6 +130,8 @@ Blind-token admission object:
 
 `ballotScope` canonical fields are `questionId`, `slotId`, `slotIndex`, `version`, and optional `credentialIndex`. The live scope key is `slotIndex + version + credentialIndex`; `questionId` and `slotId` remain descriptive/canonical fields. `credentialIndex` is omitted for the first credential and included as `credential_index` for proxy credential `2`. The signed blind-token message includes the canonical scope when present:
 
+Questionnaire-level credentials may instead carry `allowedScopes`. Scope `0` is Main; an optional second value is a stable voter-group ID from the public definition's `voterGroups` registry. Group IDs are lowercase ASCII identifiers of at most 64 characters. Labels are display metadata and may be renamed without changing the signed scope. Legacy numeric groups `1`-`3` remain valid. A private invite stores its assigned group with the invite-code hash, and the first blind request must carry exactly that configured scope before the code is redeemed.
+
 - `questionnaire_id`
 - `response_mode = blind_token`
 - `schema_version = 1`

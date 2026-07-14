@@ -3720,6 +3720,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const canSubmitFromQuestionNav = showSubmitFromQuestionNav
     && canSubmitNow
     && questionnaireCredentialReady;
+  const submitBlockedMessage = showSubmitFromQuestionNav && !canSubmitFromQuestionNav
+    ? !questionnaireCredentialReady
+      ? "Your ballot is still being prepared. Keep this page open or resend the ballot request from the menu."
+      : !snapshotForAction?.loginVerified
+        ? "Log in before submitting your vote."
+        : !canSubmitNow
+          ? "This vote is not ready to submit yet. Check that every required answer is complete."
+          : "This vote cannot be submitted yet."
+    : "";
+  const hasGroupSpecificQuestions = Boolean(questionnaireDefinition?.questions.some((question) => questionRequiredScope(question)));
+  const showMainOnlyScopeWarning = questionnaireCredentialReady
+    && receivedCredentialBallotGroup === null
+    && hasGroupSpecificQuestions
+    && !responseSubmittedForCurrentQuestionnaire;
   const questionNavForwardHighlighted = showViewResultsFromQuestionNav || canSubmitFromQuestionNav || (nextQuestionIndex >= 0 && activeQuestionReadyForNavigation);
   const activeQuestionProgressLabel = (() => {
     const questionPosition = Math.min(activeQuestionIndex + 1, Math.max(questions.length, 1));
@@ -4582,6 +4596,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </p>
       ) : showQuestionnaireLanding ? null : (
         <div className='simple-questionnaire-voter-list'>
+          {showMainOnlyScopeWarning ? (
+            <p className='simple-voter-note' role='status'>
+              This ballot is assigned to the main questions only. If you expected group-specific questions, contact the organiser before submitting.
+            </p>
+          ) : null}
           {showQuestionNavigation ? (
             <div className='simple-questionnaire-question-stepper is-single-group' aria-label='Question progress'>
               <div className='simple-questionnaire-question-progress-row'>
@@ -4707,6 +4726,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               </UiButton>
             </div>
           ) : null}
+          {submitBlockedMessage ? (
+            <p className='simple-voter-note' role='status'>{submitBlockedMessage}</p>
+          ) : null}
         </div>
       )}
 
@@ -4768,6 +4790,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           </UiButton>
         ) : null}
       </div>
+      ) : null}
+      {!showQuestionnaireLanding && status ? (
+        <p className='simple-voter-note' role='status' aria-live='polite'>{status}</p>
       ) : null}
       {displaySubmission ? (
         <details className='simple-auditor-dropdown simple-vote-receipt-dropdown'>

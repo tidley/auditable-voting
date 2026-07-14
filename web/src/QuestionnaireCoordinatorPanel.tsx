@@ -17,6 +17,7 @@ import {
   type QuestionnaireResultSummary,
   type QuestionnaireStateEvent,
   type QuestionnaireStateValue,
+  type QuestionnaireVoterGroup,
 } from "./questionnaireProtocol";
 import { toQuestionnaireBlindPublicKey, type QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
@@ -199,13 +200,6 @@ const QUESTION_TYPE_OPTIONS: Array<{ value: QuestionnaireQuestionDraft["type"]; 
   { value: "multiple_choice", label: "Multiple choice" },
   { value: "rank", label: "Ranked" },
   { value: "free_text", label: "Free text" },
-];
-
-const QUESTION_BALLOT_GROUP_OPTIONS = [
-  { value: "", label: "Main" },
-  { value: "1", label: "Scope 1" },
-  { value: "2", label: "Scope 2" },
-  { value: "3", label: "Scope 3" },
 ];
 
 function withNormalisedQuestionBallotGroup(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
@@ -447,6 +441,34 @@ function generateQuestionnaireId() {
   return `${DEFAULT_QUESTIONNAIRE_ID_PREFIX}_${randomPart}`;
 }
 
+function generateVoterGroupId() {
+  const randomPart = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random().toString(16).slice(2)}`)
+    .replace(/-/g, "")
+    .slice(0, 12);
+  return `group_${randomPart}`;
+}
+
+function normaliseStoredVoterGroups(input: unknown): QuestionnaireVoterGroup[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return input.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const id = normaliseQuestionnaireBallotGroup((entry as { id?: unknown }).id);
+    const label = typeof (entry as { label?: unknown }).label === "string"
+      ? (entry as { label: string }).label.trim()
+      : "";
+    if (!id || !label || seen.has(id)) {
+      return [];
+    }
+    seen.add(id);
+    return [{ id, label }];
+  }).slice(0, 100);
+}
+
 function readStoredQuestionnaireDraftId() {
   if (typeof window === "undefined") {
     return generateQuestionnaireId();
@@ -465,6 +487,7 @@ type StoredQuestionnaireDraft = {
   closeAfterMinutes: string;
   closeTimerUnit?: CloseTimerUnit;
   questionnaireRelays?: string;
+  voterGroups?: QuestionnaireVoterGroup[];
   questions: QuestionnaireQuestionDraft[];
   delegationMode?: "browser_only" | "delegated_worker";
   delegatedWorkerNpub?: string;
@@ -663,6 +686,7 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
         : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
       closeTimerUnit: normaliseCloseTimerUnit(parsed.closeTimerUnit),
       questionnaireRelays: typeof parsed.questionnaireRelays === "string" ? parsed.questionnaireRelays : "",
+      voterGroups: normaliseStoredVoterGroups(parsed.voterGroups),
       questions: normaliseStoredQuestions(parsed.questions),
       delegationMode: parsed.delegationMode === "delegated_worker" ? "delegated_worker" : "browser_only",
       delegatedWorkerNpub: typeof parsed.delegatedWorkerNpub === "string" ? parsed.delegatedWorkerNpub : "",
@@ -1319,6 +1343,7 @@ function buildDefinition(input: {
   description: string;
   closeAfterMinutes?: number;
   questionnaireRelays?: string[];
+  voterGroups?: QuestionnaireVoterGroup[];
   questions: QuestionnaireQuestionDraft[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
 }): QuestionnaireDefinition {
@@ -1346,6 +1371,7 @@ function buildDefinition(input: {
     ballotCredentialMode: "questionnaire",
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     ...(input.questionnaireRelays?.length ? { questionnaireRelays: input.questionnaireRelays } : {}),
+    voterGroups: input.voterGroups ?? [],
     questions: alignQuestionBallotGroups(input.questions).map(withNormalisedQuestionBallotGroup),
   };
 }
@@ -1378,6 +1404,7 @@ function comparableDefinitionDraftShape(definition: QuestionnaireDefinition) {
     blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
     closeDurationSeconds: definitionCloseDurationSeconds(definition),
     questionnaireRelays: comparableDefinitionRelaySet(definition),
+    voterGroups: definition.voterGroups ?? [],
     questions: definition.questions,
   };
 }
@@ -1409,6 +1436,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const questionnaireRelaysInput = props.questionnaireRelaysInput ?? storedDraft.questionnaireRelays ?? "";
   const [useDefaultSetupRelays, setUseDefaultSetupRelays] = useState(() => normalizeQuestionnaireRelays(questionnaireRelaysInput).length === 0);
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
+  const [voterGroups, setVoterGroups] = useState<QuestionnaireVoterGroup[]>(storedDraft.voterGroups ?? []);
+  const [newVoterGroupLabel, setNewVoterGroupLabel] = useState("");
+  const questionVoterGroupOptions = useMemo(() => {
+    const byId = new Map(voterGroups.map((group) => [group.id, group.label]));
+    for (const question of questions) {
+      const id = questionRequiredScope(question);
+      if (id && !byId.has(id)) {
+        byId.set(id, `Legacy group ${id}`);
+      }
+    }
+    return [
+      { value: "", label: "Main (everyone)" },
+      ...[...byId].map(([value, label]) => ({ value, label })),
+    ];
+  }, [questions, voterGroups]);
   const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(
     isProxyBuildPage ? "delegated_worker" : storedDraft.delegationMode ?? "browser_only",
   );
@@ -2691,6 +2733,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       closeTimerEnabled,
       closeAfterMinutes,
       closeTimerUnit,
+      voterGroups,
       questions,
       delegationMode,
       delegatedWorkerNpub,
@@ -2724,6 +2767,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     questions,
     selectedQuestionnaireIsKnownPublished,
     title,
+    voterGroups,
     view,
   ]);
 
@@ -2745,6 +2789,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setCloseTimerEnabled(hasCloseTimer);
     setCloseAfterMinutes(hasCloseTimer ? String(Math.max(1, Math.round(closeDurationSeconds / 60))) : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES);
     setCloseTimerUnit("minutes");
+    setVoterGroups(normaliseStoredVoterGroups(activePublishedDefinition.voterGroups));
     setQuestions(normaliseStoredQuestions(activePublishedDefinition.questions));
     const relayInput = formatQuestionnaireRelayInputFromDefinition(activePublishedDefinition);
     props.onQuestionnaireRelaysInputChange?.(relayInput);
@@ -2758,6 +2803,33 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       ));
       return alignQuestionBallotGroups(updated);
     });
+  }
+
+  function addVoterGroup() {
+    const label = newVoterGroupLabel.trim();
+    if (!label || voterGroups.length >= 100) {
+      return;
+    }
+    const labelKey = label.toLowerCase();
+    if (voterGroups.some((group) => group.label.trim().toLowerCase() === labelKey)) {
+      setStatus("Voter group names must be unique.");
+      return;
+    }
+    setVoterGroups((current) => [...current, { id: generateVoterGroupId(), label }]);
+    setNewVoterGroupLabel("");
+    setStatus(null);
+  }
+
+  function updateVoterGroupLabel(id: string, label: string) {
+    setVoterGroups((current) => current.map((group) => group.id === id ? { ...group, label } : group));
+  }
+
+  function removeVoterGroup(id: string) {
+    if (questions.some((question) => questionRequiredScope(question) === id)) {
+      setStatus("Move questions back to Main before removing this voter group.");
+      return;
+    }
+    setVoterGroups((current) => current.filter((group) => group.id !== id));
   }
 
 function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]) {
@@ -2911,10 +2983,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
       questionnaireRelays: questionnaireRelayMetadata,
+      voterGroups,
       questions,
       blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, closeTimerUnit, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questionnaireRelayMetadata, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, closeTimerUnit, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questionnaireRelayMetadata, questions, title, voterGroups]);
 
   const selectedWorkerStatus = useMemo(() => {
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
@@ -4787,6 +4860,67 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       </section>
       </section>
 
+      <section className='simple-questionnaire-build-cardlet simple-questionnaire-voter-groups' aria-labelledby='questionnaire-voter-groups-heading'>
+        <div className='simple-questionnaire-questions-head'>
+          <div>
+            <h4 id='questionnaire-voter-groups-heading' className='simple-voter-section-title simple-questionnaire-questions-title'>Voter groups</h4>
+            <p className='simple-voter-note'>Create groups for questions that should only appear to selected voters. Main questions appear to everyone.</p>
+          </div>
+          <span>{voterGroups.length}/100</span>
+        </div>
+        <div className='simple-questionnaire-voter-group-add'>
+          <UiTextField
+            label='New voter group'
+            inputClassName='simple-voter-input'
+            inputProps={{
+              value: newVoterGroupLabel,
+              placeholder: 'For example, North district',
+              maxLength: 80,
+              onChange: (event) => setNewVoterGroupLabel(event.target.value),
+              onKeyDown: (event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addVoterGroup();
+                }
+              },
+            }}
+          />
+          <UiButton icon='add' onPress={addVoterGroup} isDisabled={!newVoterGroupLabel.trim() || voterGroups.length >= 100}>
+            Add group
+          </UiButton>
+        </div>
+        {voterGroups.length > 0 ? (
+          <div className='simple-questionnaire-voter-group-list'>
+            {voterGroups.map((group) => {
+              const inUse = questions.some((question) => questionRequiredScope(question) === group.id);
+              return (
+                <div key={group.id} className='simple-questionnaire-voter-group-row'>
+                  <UiTextField
+                    label='Group name'
+                    inputClassName='simple-voter-input'
+                    inputProps={{
+                      value: group.label,
+                      maxLength: 80,
+                      onChange: (event) => updateVoterGroupLabel(group.id, event.target.value),
+                    }}
+                  />
+                  <code>{group.id}</code>
+                  <UiButton
+                    variant='danger'
+                    icon='delete'
+                    onPress={() => removeVoterGroup(group.id)}
+                    isDisabled={inUse}
+                    aria-label={inUse ? "Voter group is in use" : "Remove voter group"}
+                  >
+                    Remove
+                  </UiButton>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </section>
+
       <div id='questionnaire-questions-section' className='simple-questionnaire-questions-head' tabIndex={-1}>
         <h4 className='simple-voter-section-title simple-questionnaire-questions-title'>Questions</h4>
         <span>{questions.length} {questions.length === 1 ? "question" : "questions"} defined</span>
@@ -4813,11 +4947,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </UiSelect>
                   <UiSelect
                     selectClassName='simple-voter-input simple-questionnaire-ballot-group-dropdown'
-                    aria-label={`Question ${index + 1} ballot`}
+                    aria-label={`Question ${index + 1} voter group`}
                     value={questionRequiredScope(question) ?? ""}
                     onChange={(event) => setQuestionBallotGroup(index, event.target.value)}
                   >
-                    {QUESTION_BALLOT_GROUP_OPTIONS.map((option) => (
+                    {questionVoterGroupOptions.map((option) => (
                       <option key={option.value || "main"} value={option.value}>{option.label}</option>
                     ))}
                   </UiSelect>

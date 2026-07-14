@@ -3438,10 +3438,57 @@ code {
 
 .simple-voter-input.simple-questionnaire-ballot-group-dropdown {
   width: 100%;
-  min-width: 120px;
-  max-width: 160px;
+  min-width: 160px;
+  max-width: 240px;
   min-height: 42px;
   margin-bottom: 0;
+}
+
+.simple-questionnaire-voter-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.simple-questionnaire-voter-group-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.simple-questionnaire-voter-group-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.simple-questionnaire-voter-group-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, auto) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: rgba(7, 17, 27, 0.55);
+}
+
+.simple-questionnaire-voter-group-row code {
+  align-self: center;
+  overflow: hidden;
+  color: var(--simple-muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .simple-questionnaire-voter-group-add,
+  .simple-questionnaire-voter-group-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .simple-questionnaire-question-card > .simple-voter-input {
@@ -6087,41 +6134,27 @@ code {
 }
 
 .simple-admitted-voter-ballot-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
+  position: relative;
+  display: block;
   width: 100%;
   min-width: 0;
 }
 
-.simple-admitted-voter-ballot-option {
+.simple-admitted-voter-group-select {
+  width: 100%;
   min-width: 0;
-  min-height: 30px;
-  padding: 0;
-  border: 1px solid var(--simple-border);
-  border-radius: 6px;
-  background: #07111b;
-  color: var(--simple-text);
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 750;
-  line-height: 1;
-  cursor: pointer;
 }
 
-.simple-admitted-voter-ballot-option:hover {
-  border-color: rgba(45, 212, 191, 0.45);
-}
-
-.simple-admitted-voter-ballot-option.is-selected {
-  border-color: rgba(45, 212, 191, 0.72);
-  background: rgba(45, 212, 191, 0.16);
-  color: #dffcf8;
-}
-
-.simple-admitted-voter-ballot-option:focus-visible {
-  outline: 2px solid rgba(45, 212, 191, 0.42);
-  outline-offset: 2px;
+.simple-admitted-voter-ballot-saving {
+  position: absolute;
+  top: 50%;
+  right: 28px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #5eead4;
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.14);
+  transform: translateY(-50%);
 }
 
 .av-ui-data-table td.is-ballot-group .simple-admitted-voter-ballot-options {

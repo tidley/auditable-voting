@@ -59,7 +59,7 @@ import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
-import { UiButton, UiDataTable, UiIcon, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
+import { UiButton, UiDataTable, UiIcon, UiSelect, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import QuestionnaireCoordinatorPanel, {
   QUESTIONNAIRE_ID_RESET_EVENT,
   readStoredQuestionnaireRelayInput,
@@ -142,6 +142,7 @@ import type {
 } from "./questionnaireOptionA";
 import {
   normaliseQuestionnaireBallotGroup,
+  questionRequiredScope,
   type QuestionnaireResponsePayload,
 } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
@@ -286,22 +287,30 @@ function ParticipantNoteField({
   );
 }
 
-function ParticipantBallotGroupSelect({
+export function ParticipantBallotGroupSelect({
   id,
   value,
   restoreFocus,
   onCommit,
   onFocusStateChange,
+  onSavingChange,
+  options,
 }: {
   id: string;
   value: string;
   restoreFocus?: boolean;
   onCommit: (ballotGroup: string) => void;
   onFocusStateChange: (id: string | null) => void;
+  onSavingChange?: (saving: boolean) => void;
+  options: Array<{ value: string; label: string }>;
 }) {
   const groupRef = useRef<HTMLDivElement | null>(null);
   const focusedRef = useRef(false);
   const [localValue, setLocalValue] = useState(value);
+  const [savingValue, setSavingValue] = useState<string | null>(null);
+  const selectOptions = options.some((option) => option.value === localValue)
+    ? options
+    : [...options, { value: localValue, label: `Previous group (${localValue})` }];
 
   useEffect(() => {
     if (focusedRef.current) {
@@ -318,8 +327,7 @@ function ParticipantBallotGroupSelect({
     if (!group || group.contains(document.activeElement)) {
       return;
     }
-    const selectedButton = group.querySelector<HTMLButtonElement>("button.is-selected");
-    (selectedButton ?? group.querySelector<HTMLButtonElement>("button"))?.focus({ preventScroll: true });
+    group.querySelector<HTMLSelectElement>("select")?.focus({ preventScroll: true });
   }, [restoreFocus]);
 
   return (
@@ -328,7 +336,7 @@ function ParticipantBallotGroupSelect({
       ref={groupRef}
       className='simple-admitted-voter-ballot-options'
       role='group'
-      aria-label='Ballot'
+      aria-label='Voter group assignment'
       onFocus={() => {
         focusedRef.current = true;
         onFocusStateChange(id);
@@ -341,37 +349,46 @@ function ParticipantBallotGroupSelect({
         onFocusStateChange(null);
       }}
     >
-      {BALLOT_GROUP_OPTIONS.map((option) => (
-        <button
-          key={option.value || "main"}
-          type='button'
-          className={`simple-admitted-voter-ballot-option${localValue === option.value ? " is-selected" : ""}`}
-          aria-pressed={localValue === option.value}
-          aria-label={`Ballot ${option.label}`}
-          title={`Ballot ${option.label}`}
-          onClick={() => {
-            if (localValue === option.value) {
-              return;
-            }
-            setLocalValue(option.value);
-            onCommit(option.value);
-            onFocusStateChange(id);
-          }}
-        >
-          {option.shortLabel}
-        </button>
-      ))}
+      <UiSelect
+        selectClassName='simple-voter-input simple-admitted-voter-group-select'
+        aria-label={savingValue !== null ? 'Voter group, saving' : 'Voter group'}
+        value={localValue}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          if (localValue === nextValue) {
+            return;
+          }
+          setLocalValue(nextValue);
+          setSavingValue(nextValue);
+          onSavingChange?.(true);
+          onFocusStateChange(id);
+          scheduleAfterNextPaint(() => {
+            onCommit(nextValue);
+            scheduleAfterNextPaint(() => {
+              setSavingValue(null);
+              onSavingChange?.(false);
+            });
+          });
+        }}
+      >
+        {selectOptions.map((option) => (
+          <option key={option.value || 'main'} value={option.value}>{option.label}</option>
+        ))}
+      </UiSelect>
+      {savingValue !== null ? <span className='simple-admitted-voter-ballot-saving' aria-hidden='true' /> : null}
     </div>
   );
 }
 
+function scheduleAfterNextPaint(callback: () => void) {
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => callback());
+    return;
+  }
+  globalThis.setTimeout(callback, 0);
+}
+
 const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
-const BALLOT_GROUP_OPTIONS = [
-  { value: "", label: "Main", shortLabel: "M" },
-  { value: "1", label: "1", shortLabel: "1" },
-  { value: "2", label: "2", shortLabel: "2" },
-  { value: "3", label: "3", shortLabel: "3" },
-];
 const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
   { id: "answers", label: "Questions complete", shortLabel: "Done", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
@@ -1597,6 +1614,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [admittedVoterDraftNpub, setAdmittedVoterDraftNpub] = useState("");
   const [admittedVoterStatus, setAdmittedVoterStatus] = useState<string | null>(null);
   const [admittedVoterApplyInFlight, setAdmittedVoterApplyInFlight] = useState(false);
+  const [participantActionByNpub, setParticipantActionByNpub] = useState<Record<string, string>>({});
+  const [participantGroupSavingByNpub, setParticipantGroupSavingByNpub] = useState<Record<string, boolean>>({});
+  const participantActionInFlightRef = useRef(new Set<string>());
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
   const [optionAQueueProcessingDebug, setOptionAQueueProcessingDebug] = useState<OptionAQueueProcessingDebug>({
@@ -1616,6 +1636,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     lastError: null,
   });
   const [privateInviteLinksByHash, setPrivateInviteLinksByHash] = useState<Record<string, string>>({});
+  const [privateInviteDraftBallotGroup, setPrivateInviteDraftBallotGroup] = useState("");
   const [privateInviteCreateCopied, setPrivateInviteCreateCopied] = useState(false);
   const privateInviteCreateCopiedTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
@@ -2113,6 +2134,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     setKnownVoterInviteStatus(null);
     setOptimisticKnownVoterNpubs([]);
     setPrivateInviteLinksByHash({});
+    setPrivateInviteDraftBallotGroup("");
   }, [optionAElectionId]);
   const optionAAcceptedCount = Math.max(optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0, optionAAcceptedResponses.length);
   const optionAKnownVoterCount = Math.max(followers.length, visibleOptionAKnownVoters.length, admittedVoterNpubs.length);
@@ -2158,6 +2180,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       })
       : ""
   ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
+  const activeVoterGroupOptions = useMemo(() => {
+    const electionId = optionAElectionId.trim();
+    const definition = electionId ? readCachedQuestionnaireDefinition(electionId) : null;
+    const usedGroupIds = new Set(
+      definition?.questions.map((question) => questionRequiredScope(question)).filter((group): group is string => Boolean(group)) ?? [],
+    );
+    const labelsById = new Map((definition?.voterGroups ?? []).map((group) => [group.id, group.label]));
+    return [
+      { value: "", label: "Main (everyone)" },
+      ...[...usedGroupIds].map((value) => ({ value, label: labelsById.get(value) ?? `Legacy group ${value}` })),
+    ];
+  }, [knownVoterInviteRefreshNonce, optionAElectionId]);
   const filteredAdmittedVoterDisplayRows = useMemo(() => {
     const query = participantSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -2167,6 +2201,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const submissionEntry = row.submissionEntry;
       const submission = submissionEntry?.submission ?? null;
       const responseDetail = submissionEntry?.responseDetail ?? row.responseDetail;
+      const assignedGroup = normaliseQuestionnaireBallotGroup(
+        row.admittedEntry?.ballotGroup ?? row.privateInviteEntry?.ballotGroup ?? row.currentQuestionnaireEntry?.ballotGroup,
+      ) ?? "";
+      const assignedGroupLabel = activeVoterGroupOptions.find((option) => option.value === assignedGroup)?.label ?? "";
       const searchableValues = [
         row.npub,
         deriveActorDisplayId(row.npub),
@@ -2176,6 +2214,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         row.privateInviteEntry?.codeHash ?? "",
         row.privateInviteEntry?.note ?? "",
         row.privateInviteEntry?.state ?? "",
+        assignedGroup,
+        assignedGroupLabel,
         submission?.submissionId ?? "",
         submission?.invitedNpub ?? "",
         submission?.responseNpub ?? "",
@@ -2192,7 +2232,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         || (responseDetail ? questionnaireResponseDetailMatchesSearch(responseDetail, query) : false)
       );
     });
-  }, [admittedVoterDisplayRows, participantSearchQuery]);
+  }, [activeVoterGroupOptions, admittedVoterDisplayRows, participantSearchQuery]);
   const participantRosterTotalCount = admittedVoterDisplayRows.length;
   const participantRosterVisibleCount = filteredAdmittedVoterDisplayRows.length;
   type ParticipantDisplayRow = (typeof filteredAdmittedVoterDisplayRows)[number];
@@ -2414,8 +2454,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       },
       {
         id: "ballotGroup",
-        header: "Ballot",
-        meta: { className: "is-ballot-group", label: "Ballot" },
+        header: "Voter group",
+        meta: { className: "is-ballot-group", label: "Voter group" },
         cell: ({ row }) => {
           const participant = row.original;
           const state = rowState(participant);
@@ -2426,8 +2466,23 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             <ParticipantBallotGroupSelect
               id={ballotGroupSelectId}
               value={state.ballotGroupValue}
+              options={activeVoterGroupOptions}
               restoreFocus={participantBallotGroupFocusRef.current === ballotGroupSelectId}
               onCommit={(ballotGroup) => updateParticipantBallotGroup(participant, ballotGroup)}
+              onSavingChange={(saving) => {
+                const npub = participant.npub.trim();
+                setParticipantGroupSavingByNpub((current) => {
+                  if (saving) {
+                    return current[npub] ? current : { ...current, [npub]: true };
+                  }
+                  if (!current[npub]) {
+                    return current;
+                  }
+                  const next = { ...current };
+                  delete next[npub];
+                  return next;
+                });
+              }}
               onFocusStateChange={(id) => {
                 participantBallotGroupFocusRef.current = id;
               }}
@@ -2466,19 +2521,26 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         cell: ({ row }) => {
           const participant = row.original;
           const state = rowState(participant);
+          const participantKey = participant.npub.trim();
+          const actionLabel = participantActionByNpub[participantKey];
+          const groupSaving = Boolean(participantGroupSavingByNpub[participantKey]);
           return (
             <div className='simple-admitted-voter-actions'>
               {state.pendingAuthorization ? (
-                <UiButton icon='check' onPress={() => authorizePendingRequester(participant.npub, { statusTarget: "admitted" })}>
-                  Approve
+                <UiButton
+                  icon={actionLabel || groupSaving ? 'spinner' : 'check'}
+                  isDisabled={Boolean(actionLabel) || groupSaving}
+                  onPress={() => void runParticipantAction(participant.npub, "Approving...", () => authorizePendingRequester(participant.npub, { statusTarget: "admitted" }))}
+                >
+                  {actionLabel || (groupSaving ? "Saving group..." : "Approve")}
                 </UiButton>
               ) : state.canUseCurrentInviteActions ? (
                 <UiButton
-                  icon='send'
-                  onPress={() => void sendInviteToKnownVoter(participant.npub, { statusTarget: "admitted" })}
-                  isDisabled={!optionACoordinatorRuntime}
+                  icon={actionLabel ? 'spinner' : 'send'}
+                  onPress={() => void runParticipantAction(participant.npub, "Sending...", () => sendInviteToKnownVoter(participant.npub, { statusTarget: "admitted" }))}
+                  isDisabled={!optionACoordinatorRuntime || Boolean(actionLabel)}
                 >
-                  {state.inviteButtonLabel}
+                  {actionLabel || state.inviteButtonLabel}
                 </UiButton>
               ) : null}
               {state.privateInviteEntry && state.canSharePrivateInvite ? (
@@ -2528,8 +2590,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     ];
   }, [
     activeCoordinatorNpub,
+    activeVoterGroupOptions,
     optionACoordinatorRuntime,
     optionAElectionId,
+    participantActionByNpub,
+    participantGroupSavingByNpub,
     authorizePendingRequester,
     copyPrivateInviteCodeLink,
     getPrivateInviteCodeLink,
@@ -5109,6 +5174,29 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     return projectNpubsToQuestionnaire(npubs, optionAElectionId.trim(), voters);
   }
 
+  async function runParticipantAction(npub: string, label: string, action: () => void | Promise<unknown>) {
+    const key = npub.trim();
+    if (!key || participantActionInFlightRef.current.has(key)) {
+      return;
+    }
+    participantActionInFlightRef.current.add(key);
+    setParticipantActionByNpub((current) => ({ ...current, [key]: label }));
+    await new Promise<void>((resolve) => scheduleAfterNextPaint(resolve));
+    try {
+      await action();
+    } finally {
+      participantActionInFlightRef.current.delete(key);
+      setParticipantActionByNpub((current) => {
+        if (!current[key]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    }
+  }
+
   function updateAdmittedVoterDetails(npub: string, patch: { note?: string; proxyVoter?: boolean; ballotGroup?: string | null }) {
     if (!activeCoordinatorNpub.trim()) {
       return;
@@ -5390,17 +5478,25 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       npubs: privateInviteClaimants,
       source: "private_invite",
     });
-    const notesByNpub = new Map(
+    const inviteDetailsByNpub = new Map(
       Object.values(snapshot?.bearerInviteCodes ?? {})
-        .map((entry) => [entry.redeemedNpub?.trim() ?? "", entry.note?.trim() ?? ""] as const)
-        .filter(([npub, note]) => npub.length > 0 && note.length > 0),
+        .map((entry) => [entry.redeemedNpub?.trim() ?? "", {
+          note: entry.note?.trim() ?? "",
+          ballotGroup: normaliseQuestionnaireBallotGroup(entry.ballotGroup),
+        }] as const)
+        .filter(([npub]) => npub.length > 0),
     );
     let nextVoters = result.voters;
-    let notesChanged = false;
+    let detailsChanged = false;
     for (const npub of privateInviteClaimants) {
-      const note = notesByNpub.get(npub);
+      const details = inviteDetailsByNpub.get(npub);
       const voter = nextVoters[npub];
-      if (!note || !voter || voter.note?.trim()) {
+      if (!details || !voter) {
+        continue;
+      }
+      const note = voter.note?.trim() ? voter.note : details.note;
+      const ballotGroup = normaliseQuestionnaireBallotGroup(voter.ballotGroup) ?? details.ballotGroup;
+      if (note === voter.note && ballotGroup === normaliseQuestionnaireBallotGroup(voter.ballotGroup)) {
         continue;
       }
       nextVoters = {
@@ -5408,12 +5504,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         [npub]: {
           ...voter,
           note,
+          ballotGroup,
           lastUpdatedAt: new Date().toISOString(),
         },
       };
-      notesChanged = true;
+      detailsChanged = true;
     }
-    if (notesChanged) {
+    if (detailsChanged) {
       saveAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub, voters: nextVoters });
       refreshAdmittedVoterRoster(nextVoters);
     } else {
@@ -8654,6 +8751,19 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                          />
 	                        </div>
 	                        <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
+	                        <label className='simple-voter-field simple-private-invite-group-field'>
+	                          <span className='simple-voter-label'>Voter group for new private invite</span>
+	                          <UiSelect
+	                            selectClassName='simple-voter-input'
+	                            aria-label='Voter group for new private invite'
+	                            value={privateInviteDraftBallotGroup}
+	                            onChange={(event) => setPrivateInviteDraftBallotGroup(event.target.value)}
+	                          >
+	                            {activeVoterGroupOptions.map((option) => (
+	                              <option key={option.value || 'main'} value={option.value}>{option.label}</option>
+	                            ))}
+	                          </UiSelect>
+	                        </label>
 	                        <div className='simple-invite-share-actions'>
 	                          <UiButton
 	                            icon={isCopyLabelActive("public-questionnaire-invite") ? "check" : "copy"}
@@ -8666,7 +8776,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 		                          <UiButton
 		                            icon={privateInviteCreateCopied ? "check" : "key"}
 		                            className='simple-voter-secondary'
-		                            onPress={() => void createPrivateInviteCodeLink()}
+		                            onPress={() => void createPrivateInviteCodeLink({ ballotGroup: privateInviteDraftBallotGroup })}
 		                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
 		                          >
 		                            <span>{privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}</span>
@@ -8674,7 +8784,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 		                          <UiButton
 		                            icon={privateInviteCreateCopied ? "check" : "key"}
 		                            className='simple-voter-secondary'
-		                            onPress={() => void createPrivateInviteCodeLink({ credentialsPerVoter: 2 })}
+		                            onPress={() => void createPrivateInviteCodeLink({ credentialsPerVoter: 2, ballotGroup: privateInviteDraftBallotGroup })}
 		                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
 		                          >
 		                            <span>{privateInviteCreateCopied ? "Copied" : "Create proxy invite link"}</span>

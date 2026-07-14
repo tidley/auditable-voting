@@ -1663,8 +1663,23 @@ describe("questionnaireOptionARuntime", () => {
 
     await coordinator.authorizeRequester(otherNpub, { ballotGroup: "2" });
     expect(coordinator.getSnapshot()?.whitelist[otherNpub]?.ballotGroup).toBe("2");
+    expect(voter.getSnapshot()?.credentialReady).toBe(false);
+    const blindSigningPublicKey = await coordinator.ensureBlindSigningPublicKey();
+    storeCachedQuestionnaireDefinition({
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      blindSigningPublicKey,
+    });
+    const { invite } = await coordinator.sendInvite(otherNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.test/?role=voter",
+    });
+    await voter.loginWithSigner(invite);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
+    expect(voter.getSnapshot()?.blindIssuance?.ballotScope?.allowedScopes).toEqual(["0", "2"]);
   });
 
   it("redeems a private invite code into the first requester whitelist entry", async () => {
@@ -1698,6 +1713,43 @@ describe("questionnaireOptionARuntime", () => {
     expect(coordinator.getSnapshot()?.whitelist[secondNpub]).toBeUndefined();
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
     expect(listBlindRequests(electionId).some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
+  });
+
+  it("preassigns a custom voter group through a private invite", async () => {
+    const inviteCode = "private-invite-code-north";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addBearerInviteCode(inviteCodeHash, { ballotGroup: "group_north" });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
+    voter.setBearerInviteCode(inviteCode, { ballotGroup: "group_north" });
+    await voter.loginWithSigner(null);
+    await voter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
+
+    expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]?.state).toBe("redeemed");
+    expect(coordinator.getSnapshot()?.whitelist[otherNpub]?.ballotGroup).toBe("group_north");
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.blindIssuance?.ballotScope?.allowedScopes).toEqual(["0", "group_north"]);
+  });
+
+  it("does not redeem a private invite when its voter group is altered", async () => {
+    const inviteCode = "private-invite-code-tampered-group";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addBearerInviteCode(inviteCodeHash, { ballotGroup: "group_north" });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
+    voter.setBearerInviteCode(inviteCode, { ballotGroup: "group_south" });
+    await voter.loginWithSigner(null);
+    await voter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
+
+    expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]?.state).toBe("available");
+    expect(coordinator.getSnapshot()?.whitelist[otherNpub]).toBeUndefined();
+    expect(listBlindRequests(electionId)).toHaveLength(0);
   });
 
   it("redeems a private invite code as a proxy voter and issues both credentials", async () => {

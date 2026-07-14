@@ -33,6 +33,11 @@ export type QuestionnaireBallotSlot = {
 
 export type QuestionnaireCredentialsPerVoter = 1 | 2;
 
+export type QuestionnaireVoterGroup = {
+  id: string;
+  label: string;
+};
+
 export function normaliseQuestionnaireScope(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -50,7 +55,7 @@ export function normaliseQuestionnaireScope(value: unknown): string | null {
   if (normalised === "c") {
     return "3";
   }
-  return /^[1-3]$/.test(normalised) ? normalised : null;
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalised) ? normalised : null;
 }
 
 export const normaliseQuestionnaireBallotGroup = normaliseQuestionnaireScope;
@@ -85,7 +90,7 @@ export function normaliseQuestionnaireAllowedScopes(value: unknown, fallbackRequ
     if (right === "0") {
       return 1;
     }
-    return left.localeCompare(right);
+    return left < right ? -1 : left > right ? 1 : 0;
   });
 }
 
@@ -143,6 +148,7 @@ export type QuestionnaireDefinition = {
   credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   questionnaireRelays?: string[];
+  voterGroups?: QuestionnaireVoterGroup[];
   questions: QuestionnaireQuestion[];
 };
 
@@ -494,6 +500,31 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
       errors.push("questionnaire_relays_invalid");
     }
   }
+  const voterGroupIds = new Set<string>();
+  const voterGroupLabels = new Set<string>();
+  if (input.voterGroups !== undefined) {
+    if (!Array.isArray(input.voterGroups) || input.voterGroups.length > 100) {
+      errors.push("voter_groups_invalid");
+    } else {
+      for (const group of input.voterGroups) {
+        const id = normaliseQuestionnaireScope(group?.id);
+        const label = typeof group?.label === "string" ? group.label.trim() : "";
+        if (!id || !label) {
+          errors.push("voter_group_invalid");
+          continue;
+        }
+        if (voterGroupIds.has(id)) {
+          errors.push(`voter_group_id_duplicate:${id}`);
+        }
+        const labelKey = label.toLowerCase();
+        if (voterGroupLabels.has(labelKey)) {
+          errors.push(`voter_group_label_duplicate:${labelKey}`);
+        }
+        voterGroupIds.add(id);
+        voterGroupLabels.add(labelKey);
+      }
+    }
+  }
   if (!Number.isFinite(input.openAt) || !Number.isFinite(input.closeAt) || input.openAt >= input.closeAt) {
     errors.push("invalid_open_close_window");
   }
@@ -515,6 +546,10 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
       }
       if (question.ballotGroup !== undefined && question.ballotGroup !== null && !normaliseQuestionnaireScope(question.ballotGroup)) {
         errors.push(`ballot_group_invalid:${question.questionId}`);
+      }
+      const requiredScope = questionRequiredScope(question);
+      if (requiredScope && Array.isArray(input.voterGroups) && !voterGroupIds.has(requiredScope)) {
+        errors.push(`required_scope_unknown:${question.questionId}`);
       }
       if (input.ballotCredentialMode === "per_question") {
         const slot = normaliseQuestionBallotSlot(question, index);

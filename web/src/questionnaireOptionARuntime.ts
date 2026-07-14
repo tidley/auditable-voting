@@ -184,9 +184,9 @@ const OPTION_A_ISSUANCE_DM_FAILED_RETRY_MS = 5 * 1000;
 const OPTION_A_BLIND_REQUEST_RETRY_MS = 15 * 1000;
 const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 3 * 60 * 1000;
 const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
-const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
+const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(7 * 24 * 60 * 60);
 const OPTION_A_STATE_SELF_COPY_PUBLISH_MIN_INTERVAL_MS = 15 * 1000;
-const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
+const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(7 * 24 * 60 * 60);
 const OPTION_A_ADAPTIVE_VOTER_DM_LIMIT = 240;
 const OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT = 40;
 const OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES = 6;
@@ -2303,9 +2303,14 @@ export class QuestionnaireOptionAVoterRuntime {
       }
       const tokenSecret = makeTokenSecret();
       const tokenCommitment = await sha256Hex(tokenSecret);
+      const ballotScope = ballotGroupScope(voterBallotGroup({
+        invite: next.inviteMessage ?? null,
+        privateInviteBallotGroup: next.privateInviteBallotGroup,
+      }));
       const message = buildQuestionnaireBlindTokenSignedMessage({
         questionnaireId: next.electionId,
         tokenSecretCommitment: tokenCommitment,
+        ballotScope,
       });
       const blinded = await blindQuestionnaireToken({
         publicKey: blindSigningPublicKey,
@@ -2322,6 +2327,7 @@ export class QuestionnaireOptionAVoterRuntime {
         clientNonce: makeId("nonce"),
         createdAt: nowIso(),
         inviteCodeHash: inviteCodeHash || null,
+        ballotScope,
       };
       const created = reduceVoterEvent(next, { type: "BLIND_REQUEST_CREATED", request });
       if (!created.ok) {
@@ -4786,6 +4792,21 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return null;
   }
 
+  private configuredBallotGroupForRequest(
+    state: CoordinatorElectionState,
+    request: BlindBallotRequest,
+  ): string | null | undefined {
+    const codeHash = (request.inviteCodeHash ?? "").trim().toLowerCase();
+    if (isQuestionnaireInviteCodeHash(codeHash)) {
+      const codeEntry = state.bearerInviteCodes?.[codeHash];
+      if (codeEntry?.electionId === this.electionId) {
+        return normaliseQuestionnaireBallotGroup(codeEntry.ballotGroup);
+      }
+    }
+    const whitelistEntry = state.whitelist[request.invitedNpub];
+    return whitelistEntry ? normaliseQuestionnaireBallotGroup(whitelistEntry.ballotGroup) : undefined;
+  }
+
   async authorizeRequester(invitedNpub: string, options?: {
     credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
     ballotGroup?: string | null;
@@ -5359,6 +5380,25 @@ export class QuestionnaireOptionACoordinatorRuntime {
         });
         dequeueBlindRequest(request.requestId);
         continue;
+      }
+      const configuredBallotGroup = this.configuredBallotGroupForRequest(next, request);
+      if (configuredBallotGroup !== undefined) {
+        const expectedScopes = allowedScopesForRequiredScope(configuredBallotGroup);
+        const requestedScopes = normaliseQuestionnaireAllowedScopes(
+          request.ballotScope?.allowedScopes,
+          request.ballotScope?.ballotGroup,
+        );
+        if (JSON.stringify(expectedScopes) !== JSON.stringify(requestedScopes)) {
+          optionAFlowLog("coordinator", "blind_request_rejected_voter_group_mismatch", {
+            electionId: this.electionId,
+            requestId: request.requestId,
+            invitedNpub: request.invitedNpub,
+            expectedScopes,
+            requestedScopes,
+          });
+          dequeueBlindRequest(request.requestId);
+          continue;
+        }
       }
       next = this.redeemBearerInviteCodeForRequest(next, request);
       const claimed = reduceCoordinatorEvent(next, {

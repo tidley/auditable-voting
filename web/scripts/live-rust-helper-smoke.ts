@@ -293,6 +293,10 @@ function buildDefinition(input: {
     allowMultipleResponsesPerPubkey: false,
     ...(input.perQuestionCredentials ? { ballotCredentialMode: "per_question" as const } : {}),
     blindSigningPublicKey: input.blindSigningPublicKey,
+    voterGroups: Array.from({ length: restrictedQuestionGroupCount }, (_, index) => ({
+      id: `group_${String(index + 1).padStart(3, "0")}`,
+      label: `Harness group ${index + 1}`,
+    })),
     questions: Array.from({ length: questionCount }, (_, index) => {
       const ballotGroup = ballotGroupForQuestionIndex(index, baseQuestionCount);
       return {
@@ -383,7 +387,7 @@ function ballotGroupForQuestionIndex(questionIndex: number, baseQuestionCount: n
     return null;
   }
   const groupIndex = questionIndex - baseQuestionCount;
-  return ["1", "2", "3"][groupIndex] ?? null;
+  return `group_${String(groupIndex + 1).padStart(3, "0")}`;
 }
 
 function ballotGroupForVoterIndex(input: {

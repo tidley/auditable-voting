@@ -41,8 +41,8 @@ const OPTION_A_BLIND_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_BLIND_DM_STAGGER_MS = 250;
 const OPTION_A_BLIND_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const ONE_DAY_SECONDS = 24 * 60 * 60;
-const ONE_AND_HALF_DAY_SECONDS = 36 * 60 * 60;
-const OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS = ONE_AND_HALF_DAY_SECONDS;
+const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
+const OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS = SEVEN_DAYS_SECONDS;
 const OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT = 40;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
@@ -966,8 +966,19 @@ async function queryBlindDmSyncWithFallbackPaginated(
   options?: BlindDmBackfillOptions,
 ) {
   const primaryRelays = selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_MAX);
-  const primaryEvents = await queryBlindDmSyncPaginated(primaryRelays, filter, options);
-  const shouldFallbackRead = primaryEvents.length === 0
+  let primaryTargetFound = false;
+  const primaryOptions = options?.stopAfterPage
+    ? {
+      ...options,
+      stopAfterPage: async (...args: Parameters<NonNullable<BlindDmBackfillOptions["stopAfterPage"]>>) => {
+        const found = await options.stopAfterPage?.(...args) ?? false;
+        primaryTargetFound ||= found;
+        return found;
+      },
+    }
+    : options;
+  const primaryEvents = await queryBlindDmSyncPaginated(primaryRelays, filter, primaryOptions);
+  const shouldFallbackRead = (!primaryTargetFound && (primaryEvents.length === 0 || Boolean(options?.stopAfterPage)))
     && relayCandidates.length > primaryRelays.length;
   const fallbackRelays = shouldFallbackRead
     ? selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_FALLBACK_MAX)

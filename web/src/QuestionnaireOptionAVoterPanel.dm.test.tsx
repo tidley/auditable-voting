@@ -1936,6 +1936,128 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect((screen.getByRole("button", { name: "Answer required questions to continue" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("warns when a main-only credential hides group-specific questions", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "w".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      responseMode: "blind_token" as const,
+      questionnaireId: "q_main_only_warning",
+      title: "Grouped questionnaire",
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 999,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      voterGroups: [{ id: "group_north", label: "North district" }],
+      questions: [
+        { questionId: "main", type: "yes_no" as const, prompt: "Main question", required: true },
+        { questionId: "group", type: "yes_no" as const, prompt: "North district question", required: true, requiredScope: "group_north" },
+      ],
+    };
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: definition.questionnaireId,
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: definition.coordinatorPubkey,
+      loginVerified: true,
+      loginVerifiedAt: "2026-07-13T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: null,
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-07-13T00:00:00.000Z",
+      blindIssuance: {
+        type: "blind_ballot_response",
+        schemaVersion: 1,
+        electionId: definition.questionnaireId,
+        requestId: "request_main_only",
+        issuanceId: "issuance_main_only",
+        invitedNpub: localVoterNpub,
+        blindSignature: "sig_main_only",
+        ballotScope: { allowedScopes: ["0"] },
+        definition,
+        issuedAt: "2026-07-13T00:00:00.000Z",
+      },
+      credentialReady: true,
+      draftResponses: [],
+      submission: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-07-13T00:00:00.000Z",
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={[definition.questionnaireId]} localVoterNpub={localVoterNpub} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+
+    expect(await screen.findByText(/assigned to the main questions only/i)).toBeTruthy();
+    expect(screen.getByText("Main question")).toBeTruthy();
+    expect(screen.queryByText("North district question")).toBeNull();
+  });
+
+  it("shows submission failures on the vote page", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "y".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      responseMode: "blind_token" as const,
+      questionnaireId: "q_visible_submit_failure",
+      title: "Submission failure",
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      questions: [{ questionId: "q1", type: "yes_no" as const, prompt: "Ready?", required: true }],
+    };
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: definition.questionnaireId,
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      loginVerified: true,
+      loginVerifiedAt: "2026-07-13T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: null,
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-07-13T00:00:00.000Z",
+      blindIssuance: {
+        type: "blind_ballot_response",
+        schemaVersion: 1,
+        electionId: definition.questionnaireId,
+        requestId: "request_submit_failure",
+        issuanceId: "issuance_submit_failure",
+        invitedNpub: localVoterNpub,
+        blindSignature: "sig_submit_failure",
+        definition,
+        issuedAt: "2026-07-13T00:00:00.000Z",
+      },
+      credentialReady: true,
+      draftResponses: [],
+      submission: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-07-13T00:00:00.000Z",
+    });
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "submitVote")
+      .mockRejectedValue(new Error("No relay accepted the vote. Please try again."));
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={[definition.questionnaireId]} localVoterNpub={localVoterNpub} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await user.click(await screen.findByRole("button", { name: "Yes" }));
+    await user.click(await screen.findByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("No relay accepted the vote. Please try again.")).toBeTruthy();
+  });
+
   it("shows the submitted responder marker with QR after submission", async () => {
     const localVoterNpub = "npub1" + "g".repeat(58);
     optionAStorageMocks.loadVoterState.mockReturnValue({

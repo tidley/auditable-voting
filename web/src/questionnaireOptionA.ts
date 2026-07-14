@@ -1,7 +1,9 @@
 import {
+  allowedScopesForRequiredScope,
   normaliseQuestionnaireAllowedScopes,
   normaliseQuestionnaireBallotGroup,
   questionBallotScopeKey,
+  questionRequiredScope,
   type QuestionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
@@ -653,7 +655,26 @@ function answeredQuestionsMatchCredentialScopes(
   definition: QuestionnaireDefinition | null | undefined,
   submission: BallotSubmission,
 ) {
-  if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
+  if (!definition) {
+    return true;
+  }
+  if (!questionnaireUsesPerQuestionCredentials(definition)) {
+    const allowedScopes = new Set(
+      submissionCredentialBundle(submission).flatMap((proof) => normaliseQuestionnaireAllowedScopes(
+        proof.ballotScope?.allowedScopes,
+        proof.ballotScope?.ballotGroup,
+      )),
+    );
+    for (const answer of submission.payload.responses) {
+      const question = definition.questions.find((entry) => entry.questionId === answer.questionId);
+      if (!question) {
+        return false;
+      }
+      const requiredScope = questionRequiredScope(question);
+      if (requiredScope && !allowedScopes.has(requiredScope)) {
+        return false;
+      }
+    }
     return true;
   }
   const proofScopeKeys = new Set(
@@ -759,6 +780,21 @@ export function reduceVoterEvent(
   if (event.type === "INVITE_LOADED") {
     if (event.invite.electionId !== next.electionId || event.invite.invitedNpub !== next.invitedNpub) {
       return reduceVoterError(state, "election_id_mismatch");
+    }
+    const assignedScopes = allowedScopesForRequiredScope(event.invite.ballotGroup);
+    const requestScopes = next.blindRequest
+      ? normaliseQuestionnaireAllowedScopes(
+        next.blindRequest.ballotScope?.allowedScopes,
+        next.blindRequest.ballotScope?.ballotGroup,
+      )
+      : assignedScopes;
+    if (!next.blindIssuance && JSON.stringify(requestScopes) !== JSON.stringify(assignedScopes)) {
+      next.blindRequest = null;
+      next.blindRequests = {};
+      next.blindRequestSent = false;
+      next.blindRequestSentAt = null;
+      next.blindTokenSecret = null;
+      next.blindTokenSecrets = {};
     }
     next.inviteMessage = event.invite;
     next.lastUpdatedAt = new Date().toISOString();
