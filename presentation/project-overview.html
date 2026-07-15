@@ -624,7 +624,7 @@
           <li>Observer round search and `Submitted Votes` filtering now support Submission/Response ID or Submittor identity, invalid rows are hidden by default behind `Show invalid votes`, and visible invalid rows show their rejection reason</li>
           <li>Organiser and Observer now both hydrate proxy-accepted public response rows from relay submissions and decisions; Organiser decrypts encrypted answer details automatically when its local key is available, while Observer can locally decrypt when the matching organiser `nsec` is deliberately supplied</li>
           <li>Organiser and Observer locally re-check public blind-token proofs and ignore stale invalid-token-proof decisions when the proof verifies against the questionnaire definition</li>
-          <li>General invite links create one browser-local voter identity and retain it across refresh; submitted voters see their responder marker pattern and expandable QR directly on the Vote page</li>
+          <li>General invite links create one browser-local voter identity while private links preserve the saved identity across refresh; submitted voters see their responder marker pattern and expandable QR directly on the Vote page</li>
           <li>Submit returns incomplete ballots to the earliest missed required question</li>
           <li>Worker private and delegated relays now complete a bounded readiness check before use; mailbox ticket publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Organiser follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>

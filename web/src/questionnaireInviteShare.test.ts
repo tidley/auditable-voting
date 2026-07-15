@@ -138,6 +138,7 @@ describe("questionnaire invite sharing", () => {
 
   it("detects general voter invite links", () => {
     expect(isGeneralVoterInviteUrl("?role=voter&q=q_public_123")).toBe(true);
+    expect(isGeneralVoterInviteUrl("?role=voter&q=q_public_123&coordinator=npub1coordinator&request_ballot=1")).toBe(true);
     expect(isGeneralVoterInviteUrl("?role=voter&request_ballot=1&election_id=q_public_123")).toBe(true);
     expect(isGeneralVoterInviteUrl("?role=voter&questionnaire=q_public_123&request_ballot=1")).toBe(true);
   });

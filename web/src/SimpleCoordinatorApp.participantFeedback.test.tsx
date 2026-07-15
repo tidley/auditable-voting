@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { useCallback, useState } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ParticipantBallotGroupSelect } from "./SimpleCoordinatorApp";
+
+vi.mock("qrcode", () => ({
+  default: {
+    toDataURL: vi.fn(async () => "data:image/png;base64,test"),
+  },
+}));
+
+import { InviteQrButton, InviteQrOverlay, ParticipantBallotGroupSelect } from "./SimpleCoordinatorApp";
 
 afterEach(() => {
   cleanup();
@@ -10,6 +18,44 @@ afterEach(() => {
 });
 
 describe("organiser participant feedback", () => {
+  it("keeps an enlarged invite QR open when its table cell remounts", async () => {
+    function Harness() {
+      const [cellKey, setCellKey] = useState(0);
+      const [preview, setPreview] = useState<Parameters<typeof InviteQrOverlay>[0]["preview"]>(null);
+      const closePreview = useCallback(() => setPreview(null), []);
+      return (
+        <>
+          <div key={cellKey}>
+            <InviteQrButton
+              value='https://example.test/private-invite'
+              label='private invite link'
+              title='Private invite link'
+              onExpand={setPreview}
+            />
+          </div>
+          <button type='button' onClick={() => setCellKey((value) => value + 1)}>Refresh row</button>
+          <InviteQrOverlay preview={preview} onClose={closePreview} />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const qrButton = await screen.findByRole("button", { name: "Show large QR for private invite link" });
+    await act(async () => undefined);
+    await userEvent.click(qrButton);
+    expect(screen.getByRole("dialog", { name: "Private invite link QR" })).toBeTruthy();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close QR preview" }));
+    });
+    await userEvent.tab();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close QR preview" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh row" }));
+    expect(screen.getByRole("dialog", { name: "Private invite link QR" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Close QR preview" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show large QR for private invite link" }));
+  });
+
   it("selects a voter group before starting persistence", async () => {
     const frames: FrameRequestCallback[] = [];
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {

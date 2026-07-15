@@ -1,7 +1,7 @@
 {
   "name": "auditable-voting-web",
   "private": true,
-  "version": "0.1.142",
+  "version": "0.1.143",
   "license": "MIT",
   "type": "module",
   "scripts": {

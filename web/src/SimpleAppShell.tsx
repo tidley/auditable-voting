@@ -20,7 +20,7 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDisplay";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
-import { hasVoterInviteContextInUrl } from "./questionnaireInvite";
+import { hasVoterInviteContextInUrl, isGeneralVoterInviteUrl } from "./questionnaireInvite";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 type AuditorPage = "gallery" | "relays";
@@ -116,7 +116,7 @@ function shouldCreateFreshVoterForPublicLink() {
   const params = new URLSearchParams(window.location.search);
   const historyState = window.history.state as Record<string, unknown> | null;
   return Boolean(
-    hasVoterInviteContextInUrl()
+    isGeneralVoterInviteUrl()
     && params.get(PUBLIC_LINK_FRESH_VOTER_PARAM) !== "1"
     && historyState?.[PUBLIC_LINK_FRESH_VOTER_STATE] !== true
     && !params.get("nsec")?.trim()

@@ -190,8 +190,7 @@ export function isGeneralVoterInviteUrl(search = typeof window !== "undefined" ?
   }
 
   const hasPrivateInviteContext = Boolean(
-    (params.get("coordinator") ?? "").trim()
-    || (params.get("invited") ?? "").trim()
+    (params.get("invited") ?? "").trim()
     || (params.get("invite") ?? "").trim()
     || (params.get("invite_code") ?? "").trim()
     || (params.get("code") ?? "").trim()

@@ -3741,7 +3741,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const canSubmitFromQuestionNav = showSubmitFromQuestionNav
     && canSubmitNow
     && questionnaireCredentialReady;
-  const submitBlockedMessage = showSubmitFromQuestionNav && !canSubmitFromQuestionNav
+  const submitBlockedMessage = showSubmitFromQuestionNav && !showViewResultsFromQuestionNav && !canSubmitFromQuestionNav
     ? !questionnaireCredentialReady
       ? "Your ballot is still being prepared. Keep this page open or resend the ballot request from the menu."
       : !snapshotForAction?.loginVerified

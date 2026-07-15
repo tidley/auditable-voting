@@ -2388,6 +2388,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.queryByText("First grouped question")).toBeNull();
     expect(screen.getAllByText("Second grouped question").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "View results" })).toBeTruthy();
+    expect(screen.queryByText("This vote is not ready to submit yet. Check that every required answer is complete.")).toBeNull();
     expect(screen.queryByText("Questionnaire results")).toBeNull();
     const receiptRegion = await screen.findByRole("region", { name: "Vote receipt details" });
     expect(within(receiptRegion).queryByText("Second grouped question")).toBeNull();

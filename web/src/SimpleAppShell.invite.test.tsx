@@ -156,7 +156,7 @@ describe("SimpleAppShell invite-link login", () => {
   });
 
   it("opens direct questionnaire links on the Vote section without the gateway", async () => {
-    window.history.pushState(null, "", "/?role=voter&q=q_public_link&request_ballot=1");
+    window.history.pushState(null, "", "/?role=voter&q=q_public_link&coordinator=npub1organiser&request_ballot=1");
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     render(<SimpleAppShell />);
@@ -177,7 +177,7 @@ describe("SimpleAppShell invite-link login", () => {
       detail.onPersisted?.();
     };
     window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
-    window.history.pushState(null, "", "/?role=voter&q=q_public_link&request_ballot=1");
+    window.history.pushState(null, "", "/?role=voter&q=q_public_link&coordinator=npub1organiser&request_ballot=1");
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     try {
@@ -212,6 +212,27 @@ describe("SimpleAppShell invite-link login", () => {
       });
       expect(window.history.state?.auditableVotingFreshVoterCreated).toBe(true);
       expect(newIdentityEvents).toEqual([]);
+    } finally {
+      window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
+    }
+  });
+
+  it("does not replace a private-invite identity on load or refresh", async () => {
+    const newIdentityEvents: Event[] = [];
+    const handleNewIdentity = (event: Event) => newIdentityEvents.push(event);
+    window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
+    window.history.pushState(null, "", "/?role=voter&q=q_private&coordinator=npub1organiser&invite_code=private123&request_ballot=1");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    try {
+      const firstRender = render(<SimpleAppShell />);
+      await act(async () => undefined);
+      firstRender.unmount();
+      render(<SimpleAppShell />);
+      await act(async () => undefined);
+
+      expect(newIdentityEvents).toEqual([]);
+      expect(window.history.state?.auditableVotingFreshVoterCreated).not.toBe(true);
     } finally {
       window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
     }

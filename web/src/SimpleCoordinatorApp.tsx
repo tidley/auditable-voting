@@ -1203,20 +1203,31 @@ type InviteQrButtonProps = {
   value: string;
   label: string;
   title: string;
+  onExpand: (preview: InviteQrPreview) => void;
 };
 
-function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
-  const [qrSrc, setQrSrc] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
+type InviteQrPreview = Pick<InviteQrButtonProps, "value" | "label" | "title">;
+
+const inviteQrSrcCache = new Map<string, string>();
+
+function useInviteQrSrc(value: string) {
+  const trimmed = value.trim();
+  const [qrSrc, setQrSrc] = useState<string | null>(() => inviteQrSrcCache.get(trimmed) ?? null);
 
   useEffect(() => {
     let cancelled = false;
-    const trimmed = value.trim();
 
     if (!trimmed) {
       setQrSrc(null);
       return;
     }
+
+    const cached = inviteQrSrcCache.get(trimmed);
+    if (cached) {
+      setQrSrc(cached);
+      return;
+    }
+    setQrSrc(null);
 
     void QRCode.toDataURL(trimmed, {
       errorCorrectionLevel: "M",
@@ -1228,6 +1239,7 @@ function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
       },
     }).then((nextQrSrc: string) => {
       if (!cancelled) {
+        inviteQrSrcCache.set(trimmed, nextQrSrc);
         setQrSrc(nextQrSrc);
       }
     }).catch(() => {
@@ -1239,70 +1251,105 @@ function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
     return () => {
       cancelled = true;
     };
-  }, [value]);
+  }, [trimmed]);
 
-  useEffect(() => {
-    if (!expanded) {
-      return;
-    }
+  return qrSrc;
+}
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setExpanded(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [expanded]);
+export function InviteQrButton({ value, label, title, onExpand }: InviteQrButtonProps) {
+  const qrSrc = useInviteQrSrc(value);
 
   if (!value.trim()) {
     return null;
   }
 
   return (
-    <>
+    <UiButton
+      icon={false}
+      className='simple-invite-qr-trigger'
+      onPress={() => {
+        if (qrSrc) {
+          onExpand({ value, label, title });
+        }
+      }}
+      isDisabled={!qrSrc}
+      aria-label={`Show large QR for ${label}`}
+      data-invite-qr-value={value}
+    >
+      {qrSrc ? (
+        <img src={qrSrc} alt={`QR code for ${label}`} />
+      ) : (
+        <span className='simple-invite-qr-fallback' aria-hidden='true' />
+      )}
+    </UiButton>
+  );
+}
+
+export function InviteQrOverlay({ preview, onClose }: { preview: InviteQrPreview | null; onClose: () => void }) {
+  const qrSrc = useInviteQrSrc(preview?.value ?? "");
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!preview) {
+      return;
+    }
+
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frameId = window.requestAnimationFrame(() => {
+      dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
+    });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("keydown", handleKeyDown);
+      if (previouslyFocused?.isConnected) {
+        previouslyFocused.focus();
+      } else {
+        const replacementTrigger = [...document.querySelectorAll<HTMLElement>('[data-invite-qr-value]')]
+          .find((element) => element.dataset.inviteQrValue === preview.value);
+        replacementTrigger?.focus();
+      }
+    };
+  }, [onClose, preview]);
+
+  if (!preview || !qrSrc) {
+    return null;
+  }
+
+  return (
+    <div
+      ref={dialogRef}
+      className='simple-invite-qr-overlay'
+      role='dialog'
+      aria-modal='true'
+      aria-label={`${preview.title} QR`}
+      onClick={onClose}
+    >
       <UiButton
-        icon={false}
-        className='simple-invite-qr-trigger'
-        onPress={() => {
-          if (qrSrc) {
-            setExpanded(true);
-          }
-        }}
-        isDisabled={!qrSrc}
-        aria-label={`Show large QR for ${label}`}
+        icon='cancel'
+        className='simple-invite-qr-overlay-close'
+        onPress={onClose}
+        aria-label='Close QR preview'
       >
-        {qrSrc ? (
-          <img src={qrSrc} alt={`QR code for ${label}`} />
-        ) : (
-          <span className='simple-invite-qr-fallback' aria-hidden='true' />
-        )}
+        Close
       </UiButton>
-      {expanded && qrSrc ? (
-        <div
-          className='simple-invite-qr-overlay'
-          role='dialog'
-          aria-modal='true'
-          aria-label={`${title} QR`}
-          onClick={() => setExpanded(false)}
-        >
-          <UiButton
-            icon='cancel'
-            className='simple-invite-qr-overlay-close'
-            onPress={() => setExpanded(false)}
-            aria-label='Close QR preview'
-          >
-            Close
-          </UiButton>
-          <div className='simple-invite-qr-overlay-card' onClick={(event) => event.stopPropagation()}>
-            <h3 className='simple-voter-question'>{title}</h3>
-            <img className='simple-invite-qr-overlay-image' src={qrSrc} alt={`Large QR code for ${label}`} />
-            <code className='simple-identity-code'>{value}</code>
-          </div>
-        </div>
-      ) : null}
-    </>
+      <div className='simple-invite-qr-overlay-card' onClick={(event) => event.stopPropagation()}>
+        <h3 className='simple-voter-question'>{preview.title}</h3>
+        <img className='simple-invite-qr-overlay-image' src={qrSrc} alt={`Large QR code for ${preview.label}`} />
+        <code className='simple-identity-code'>{preview.value}</code>
+      </div>
+    </div>
   );
 }
 
@@ -1638,6 +1685,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [privateInviteLinksByHash, setPrivateInviteLinksByHash] = useState<Record<string, string>>({});
   const [privateInviteDraftBallotGroup, setPrivateInviteDraftBallotGroup] = useState("");
   const [privateInviteCreateCopied, setPrivateInviteCreateCopied] = useState(false);
+  const [expandedInviteQr, setExpandedInviteQr] = useState<InviteQrPreview | null>(null);
+  const closeExpandedInviteQr = useCallback(() => setExpandedInviteQr(null), []);
   const privateInviteCreateCopiedTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
@@ -2549,6 +2598,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                     value={state.privateInviteUrl}
                     label='private invite link'
                     title='Private invite link'
+                    onExpand={setExpandedInviteQr}
                   />
                   <UiButton
                     icon={isCopyLabelActive(`private-invite-${state.privateInviteEntry.codeHash}`) ? "check" : "copy"}
@@ -8748,6 +8798,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                            value={publicQuestionnaireInviteUrl}
 	                            label='general invite link'
 	                            title='General invite link'
+	                            onExpand={setExpandedInviteQr}
 	                          />
 	                        </div>
 	                        <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
@@ -8865,6 +8916,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             </div>
           </section>
         ) : null}
+        <InviteQrOverlay preview={expandedInviteQr} onClose={closeExpandedInviteQr} />
       </section>
     </main>
   );
