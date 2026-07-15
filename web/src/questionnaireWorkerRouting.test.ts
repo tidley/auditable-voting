@@ -12,6 +12,7 @@ vi.mock("./sharedNostrPool", () => ({
 
 import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
 import { questionnaireDefinitionEventHash } from "./questionnaireDefinitionReference";
+import { readCachedQuestionnaireDefinitionReference } from "./questionnaireDefinitionCache";
 import { OPTIONA_WORKER_DELEGATION_KIND, type WorkerDelegationCertificate } from "./questionnaireWorkerDelegation";
 import { buildIssueBlindTokensWorkerRouting, mergeBlindRequestRoutingRelays } from "./questionnaireWorkerRouting";
 
@@ -39,6 +40,7 @@ describe("questionnaire worker routing", () => {
 
   beforeEach(() => {
     querySync.mockReset();
+    window.localStorage.clear();
   });
 
   it("finds old worker delegations by organiser author when they lack a questionnaire tag", async () => {
@@ -136,6 +138,10 @@ describe("questionnaire worker routing", () => {
 
     expect(found?.event.id).toBe("valid-definition");
     expect(found?.definitionHash).toBe(questionnaireDefinitionEventHash(validEvent.content));
+    expect(readCachedQuestionnaireDefinitionReference("q_public")).toMatchObject({
+      definitionEventId: "valid-definition",
+      definitionHash: questionnaireDefinitionEventHash(validEvent.content),
+    });
   });
 
   it("does not fall back to public control relays for blind request DMs", () => {

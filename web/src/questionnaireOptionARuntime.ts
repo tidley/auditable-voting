@@ -698,7 +698,8 @@ function reconcileVoterCredentialReadyForDefinition(
     privateInviteBallotGroup: state.privateInviteBallotGroup,
     definition,
   })) {
-    return state;
+    const credentialReady = Boolean(state.blindIssuance && state.blindTokenSecret);
+    return state.credentialReady === credentialReady ? state : { ...state, credentialReady };
   }
   const scopes = buildQuestionnaireCredentialScopes(
     definition,
@@ -712,10 +713,20 @@ function reconcileVoterCredentialReadyForDefinition(
       privateInviteBallotGroup: state.privateInviteBallotGroup,
     }),
   );
-  return {
-    ...state,
-    credentialReady: scopes.every((scope) => Boolean(state.blindIssuances?.[ballotScopeKey(scope)])),
-  };
+  const credentialReady = scopes.every((scope) => {
+    const scopeKey = ballotScopeKey(scope);
+    return Boolean(state.blindIssuances?.[scopeKey] && state.blindTokenSecrets?.[scopeKey]);
+  });
+  return state.credentialReady === credentialReady ? state : { ...state, credentialReady };
+}
+
+function voterHasTokenSecretForIssuance(state: VoterElectionLocalState, issuance: BlindBallotIssuance) {
+  return Boolean(
+    state.blindTokenSecrets?.[ballotScopeKey(issuance.ballotScope)]
+    ?? (state.blindRequest?.requestId === issuance.requestId
+      ? state.blindTokenSecret
+      : null),
+  );
 }
 
 function scopeForQuestion(
@@ -1444,7 +1455,7 @@ export class QuestionnaireOptionAVoterRuntime {
       return false;
     }
 
-    const next: VoterElectionLocalState = {
+    let next: VoterElectionLocalState = {
       ...this.state,
       coordinatorNpub: this.state.coordinatorNpub || snapshot.coordinatorNpub,
       loginVerified: this.state.loginVerified || snapshot.loginVerified,
@@ -1466,7 +1477,7 @@ export class QuestionnaireOptionAVoterRuntime {
         ...(snapshot.blindTokenSecrets ?? {}),
         ...(this.state.blindTokenSecrets ?? {}),
       },
-      credentialReady: this.state.credentialReady || snapshot.credentialReady,
+      credentialReady: false,
       responseNpub: this.state.responseNpub ?? snapshot.responseNpub ?? null,
       draftResponses: this.state.draftResponses.length > 0
         ? this.state.draftResponses
@@ -1484,7 +1495,8 @@ export class QuestionnaireOptionAVoterRuntime {
       },
       lastUpdatedAt: snapshotLooksNewer ? snapshot.lastUpdatedAt : this.state.lastUpdatedAt,
     };
-    if (next.blindIssuance) {
+    next = reconcileVoterCredentialReadyForDefinition(next, readCachedQuestionnaireDefinition(next.electionId));
+    if (next.blindIssuance && voterHasTokenSecretForIssuance(next, next.blindIssuance)) {
       storeBlindIssuance(next.blindIssuance);
       if (next.blindIssuance.definition) {
         cacheQuestionnaireDefinitionForRuntime(next.blindIssuance.definition);
@@ -1492,6 +1504,9 @@ export class QuestionnaireOptionAVoterRuntime {
       void this.ensureBlindIssuanceAck(next.blindIssuance).catch(() => undefined);
     }
     for (const issuance of Object.values(next.blindIssuances ?? {})) {
+      if (!voterHasTokenSecretForIssuance(next, issuance)) {
+        continue;
+      }
       storeBlindIssuance(issuance);
       if (issuance.definition) {
         cacheQuestionnaireDefinitionForRuntime(issuance.definition);
@@ -1566,10 +1581,6 @@ export class QuestionnaireOptionAVoterRuntime {
   }
 
   private applyBlindIssuanceToState(issuance: BlindBallotIssuance, reason: string) {
-    storeBlindIssuance(issuance);
-    if (issuance.definition) {
-      cacheQuestionnaireDefinitionForRuntime(issuance.definition);
-    }
     if (!this.state) {
       return false;
     }
@@ -1577,39 +1588,23 @@ export class QuestionnaireOptionAVoterRuntime {
       type: "BLIND_ISSUANCE_RECEIVED",
       issuance,
     });
-    void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
     if (!received.ok) {
       return false;
     }
-    const definition = issuance.definition ?? readCachedQuestionnaireDefinition(issuance.electionId);
-    let nextState = received.state;
-    if (voterUsesScopedBlindCredentials({
-      invite: nextState.inviteMessage ?? null,
-      privateInviteCredentialsPerVoter: nextState.privateInviteCredentialsPerVoter,
-      privateInviteBallotGroup: nextState.privateInviteBallotGroup,
-      definition,
-    })) {
-      const scopes = buildQuestionnaireCredentialScopes(
-        definition,
-        voterCredentialsPerVoter({
-          invite: nextState.inviteMessage ?? null,
-          privateInviteCredentialsPerVoter: nextState.privateInviteCredentialsPerVoter,
-          definition,
-        }),
-        voterBallotGroup({
-          invite: nextState.inviteMessage ?? null,
-          privateInviteBallotGroup: nextState.privateInviteBallotGroup,
-        }),
-      );
-      nextState = {
-        ...nextState,
-        credentialReady: scopes.every((scope) => Boolean(nextState.blindIssuances?.[ballotScopeKey(scope)])),
-      };
+    if (!voterHasTokenSecretForIssuance(received.state, issuance)) {
+      return false;
     }
+    storeBlindIssuance(issuance);
+    if (issuance.definition) {
+      cacheQuestionnaireDefinitionForRuntime(issuance.definition);
+    }
+    const definition = issuance.definition ?? readCachedQuestionnaireDefinition(issuance.electionId);
+    const nextState = reconcileVoterCredentialReadyForDefinition(received.state, definition);
     this.state = nextState;
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     this.startVoterDmSubscriptions();
     void this.publishVoterStateSelfDm({ reason });
+    void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
     this.notifyStateChanged();
     return true;
   }
@@ -1907,7 +1902,7 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = readyState;
     saveVoterState({ voterNpub: signerNpub, state: readyState });
     this.startVoterDmSubscriptions();
-    if (readyState.blindIssuance) {
+    if (readyState.blindIssuance && voterHasTokenSecretForIssuance(readyState, readyState.blindIssuance)) {
       void this.ensureBlindIssuanceAck(readyState.blindIssuance).catch(() => undefined);
     }
     await this.recoverVoterStateFromSelfDm().catch(() => readyState);
@@ -2027,7 +2022,7 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = readyState;
     saveVoterState({ voterNpub: invitedNpub, state: readyState });
     this.startVoterDmSubscriptions();
-    if (readyState.blindIssuance) {
+    if (readyState.blindIssuance && voterHasTokenSecretForIssuance(readyState, readyState.blindIssuance)) {
       void this.ensureBlindIssuanceAck(readyState.blindIssuance).catch(() => undefined);
     }
     void this.recoverVoterStateFromSelfDm().catch(() => readyState);
@@ -2251,7 +2246,11 @@ export class QuestionnaireOptionAVoterRuntime {
       privateInviteBallotGroup: this.state.privateInviteBallotGroup,
       definition: cachedDefinition,
     });
-    if (this.state.blindIssuance && !usesScopedBlindCredentials) {
+    if (
+      this.state.blindIssuance
+      && this.state.blindTokenSecret
+      && !usesScopedBlindCredentials
+    ) {
       void this.ensureBlindIssuanceAck(this.state.blindIssuance).catch(() => undefined);
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
       void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_already_issued" });
@@ -2270,7 +2269,10 @@ export class QuestionnaireOptionAVoterRuntime {
           privateInviteBallotGroup: this.state.privateInviteBallotGroup,
         }),
       );
-      const allIssued = scopes.every((scope) => Boolean(this.state?.blindIssuances?.[ballotScopeKey(scope)]));
+      const allIssued = scopes.every((scope) => {
+        const scopeKey = ballotScopeKey(scope);
+        return Boolean(this.state?.blindIssuances?.[scopeKey] && this.state.blindTokenSecrets?.[scopeKey]);
+      });
       if (allIssued) {
         this.state = { ...this.state, credentialReady: true };
         saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
@@ -2280,6 +2282,16 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     let request = next.blindRequest;
+    if (request && !next.blindTokenSecret && !usesScopedBlindCredentials) {
+      request = null;
+      next = {
+        ...next,
+        blindRequest: null,
+        blindIssuance: null,
+        credentialReady: false,
+      };
+      this.state = next;
+    }
     const inviteCodeHash = this.bearerInviteCode
       ? await hashQuestionnaireInviteCode(this.bearerInviteCode)
       : "";
@@ -2501,9 +2513,20 @@ export class QuestionnaireOptionAVoterRuntime {
     for (const scope of scopes) {
       const scopeKey = ballotScopeKey(scope);
       const existingIssuance = next.blindIssuances?.[scopeKey] ?? null;
-      if (existingIssuance) {
+      const existingTokenSecret = next.blindTokenSecrets?.[scopeKey] ?? null;
+      if (existingIssuance && existingTokenSecret) {
         void this.ensureBlindIssuanceAck(existingIssuance).catch(() => undefined);
         continue;
+      }
+      if (existingIssuance && !existingTokenSecret) {
+        const blindIssuances = { ...(next.blindIssuances ?? {}) };
+        delete blindIssuances[scopeKey];
+        next = {
+          ...next,
+          blindIssuance: next.blindIssuance?.issuanceId === existingIssuance.issuanceId ? null : next.blindIssuance,
+          blindIssuances,
+          credentialReady: false,
+        };
       }
       let request = next.blindRequests?.[scopeKey] ?? null;
       let tokenSecretEntry = next.blindTokenSecrets?.[scopeKey] ?? null;
@@ -2995,35 +3018,13 @@ export class QuestionnaireOptionAVoterRuntime {
           type: "BLIND_ISSUANCE_RECEIVED",
           issuance,
         });
-        if (received.ok) {
+        if (received.ok && voterHasTokenSecretForIssuance(received.state, issuance)) {
           next = received.state;
           void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
         }
       }
     }
-    if (voterUsesScopedBlindCredentials({
-      invite: next.inviteMessage ?? null,
-      privateInviteCredentialsPerVoter: next.privateInviteCredentialsPerVoter,
-      privateInviteBallotGroup: next.privateInviteBallotGroup,
-      definition: activeDefinition,
-    })) {
-      const scopes = buildQuestionnaireCredentialScopes(
-        activeDefinition,
-        voterCredentialsPerVoter({
-          invite: next.inviteMessage ?? null,
-          privateInviteCredentialsPerVoter: next.privateInviteCredentialsPerVoter,
-          definition: activeDefinition,
-        }),
-        voterBallotGroup({
-          invite: next.inviteMessage ?? null,
-          privateInviteBallotGroup: next.privateInviteBallotGroup,
-        }),
-      );
-      next = {
-        ...next,
-        credentialReady: scopes.every((scope) => Boolean(next.blindIssuances?.[ballotScopeKey(scope)])),
-      };
-    }
+    next = reconcileVoterCredentialReadyForDefinition(next, activeDefinition);
     if (next.submission) {
       const acceptance = readAcceptance(next.submission.submissionId);
       if (acceptance?.accepted) {

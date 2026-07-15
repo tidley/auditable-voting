@@ -28,7 +28,7 @@ import {
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardResponseDetail } from "./QuestionnaireResultsDashboard";
-import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinitionReference } from "./questionnaireDefinitionCache";
 import { buildQuestionnaireDefinitionReference, questionnaireDefinitionEventHash, selectNewestMatchingQuestionnaireDefinition } from "./questionnaireDefinitionReference";
 import { tryWriteClipboard } from "./clipboard";
 import { uploadQuestionnaireResultPack } from "./questionnaireResultPack";
@@ -4165,6 +4165,9 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         relays: workerConfigDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
       })
       : null;
+    if (workerDefinitionReference?.definitionEventId && workerDefinitionReference.definitionHash) {
+      storeCachedQuestionnaireDefinitionReference(workerDefinitionReference);
+    }
     const summaryForWorkerConfig = loadElectionSummary(electionId);
     let blindSigningPrivateKeyForWorker = delegatedWorkerCapabilities.includes("issue_blind_tokens")
       ? coordinatorState?.blindSigningPrivateKey ?? null

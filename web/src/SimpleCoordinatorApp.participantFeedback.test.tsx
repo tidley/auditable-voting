@@ -11,18 +11,59 @@ vi.mock("qrcode", () => ({
 }));
 
 import {
+  hasAcknowledgedBlindIssuanceForNpub,
   InviteQrButton,
   InviteQrOverlay,
   ParticipantBallotGroupSelect,
   preserveParticipantBallotGroupCellWhileFocused,
 } from "./SimpleCoordinatorApp";
+import { storeBlindIssuanceAckRecord } from "./questionnaireOptionAStorage";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 describe("organiser participant feedback", () => {
+  it("waits for every proxy credential acknowledgement before showing ballot received", () => {
+    const electionId = "q_proxy_ack";
+    const invitedNpub = "npub1proxyack";
+    const pendingRequests = Object.fromEntries([1, 2].map((credentialIndex) => [
+      `request-${credentialIndex}`,
+      {
+        type: "blind_ballot_request" as const,
+        schemaVersion: 1 as const,
+        electionId,
+        requestId: `request-${credentialIndex}`,
+        invitedNpub,
+        blindedMessage: `blinded-${credentialIndex}`,
+        blindSigningKeyId: "blind-key",
+        clientNonce: `nonce-${credentialIndex}`,
+        createdAt: "2026-07-15T21:00:00.000Z",
+        ballotScope: { credentialIndex },
+      },
+    ]));
+    storeBlindIssuanceAckRecord({
+      requestId: "request-1",
+      electionId,
+      invitedNpub,
+      issuanceId: "issuance-1",
+      ackedAt: "2026-07-15T21:01:00.000Z",
+    });
+
+    expect(hasAcknowledgedBlindIssuanceForNpub({}, pendingRequests, invitedNpub, electionId)).toBe(false);
+
+    storeBlindIssuanceAckRecord({
+      requestId: "request-2",
+      electionId,
+      invitedNpub,
+      issuanceId: "issuance-2",
+      ackedAt: "2026-07-15T21:02:00.000Z",
+    });
+    expect(hasAcknowledgedBlindIssuanceForNpub({}, pendingRequests, invitedNpub, electionId)).toBe(true);
+  });
+
   it("keeps only the voter group cell stable while its selector is focused", () => {
     const existingGroupCell = () => "existing group";
     const replacementGroupCell = () => "replacement group";

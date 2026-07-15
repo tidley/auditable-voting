@@ -1,7 +1,8 @@
-import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import type { QuestionnaireDefinition, QuestionnaireDefinitionReference } from "./questionnaireProtocol";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 
 const QUESTIONNAIRE_DEFINITION_CACHE_KEY = "questionnaire:definitions:v1";
+const QUESTIONNAIRE_DEFINITION_REFERENCE_CACHE_KEY = "questionnaire:definition-references:v1";
 
 function storageKey() {
   return buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DEFINITION_CACHE_KEY);
@@ -58,4 +59,42 @@ export function readCachedQuestionnaireDefinition(questionnaireId: string) {
     return null;
   }
   return readCache()[id] ?? null;
+}
+
+function referenceStorageKey() {
+  return buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DEFINITION_REFERENCE_CACHE_KEY);
+}
+
+export function storeCachedQuestionnaireDefinitionReference(reference: QuestionnaireDefinitionReference) {
+  const questionnaireId = reference.questionnaireId.trim();
+  const definitionEventId = reference.definitionEventId?.trim() ?? "";
+  const definitionHash = reference.definitionHash?.trim() ?? "";
+  if (!questionnaireId || !definitionEventId || !definitionHash || typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(referenceStorageKey());
+    const cache = raw ? JSON.parse(raw) as Record<string, QuestionnaireDefinitionReference> : {};
+    cache[questionnaireId] = { ...reference, questionnaireId, definitionEventId, definitionHash };
+    window.localStorage.setItem(referenceStorageKey(), JSON.stringify(cache));
+    return cache[questionnaireId];
+  } catch {
+    return null;
+  }
+}
+
+export function readCachedQuestionnaireDefinitionReference(questionnaireId: string) {
+  const id = questionnaireId.trim();
+  if (!id || typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(referenceStorageKey());
+    const reference = raw
+      ? (JSON.parse(raw) as Record<string, QuestionnaireDefinitionReference>)[id] ?? null
+      : null;
+    return reference?.definitionEventId?.trim() && reference.definitionHash?.trim() ? reference : null;
+  } catch {
+    return null;
+  }
 }

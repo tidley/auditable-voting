@@ -71,7 +71,7 @@ vi.mock("./questionnaireOptionABlindDm", async () => {
 
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 import { loadCoordinatorState, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
-import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { readCachedQuestionnaireDefinitionReference, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
@@ -1425,6 +1425,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(configInput?.snapshot.definitionReference?.definitionEventId).toBe(publishedDefinitionEvent.id);
     expect(configInput?.snapshot.definitionReference?.definitionHash).toBe(questionnaireDefinitionEventHash(publishedDefinitionEvent.content));
     expect(configInput?.snapshot.definitionReference?.definitionHash).not.toBe(questionnaireDefinitionHash(staleCachedDefinition));
+    expect(readCachedQuestionnaireDefinitionReference(questionnaireId)).toMatchObject({
+      definitionEventId: publishedDefinitionEvent.id,
+      definitionHash: questionnaireDefinitionEventHash(publishedDefinitionEvent.content),
+    });
 
     vi.mocked(publishOptionAWorkerElectionConfigDm).mockResolvedValueOnce({
       eventId: "failed-worker-config-dm",

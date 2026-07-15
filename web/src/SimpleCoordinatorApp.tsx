@@ -91,7 +91,7 @@ import {
   hashQuestionnaireInviteCode,
   hashQuestionnairePrivateInviteClaim,
 } from "./questionnaireInviteCode";
-import { readCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { readCachedQuestionnaireDefinition, readCachedQuestionnaireDefinitionReference } from "./questionnaireDefinitionCache";
 import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
 import {
   primeNip65RelayHints,
@@ -161,7 +161,7 @@ import {
   publishOptionAWorkerElectionConfigDm,
   type WorkerElectionConfigSnapshot,
 } from "./questionnaireOptionABlindDm";
-import { fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
+import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
 import { loadStoredWorkerDelegation, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
 import { tryWriteClipboard } from "./clipboard";
 import {
@@ -655,7 +655,7 @@ function ballotReceivedStatusIndicator(): StatusIndicatorView {
   };
 }
 
-function hasAcknowledgedBlindIssuanceForNpub(
+export function hasAcknowledgedBlindIssuanceForNpub(
   issuedBlindResponses: Record<string, BlindBallotIssuance> | undefined,
   pendingBlindRequests: Record<string, BlindBallotRequest> | undefined,
   invitedNpub: string,
@@ -666,30 +666,27 @@ function hasAcknowledgedBlindIssuanceForNpub(
   if (!normalizedNpub || !normalizedElectionId) {
     return false;
   }
-  const issuedAck = Object.values(issuedBlindResponses ?? {}).some((issuance) => {
-    if (issuance.invitedNpub !== normalizedNpub || issuance.electionId !== normalizedElectionId) {
-      return false;
-    }
-    const ack = readBlindIssuanceAckRecord(issuance.requestId);
-    return Boolean(
-      ack
-      && ack.electionId === issuance.electionId
-      && ack.invitedNpub === issuance.invitedNpub
-      && ack.issuanceId === issuance.issuanceId,
-    );
-  });
-  if (issuedAck) {
-    return true;
+  const issuedByRequestId = new Map(
+    Object.values(issuedBlindResponses ?? {})
+      .filter((issuance) => issuance.invitedNpub === normalizedNpub && issuance.electionId === normalizedElectionId)
+      .map((issuance) => [issuance.requestId, issuance]),
+  );
+  const requests = Object.values(pendingBlindRequests ?? {})
+    .filter((request) => request.invitedNpub === normalizedNpub && request.electionId === normalizedElectionId);
+  if (requests.length === 0) {
+    return [...issuedByRequestId.values()].some((issuance) => {
+      const ack = readBlindIssuanceAckRecord(issuance.requestId);
+      return Boolean(ack && ack.issuanceId === issuance.issuanceId);
+    });
   }
-  return Object.values(pendingBlindRequests ?? {}).some((request) => {
-    if (request.invitedNpub !== normalizedNpub || request.electionId !== normalizedElectionId) {
-      return false;
-    }
+  return requests.every((request) => {
     const ack = readBlindIssuanceAckRecord(request.requestId);
+    const issuance = issuedByRequestId.get(request.requestId);
     return Boolean(
       ack
       && ack.electionId === request.electionId
-      && ack.invitedNpub === request.invitedNpub,
+      && ack.invitedNpub === request.invitedNpub
+      && (!issuance || ack.issuanceId === issuance.issuanceId)
     );
   });
 }
@@ -5682,6 +5679,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }).length;
     const expectedInviteeCount = Math.max(0, optionAKnownVoterCount, whitelistNpubs.length) + unclaimedPrivateInviteCount;
     const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
+    const cachedDefinitionReference = readCachedQuestionnaireDefinitionReference(electionId);
     return {
       workerNpub: delegation.workerNpub,
       relays: delegation.controlRelays,
@@ -5702,7 +5700,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           ? coordinatorState.blindSigningPrivateKey ?? null
           : null,
         definitionReference: cachedDefinition
-          ? buildQuestionnaireDefinitionReference({ definition: cachedDefinition })
+          ? buildQuestionnaireDefinitionReference({
+            definition: cachedDefinition,
+            definitionEventId: cachedDefinitionReference?.definitionEventId,
+            definitionHash: cachedDefinitionReference?.definitionHash,
+            relays: cachedDefinitionReference?.relays,
+          })
           : null,
         sentAt: new Date().toISOString(),
       },
@@ -5713,6 +5716,21 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const config = buildActiveWorkerElectionConfigSnapshot(questionnaireId);
     if (!config) {
       return false;
+    }
+    if (config.snapshot.definitionReference && !config.snapshot.definitionReference.definitionEventId) {
+      const publishedDefinition = await fetchLatestQuestionnaireDefinitionByCoordinator({
+        questionnaireId: config.snapshot.electionId,
+        coordinatorNpub: config.snapshot.coordinatorNpub,
+        relays: config.snapshot.definitionReference.relays,
+      }).catch(() => null);
+      if (publishedDefinition) {
+        config.snapshot.definitionReference = buildQuestionnaireDefinitionReference({
+          definition: publishedDefinition.definition,
+          definitionEventId: publishedDefinition.event.id,
+          definitionHash: publishedDefinition.definitionHash,
+          relays: publishedDefinition.definition.questionnaireRelays ?? config.snapshot.definitionReference.relays,
+        });
+      }
     }
     const result = await publishOptionAWorkerElectionConfigDm({
       signer: createSignerService(),

@@ -1606,6 +1606,24 @@ describe("questionnaireOptionARuntime", () => {
     expect(vi.mocked(subscribeOptionABlindIssuanceDmsWithNsec).mock.invocationCallOrder[0]).toBeLessThan(blindRequestPublishOrder);
     expect(subscribeOptionABlindRequestAckDms).not.toHaveBeenCalled();
     expect(subscribeOptionABlindIssuanceDms).not.toHaveBeenCalled();
+
+    const onIssuance = vi.mocked(subscribeOptionABlindIssuanceDmsWithNsec).mock.calls.at(-1)?.[0].onIssuance;
+    vi.mocked(publishOptionABlindIssuanceAckDm).mockClear();
+    onIssuance?.({
+      type: "blind_ballot_response",
+      schemaVersion: 1,
+      electionId,
+      requestId: "unknown-request",
+      issuanceId: "unknown-issuance",
+      invitedNpub: voterNpub,
+      blindSigningKeyId: voter.getSnapshot()?.blindRequest?.blindSigningKeyId ?? "unknown-key",
+      blindSignature: "unknown-signature",
+      issuedAt: new Date().toISOString(),
+    });
+    await Promise.resolve();
+
+    expect(publishOptionABlindIssuanceAckDm).not.toHaveBeenCalled();
+    expect(readBlindIssuance("unknown-request")).toBeNull();
   });
 
   it("prevents duplicate issuance and duplicate accepted submissions from inflating unique count", async () => {

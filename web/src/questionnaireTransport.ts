@@ -25,7 +25,8 @@ import type {
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
-import { questionnaireDefinitionEventHash } from "./questionnaireDefinitionReference";
+import { buildQuestionnaireDefinitionReference, questionnaireDefinitionEventHash } from "./questionnaireDefinitionReference";
+import { storeCachedQuestionnaireDefinitionReference } from "./questionnaireDefinitionCache";
 import { verifyQuestionnaireBlindSignature } from "./questionnaireBlindSignature";
 import { buildQuestionnaireBlindTokenSignedMessage } from "./questionnaireBlindToken";
 import {
@@ -191,9 +192,17 @@ export async function fetchLatestQuestionnaireDefinitionByCoordinator(input: {
       Number(right.event.created_at ?? right.definition.createdAt ?? 0)
       - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
     ))[0] ?? null;
-  return latest
-    ? { ...latest, definitionHash: questionnaireDefinitionEventHash(latest.event.content) }
-    : null;
+  if (!latest) {
+    return null;
+  }
+  const definitionHash = questionnaireDefinitionEventHash(latest.event.content);
+  storeCachedQuestionnaireDefinitionReference(buildQuestionnaireDefinitionReference({
+    definition: latest.definition,
+    definitionEventId: latest.event.id,
+    definitionHash,
+    relays: latest.definition.questionnaireRelays ?? input.relays,
+  }));
+  return { ...latest, definitionHash };
 }
 
 export async function fetchQuestionnaireParticipantCount(input: {
