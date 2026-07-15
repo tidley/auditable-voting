@@ -9,6 +9,7 @@ import {
 } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "../src/nostrPublishQueue";
 import { buildQuestionnaireBlindTokenSignedMessage, deriveQuestionnaireTokenNullifier } from "../src/questionnaireBlindToken";
+import { questionnaireDefinitionEventHash } from "../src/questionnaireDefinitionReference";
 import {
   blindQuestionnaireToken,
   finalizeQuestionnaireBlindSignature,
@@ -501,7 +502,8 @@ async function main() {
       privateKey: blindSigningPrivateKey,
       blindedMessage: request.blindedMessage,
     }),
-    definition,
+    definitionHash: questionnaireDefinitionEventHash(publishedDefinition.event.content),
+    definitionEventId: publishedDefinition.eventId,
     issuedAt: new Date().toISOString(),
   };
   const publishedBlindIssuance = await publishOptionABlindIssuanceDm({
@@ -528,7 +530,8 @@ async function main() {
     timeoutMs,
     intervalMs,
   );
-  assert.equal(visibleIssuance?.definition?.questionnaireId, questionnaireId);
+  assert.equal(visibleIssuance?.definitionHash, issuance.definitionHash);
+  assert.equal(visibleIssuance?.definitionEventId, publishedDefinition.eventId);
 
   const credential = await finalizeQuestionnaireBlindSignature({
     publicKey: blindSigningPublicKey,

@@ -132,6 +132,8 @@ Free-text responses are encrypted automatically when the organiser requires it.
 
 When the button is ready, click **Submit**.
 
+If an earlier required question was missed, **Submit** returns to the earliest incomplete required question. Unanswered optional questions are skipped.
+
 If it is not ready, the button explains why. For example:
 
 - **Please answer all required questions**

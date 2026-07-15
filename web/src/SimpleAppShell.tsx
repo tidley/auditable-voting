@@ -44,6 +44,7 @@ const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string; icon: string 
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
 const PUBLIC_LINK_FRESH_VOTER_PARAM = "fresh_voter";
+const PUBLIC_LINK_FRESH_VOTER_STATE = "auditableVotingFreshVoterCreated";
 
 function voterTabIconName(icon: string): UiIconName {
   if (icon === "messages") {
@@ -113,9 +114,11 @@ function shouldCreateFreshVoterForPublicLink() {
     return false;
   }
   const params = new URLSearchParams(window.location.search);
+  const historyState = window.history.state as Record<string, unknown> | null;
   return Boolean(
     hasVoterInviteContextInUrl()
     && params.get(PUBLIC_LINK_FRESH_VOTER_PARAM) !== "1"
+    && historyState?.[PUBLIC_LINK_FRESH_VOTER_STATE] !== true
     && !params.get("nsec")?.trim()
   );
 }
@@ -125,8 +128,12 @@ function markFreshVoterCreatedForPublicLink() {
     return;
   }
   const url = new URL(window.location.href);
-  url.searchParams.set(PUBLIC_LINK_FRESH_VOTER_PARAM, "1");
-  window.history.replaceState({}, "", url.toString());
+  url.searchParams.delete(PUBLIC_LINK_FRESH_VOTER_PARAM);
+  const historyState = window.history.state;
+  window.history.replaceState({
+    ...(historyState && typeof historyState === "object" ? historyState : {}),
+    [PUBLIC_LINK_FRESH_VOTER_STATE]: true,
+  }, "", url.toString());
 }
 
 function writeRoleToUrl(role: SimpleRole) {
@@ -137,7 +144,7 @@ function writeRoleToUrl(role: SimpleRole) {
   const url = new URL(window.location.href);
   url.searchParams.set("role", role);
   url.searchParams.delete("login");
-  window.history.replaceState({}, "", url.toString());
+  window.history.replaceState(window.history.state ?? {}, "", url.toString());
 }
 
 function clearVoterInviteUrlContext() {
@@ -333,13 +340,21 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   }, [role]);
 
   useEffect(() => {
+    if (role === "voter" && new URLSearchParams(window.location.search).get(PUBLIC_LINK_FRESH_VOTER_PARAM) === "1") {
+      markFreshVoterCreatedForPublicLink();
+    }
+  }, [role]);
+
+  useEffect(() => {
     if (role !== "voter" || publicLinkFreshVoterDispatchedRef.current || !shouldCreateFreshVoterForPublicLink()) {
       return;
     }
     publicLinkFreshVoterDispatchedRef.current = true;
-    markFreshVoterCreatedForPublicLink();
     window.dispatchEvent(new CustomEvent("auditable-voting:voter-new", {
-      detail: { preserveInviteContext: true },
+      detail: {
+        preserveInviteContext: true,
+        onPersisted: markFreshVoterCreatedForPublicLink,
+      },
     }));
   }, [role]);
 

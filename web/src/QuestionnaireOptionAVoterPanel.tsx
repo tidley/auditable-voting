@@ -838,6 +838,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [manualResendClockMs, setManualResendClockMs] = useState(() => Date.now());
   const [voterMenuActionsMount, setVoterMenuActionsMount] = useState<HTMLElement | null>(null);
   const [privateInviteBootstrapRetryNonce, setPrivateInviteBootstrapRetryNonce] = useState(0);
+  const activeQuestionCardRef = useRef<HTMLElement | null>(null);
   const { isCopied: isReceiptCopyActive, showCopied: showReceiptCopied } = useTransientCopiedLabel();
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const autoRequestInFlightForRef = useRef<Record<string, true>>({});
@@ -3658,6 +3659,28 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ))
       : questions.every(questionHasResponse)
   );
+  const firstMissingRequiredQuestionIndex = questions.findIndex((question) => {
+    if (!question.required && !(question.type === "rank" && (question.minimumRanked ?? 0) > 0)) {
+      return false;
+    }
+    const indexes = showProxyBallotsTogether ? credentialIndexes : [activeCredentialIndex];
+    return indexes.some((credentialIndex) => (
+      !(perQuestionMode && submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId, credentialIndex)))
+      && !questionHasResponseForCredential(question, credentialIndex)
+    ));
+  });
+  const returnToFirstMissingRequiredQuestion = () => {
+    if (firstMissingRequiredQuestionIndex < 0) {
+      return false;
+    }
+    setActiveQuestionIndex(firstMissingRequiredQuestionIndex);
+    setStatus("Answer this required question before submitting.");
+    window.requestAnimationFrame(() => {
+      activeQuestionCardRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      activeQuestionCardRef.current?.focus({ preventScroll: true });
+    });
+    return true;
+  };
   const requiredQuestionsAnsweredForAction = perQuestionMode
     ? showProxyBallotsTogether
       ? proxyActiveQuestionGroupHasRequiredResponses
@@ -3713,8 +3736,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && hasAdjacentQuestion
     && nextQuestionIndex < 0;
   const showSubmitFromQuestionNav = isLastQuestionInQuestionNav
-    && requiredQuestionsAnswered
-    && questionnaireHasAnyResponse
     && !allQuestionResponsesSubmitted;
   const showViewResultsFromQuestionNav = isLastQuestionInQuestionNav && canViewResults;
   const canSubmitFromQuestionNav = showSubmitFromQuestionNav
@@ -4623,7 +4644,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             const ballotCredentialIndexes = showProxyBallotsTogether ? credentialIndexes : [activeCredentialIndex];
             const questionRequirement = question.required ? "Required" : "Optional";
             return (
-            <article key={question.questionId} className={`simple-questionnaire-voter-card${questionSubmitted ? " is-response-locked" : ""}`}>
+            <article
+              key={question.questionId}
+              ref={activeQuestionCardRef}
+              tabIndex={-1}
+              className={`simple-questionnaire-voter-card${questionSubmitted ? " is-response-locked" : ""}`}
+            >
               <div className='simple-questionnaire-voter-heading'>
                 <span className='simple-questionnaire-question-badge' aria-hidden='true'>Q{index + 1}</span>
                 <div className='simple-questionnaire-voter-heading-copy'>
@@ -4699,13 +4725,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 icon={showViewResultsFromQuestionNav ? "view" : showSubmitFromQuestionNav ? submitInFlight ? "spinner" : "send" : "chevronRight"}
                 iconPosition={showViewResultsFromQuestionNav || showSubmitFromQuestionNav ? "start" : "end"}
                 className={`simple-voter-secondary simple-questionnaire-stepper-button simple-questionnaire-stepper-button-next${questionNavForwardHighlighted ? " is-ready" : ""}${showSubmitFromQuestionNav || showViewResultsFromQuestionNav ? " is-submit" : ""}`}
-                isDisabled={showViewResultsFromQuestionNav ? false : showSubmitFromQuestionNav ? submitInFlight || !canSubmitFromQuestionNav : nextQuestionIndex < 0}
+                isDisabled={showViewResultsFromQuestionNav ? false : showSubmitFromQuestionNav ? submitInFlight || (!canSubmitFromQuestionNav && firstMissingRequiredQuestionIndex < 0) : nextQuestionIndex < 0}
                 onPress={() => {
                   if (showViewResultsFromQuestionNav) {
                     viewResults();
                     return;
                   }
                   if (showSubmitFromQuestionNav) {
+                    if (returnToFirstMissingRequiredQuestion()) {
+                      return;
+                    }
                     if (!canSubmitFromQuestionNav) {
                       return;
                     }

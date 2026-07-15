@@ -2395,7 +2395,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(within(receiptRegion).getByRole("img", { name: "Anonymous voting identity" })).toBeTruthy();
   });
 
-  it("advances answered grouped ballot questions before showing the final required gate", async () => {
+  it("returns from Submit to the earliest missed required question", async () => {
     const localVoterNpub = "npub1" + "g".repeat(58);
     const definition = {
       schemaVersion: 1 as const,
@@ -2417,14 +2417,21 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         {
           questionId: "q1",
           type: "yes_no" as const,
-          prompt: "First grouped question",
-          required: true,
+          prompt: "Optional grouped question",
+          required: false,
           ballotSlot: { slotId: "shared-slot", slotIndex: 1, version: 1 },
         },
         {
           questionId: "q2",
           type: "yes_no" as const,
-          prompt: "Second grouped question",
+          prompt: "First required grouped question",
+          required: true,
+          ballotSlot: { slotId: "shared-slot", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q3",
+          type: "yes_no" as const,
+          prompt: "Second required grouped question",
           required: true,
           ballotSlot: { slotId: "shared-slot", slotIndex: 1, version: 1 },
         },
@@ -2477,21 +2484,27 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const { container } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_grouped_draft_next"]} localVoterNpub={localVoterNpub} />);
     const nav = () => within(container.querySelector(".simple-questionnaire-question-nav") as HTMLElement);
 
-    expect(await screen.findByText("Question 1 of 2")).toBeTruthy();
+    await userEvent.click(await screen.findByRole("button", { name: "Start" }));
+    expect(await screen.findByText("Question 1 of 3")).toBeTruthy();
     expect(nav().getByRole("button", { name: /Next/ }).className).not.toContain("is-ready");
     await userEvent.click(nav().getByRole("button", { name: /Next/ }));
 
-    expect(await screen.findByText("Question 2 of 2")).toBeTruthy();
+    expect(await screen.findByText("Question 2 of 3")).toBeTruthy();
+    await userEvent.click(nav().getByRole("button", { name: /Next/ }));
+    expect(await screen.findByText("Question 3 of 3")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "No" }));
-    expect(nav().queryByRole("button", { name: /Submit/ })).toBeNull();
+    const blockedSubmitButton = nav().getByRole("button", { name: /Submit/ }) as HTMLButtonElement;
+    expect(blockedSubmitButton.disabled).toBe(false);
+    await userEvent.click(blockedSubmitButton);
+    expect(await screen.findByText("Question 2 of 3")).toBeTruthy();
+    expect(screen.getByText("First required grouped question")).toBeTruthy();
+    expect(screen.getByText("Answer this required question before submitting.")).toBeTruthy();
     expect(container.querySelector(".simple-optiona-voter-controls")).toBeNull();
 
-    await userEvent.click(nav().getByRole("button", { name: /Previous/ }));
-    expect(await screen.findByText("Question 1 of 2")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Yes" }));
     expect(nav().getByRole("button", { name: /Next/ }).className).toContain("is-ready");
     await userEvent.click(nav().getByRole("button", { name: /Next/ }));
-    expect(await screen.findByText("Question 2 of 2")).toBeTruthy();
+    expect(await screen.findByText("Question 3 of 3")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "No" }));
     const submitButton = nav().getByRole("button", { name: /Submit/ }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(false);

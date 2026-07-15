@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("./SimpleUiApp", () => ({
@@ -166,22 +166,52 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.getByText("pending")).toBeTruthy();
   });
 
-  it("creates a fresh voter identity once for a direct public questionnaire link", async () => {
+  it("creates a fresh voter identity once and preserves it across refresh", async () => {
     const newIdentityEvents: Array<{ preserveInviteContext?: boolean }> = [];
     const handleNewIdentity = (event: Event) => {
-      newIdentityEvents.push((event as CustomEvent<{ preserveInviteContext?: boolean }>).detail ?? {});
+      const detail = (event as CustomEvent<{
+        preserveInviteContext?: boolean;
+        onPersisted?: () => void;
+      }>).detail ?? {};
+      newIdentityEvents.push({ preserveInviteContext: detail.preserveInviteContext });
+      detail.onPersisted?.();
     };
     window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
     window.history.pushState(null, "", "/?role=voter&q=q_public_link&request_ballot=1");
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     try {
-      render(<SimpleAppShell />);
+      const firstRender = render(<SimpleAppShell />);
 
       await waitFor(() => {
         expect(newIdentityEvents).toEqual([{ preserveInviteContext: true }]);
       });
-      expect(new URLSearchParams(window.location.search).get("fresh_voter")).toBe("1");
+      expect(new URLSearchParams(window.location.search).get("fresh_voter")).toBeNull();
+      expect(window.history.state?.auditableVotingFreshVoterCreated).toBe(true);
+
+      firstRender.unmount();
+      render(<SimpleAppShell />);
+      await act(async () => undefined);
+      expect(newIdentityEvents).toEqual([{ preserveInviteContext: true }]);
+    } finally {
+      window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
+    }
+  });
+
+  it("removes a legacy fresh-voter marker without replacing the identity again", async () => {
+    const newIdentityEvents: Event[] = [];
+    const handleNewIdentity = (event: Event) => newIdentityEvents.push(event);
+    window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
+    window.history.pushState(null, "", "/?role=voter&q=q_public_link&request_ballot=1&fresh_voter=1");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    try {
+      render(<SimpleAppShell />);
+      await waitFor(() => {
+        expect(new URLSearchParams(window.location.search).get("fresh_voter")).toBeNull();
+      });
+      expect(window.history.state?.auditableVotingFreshVoterCreated).toBe(true);
+      expect(newIdentityEvents).toEqual([]);
     } finally {
       window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
     }
