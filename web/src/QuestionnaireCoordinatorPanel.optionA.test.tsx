@@ -1262,7 +1262,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     })?.blindSigningPrivateKey?.keyId).toBe(publishedBlindKey.keyId);
   });
 
-  it("resends worker config for the active delegation instead of minting a new delegation", async () => {
+  it("resends worker config for the active delegation without waiting on another relay read", async () => {
     const coordinatorSecret = generateSecretKey();
     const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
     const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
@@ -1378,7 +1378,14 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm configuration" }));
+    const confirmButton = await screen.findByRole("button", { name: "Confirm configuration" });
+    await waitFor(() => {
+      expect(sharedNostrPoolMocks.querySync).toHaveBeenCalled();
+      expect(screen.getByText("Ended: Proxy config resend")).toBeTruthy();
+    });
+    sharedNostrPoolMocks.querySync.mockClear();
+    sharedNostrPoolMocks.querySync.mockImplementation(() => new Promise(() => undefined));
+    fireEvent.click(confirmButton);
 
     await waitFor(() => {
       expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledWith(expect.objectContaining({
@@ -1391,6 +1398,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       }));
     });
     const configInput = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0];
+    expect(sharedNostrPoolMocks.querySync).not.toHaveBeenCalled();
     expect(configInput?.snapshot.expectedInviteeCount).toBeUndefined();
     expect(configInput?.snapshot.definitionReference?.definitionEventId).toBe(publishedDefinitionEvent.id);
     expect(configInput?.snapshot.definitionReference?.definitionHash).toBe(questionnaireDefinitionEventHash(publishedDefinitionEvent.content));

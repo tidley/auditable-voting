@@ -1493,6 +1493,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }, [delegationMode, isProxyBuildPage]);
   const [latestDefinition, setLatestDefinition] = useState<QuestionnaireDefinition | null>(null);
+  const latestDefinitionEventRef = useRef<NostrEvent | null>(null);
   const [latestState, setLatestState] = useState<QuestionnaireStateValue | null>(null);
   const [latestStateEvent, setLatestStateEvent] = useState<QuestionnaireStateEvent | null>(null);
   const [latestStateCreatedAt, setLatestStateCreatedAt] = useState<number | null>(null);
@@ -1568,6 +1569,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   });
   const resetQuestionnaireReadState = useCallback(() => {
     setLatestDefinition(null);
+    latestDefinitionEventRef.current = null;
     setLatestState(null);
     setLatestStateEvent(null);
     setLatestStateCreatedAt(null);
@@ -1941,6 +1943,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       );
     });
 
+    const latestDefinitionEvent = [...definitionEvents]
+      .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
     const definition = selectLatestQuestionnaireDefinition(definitionEvents);
     const state = selectLatestQuestionnaireState(stateEvents);
     const resultSummary = selectLatestQuestionnaireResultSummary(resultEvents);
@@ -1967,6 +1971,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       latestState: state,
     });
     setLatestDefinition(definition);
+    latestDefinitionEventRef.current = definition ? latestDefinitionEvent : null;
     setLatestStateEvent(state);
     setLatestStateCreatedAt(state?.createdAt ?? null);
     setLatestState(effectiveState);
@@ -4123,12 +4128,25 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         electionId,
       })
       : null;
+    setStatus("Preparing audit proxy configuration...");
     const justPublishedDefinition = options?.definitionOverride?.questionnaireId === electionId
       ? options.definitionOverride
       : null;
+    const loadedDefinitionEvent = latestDefinitionEventRef.current;
+    const loadedDefinition = loadedDefinitionEvent ? parseQuestionnaireDefinitionEvent(loadedDefinitionEvent) : null;
+    const reusablePublishedDefinitionEntry = canReuseActiveDelegation
+      && loadedDefinitionEvent
+      && loadedDefinition?.questionnaireId === electionId
+      && definitionBelongsToCoordinator(loadedDefinition, coordinatorNpubTrimmed)
+      ? {
+        event: loadedDefinitionEvent,
+        definition: loadedDefinition,
+        definitionHash: questionnaireDefinitionEventHash(loadedDefinitionEvent.content),
+      }
+      : null;
     const publishedDefinitionEntry = justPublishedDefinition
       ? null
-      : await fetchLatestQuestionnaireDefinitionByCoordinator({
+      : reusablePublishedDefinitionEntry ?? await fetchLatestQuestionnaireDefinitionByCoordinator({
         questionnaireId: electionId,
         coordinatorNpub: coordinatorNpubTrimmed,
         relays: questionnaireRelayPublishHints,

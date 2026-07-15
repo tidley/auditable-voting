@@ -1467,7 +1467,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
-    if (!localVoterNpub) {
+    if (!localVoterNpub || !props.localVoterNsec?.trim()) {
       return;
     }
     const targetElectionId = electionId.trim() || inviteContext.electionId?.trim();
@@ -1581,6 +1581,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     })();
     return () => {
       cancelled = true;
+      delete bearerInviteBootstrapForRef.current[key];
       if (retryTimeoutId !== null) {
         window.clearTimeout(retryTimeoutId);
       }
@@ -1592,6 +1593,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     inviteContext.coordinatorNpub,
     privateInviteBootstrapRetryNonce,
     props.localVoterNpub,
+    props.localVoterNsec,
     props.autoSignerLogin,
     electionId,
     latestAnnouncedQuestionnaireId,

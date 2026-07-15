@@ -10,7 +10,12 @@ vi.mock("qrcode", () => ({
   },
 }));
 
-import { InviteQrButton, InviteQrOverlay, ParticipantBallotGroupSelect } from "./SimpleCoordinatorApp";
+import {
+  InviteQrButton,
+  InviteQrOverlay,
+  ParticipantBallotGroupSelect,
+  preserveParticipantBallotGroupCellWhileFocused,
+} from "./SimpleCoordinatorApp";
 
 afterEach(() => {
   cleanup();
@@ -18,6 +23,34 @@ afterEach(() => {
 });
 
 describe("organiser participant feedback", () => {
+  it("keeps only the voter group cell stable while its selector is focused", () => {
+    const existingGroupCell = () => "existing group";
+    const replacementGroupCell = () => "replacement group";
+    const existingActionCell = () => "existing action";
+    const replacementActionCell = () => "replacement action";
+    const previousColumns = [
+      { id: "ballotGroup", cell: existingGroupCell },
+      { id: "actions", cell: existingActionCell },
+    ];
+    const refreshedColumns = [
+      { id: "ballotGroup", cell: replacementGroupCell },
+      { id: "actions", cell: replacementActionCell },
+    ];
+
+    const focusedColumns = preserveParticipantBallotGroupCellWhileFocused(
+      refreshedColumns,
+      previousColumns,
+      "participant-group",
+    );
+    expect(focusedColumns.find((column) => column.id === "ballotGroup")?.cell).toBe(existingGroupCell);
+    expect(focusedColumns.find((column) => column.id === "actions")?.cell).toBe(replacementActionCell);
+    expect(preserveParticipantBallotGroupCellWhileFocused(
+      refreshedColumns,
+      previousColumns,
+      null,
+    )).toBe(refreshedColumns);
+  });
+
   it("keeps an enlarged invite QR open when its table cell remounts", async () => {
     function Harness() {
       const [cellKey, setCellKey] = useState(0);

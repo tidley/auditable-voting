@@ -380,6 +380,23 @@ export function ParticipantBallotGroupSelect({
   );
 }
 
+export function preserveParticipantBallotGroupCellWhileFocused<T>(
+  nextColumns: ColumnDef<T>[],
+  previousColumns: ColumnDef<T>[] | null,
+  focusedGroupId: string | null,
+) {
+  if (!focusedGroupId || !previousColumns) {
+    return nextColumns;
+  }
+  const previousCell = previousColumns.find((column) => column.id === "ballotGroup")?.cell;
+  if (!previousCell) {
+    return nextColumns;
+  }
+  return nextColumns.map((column) => (
+    column.id === "ballotGroup" ? { ...column, cell: previousCell } : column
+  ));
+}
+
 function scheduleAfterNextPaint(callback: () => void) {
   if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
     window.requestAnimationFrame(() => callback());
@@ -1696,7 +1713,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [coordinatorParticipantResponseDetails, setCoordinatorParticipantResponseDetails] = useState<QuestionnaireResultsDashboardResponseDetail[]>([]);
   const participantNoteDraftsRef = useRef<Record<string, string>>({});
   const participantNoteFocusRef = useRef<{ id: string; selectionStart: number | null; selectionEnd: number | null } | null>(null);
-  const participantBallotGroupFocusRef = useRef<string | null>(null);
+  const [participantBallotGroupFocusId, setParticipantBallotGroupFocusId] = useState<string | null>(null);
   const { isCopied: isCopyLabelActive, showCopied: showCopyLabel } = useTransientCopiedLabel();
   const [selectedImportedKnownVoterNpubs, setSelectedImportedKnownVoterNpubs] = useState<string[]>([]);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
@@ -1772,7 +1789,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   useEffect(() => {
     participantNoteDraftsRef.current = {};
     participantNoteFocusRef.current = null;
-    participantBallotGroupFocusRef.current = null;
+    setParticipantBallotGroupFocusId(null);
     setPendingParticipantSettingsByNpub({});
   }, [activeCoordinatorNpub, optionAElectionId]);
   const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
@@ -2285,6 +2302,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const participantRosterTotalCount = admittedVoterDisplayRows.length;
   const participantRosterVisibleCount = filteredAdmittedVoterDisplayRows.length;
   type ParticipantDisplayRow = (typeof filteredAdmittedVoterDisplayRows)[number];
+  const participantTableColumnsRef = useRef<ColumnDef<ParticipantDisplayRow>[] | null>(null);
   const participantTableColumns = useMemo<ColumnDef<ParticipantDisplayRow>[]>(() => {
     const rowState = (participant: ParticipantDisplayRow) => {
       const currentQuestionnaireEntry = participant.currentQuestionnaireEntry;
@@ -2387,7 +2405,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       };
     };
 
-    return [
+    const nextColumns: ColumnDef<ParticipantDisplayRow>[] = [
       {
         id: "number",
         header: "#",
@@ -2516,7 +2534,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               id={ballotGroupSelectId}
               value={state.ballotGroupValue}
               options={activeVoterGroupOptions}
-              restoreFocus={participantBallotGroupFocusRef.current === ballotGroupSelectId}
+              restoreFocus={participantBallotGroupFocusId === ballotGroupSelectId}
               onCommit={(ballotGroup) => updateParticipantBallotGroup(participant, ballotGroup)}
               onSavingChange={(saving) => {
                 const npub = participant.npub.trim();
@@ -2533,7 +2551,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 });
               }}
               onFocusStateChange={(id) => {
-                participantBallotGroupFocusRef.current = id;
+                setParticipantBallotGroupFocusId(id);
               }}
             />
           ) : (
@@ -2638,6 +2656,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         },
       },
     ];
+    const columns = preserveParticipantBallotGroupCellWhileFocused(
+      nextColumns,
+      participantTableColumnsRef.current,
+      participantBallotGroupFocusId,
+    );
+    participantTableColumnsRef.current = columns;
+    return columns;
   }, [
     activeCoordinatorNpub,
     activeVoterGroupOptions,
@@ -2645,6 +2670,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     optionAElectionId,
     participantActionByNpub,
     participantGroupSavingByNpub,
+    participantBallotGroupFocusId,
     authorizePendingRequester,
     copyPrivateInviteCodeLink,
     getPrivateInviteCodeLink,

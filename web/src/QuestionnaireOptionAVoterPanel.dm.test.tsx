@@ -867,6 +867,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(
       <QuestionnaireOptionAVoterPanel
         localVoterNpub={localVoterNpub}
+        localVoterNsec="nsec1blockedidentity"
         onMessageOrganiser={onMessageOrganiser}
         onBackToJoin={onBackToJoin}
       />,
@@ -941,7 +942,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       });
     window.history.pushState(null, "", `/?role=voter&q=q_private_same&coordinator=${coordinatorNpub}&invite_code=${inviteCode}&request_ballot=1`);
 
-    render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} />);
+    render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} localVoterNsec="nsec1sameidentity" />);
 
     await waitFor(() => {
       expect(requestBlindBallot).toHaveBeenCalled();
@@ -949,7 +950,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.queryByText("Private invite already used")).toBeNull();
   });
 
-  it("requests a private invite ballot when no status event is visible yet", async () => {
+  it("waits for the local private key before requesting a private invite ballot", async () => {
     const localVoterNpub = "npub1" + "x".repeat(58);
     const coordinatorNpub = "npub1" + "b".repeat(58);
     const inviteCode = "private-code-without-visible-status";
@@ -987,7 +988,18 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       });
     window.history.pushState(null, "", `/?role=voter&q=q_private_status_missing&coordinator=${coordinatorNpub}&invite_code=${inviteCode}&request_ballot=1`);
 
-    render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} />);
+    const view = render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} />);
+
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    expect(fetchQuestionnairePrivateInviteStatusMock).not.toHaveBeenCalled();
+    expect(requestBlindBallot).not.toHaveBeenCalled();
+
+    view.rerender(
+      <QuestionnaireOptionAVoterPanel
+        localVoterNpub={localVoterNpub}
+        localVoterNsec="nsec1privateidentity"
+      />,
+    );
 
     await waitFor(() => {
       expect(requestBlindBallot).toHaveBeenCalled();
