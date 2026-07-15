@@ -145,7 +145,7 @@ type QuestionnaireCoordinatorPanelProps = {
   questionnaireRelaysInput?: string;
   onQuestionnaireRelaysInputChange?: (value: string) => void;
   onConfigureQuestionnaireRelays?: () => void;
-  onConfigureWorker?: () => void;
+  onConfigureWorker?: (questionnaireId: string) => void;
   initialQuestionnaireId?: string;
   proxySetupSignal?: number;
   setupFocusTarget?: QuestionnaireSetupFocusTarget;
@@ -4234,7 +4234,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
-    const workerExpectedInviteeCount = expectedInviteeCount > 0 ? expectedInviteeCount : undefined;
     const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot | null = needsElectionConfigDm
       ? {
         type: "worker_election_config",
@@ -4243,7 +4242,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         delegationId: delegation.delegationId,
         coordinatorNpub: coordinatorNpubTrimmed,
         workerNpub,
-        expectedInviteeCount: workerExpectedInviteeCount,
+        expectedInviteeCount,
         whitelistNpubs,
         proxyVoterNpubs,
         ballotGroupsByNpub,
@@ -4279,6 +4278,9 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           fallbackNsec: coordinatorNsecTrimmed,
           relays: workerDmRelays,
         });
+        if (configDmResult.successes === 0) {
+          throw new Error("Audit proxy configuration could not reach any relay.");
+        }
         configResultSummary = `, ${configDmResult.successes} config DM relay successes`;
       }
       const storedDelegation = upsertStoredWorkerDelegation({
@@ -4460,7 +4462,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   function setupAuditProxyFromChecklist() {
     setDelegationMode("delegated_worker");
     setAuditProxyExpandSignal((current) => current + 1);
-    props.onConfigureWorker?.();
+    props.onConfigureWorker?.(questionnaireId.trim());
   }
 
   const lastProxySetupSignalRef = useRef(0);

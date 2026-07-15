@@ -658,6 +658,7 @@ async function main() {
   const restrictedQuestionGroupCount = envInt("OPTIONA_LIVE_RUST_HELPER_RESTRICTED_QUESTION_GROUPS", 0);
   const restrictedEligibleCount = envInt("OPTIONA_LIVE_RUST_HELPER_RESTRICTED_ELIGIBLE_COUNT", Math.max(1, Math.floor(voterCount / 3)));
   const proxyVoterCount = Math.min(voterCount, envInt("OPTIONA_LIVE_RUST_HELPER_PROXY_VOTER_COUNT", 0));
+  const privateInviteMode = envBool("OPTIONA_LIVE_RUST_HELPER_PRIVATE_INVITES", false);
   const questionCount = baseQuestionCount + restrictedQuestionGroupCount;
   const submissionMode = envSubmissionMode("OPTIONA_LIVE_RUST_HELPER_SUBMISSION_MODE", "bundled");
   const perQuestionSubmissions = submissionMode === "per_question";
@@ -701,6 +702,9 @@ async function main() {
   const coordinator = makeNostrIdentity();
   const worker = makeNostrIdentity();
   const voters = Array.from({ length: voterCount }, () => makeNostrIdentity());
+  const privateInviteHashesByNpub = new Map(
+    voters.map((voter) => [voter.npub, sha256Hex(nodeCrypto.randomBytes(32).toString("hex"))]),
+  );
   const voterBallotGroups = voters.map((_, voterIndex) => ballotGroupForVoterIndex({
     voterIndex,
     baseQuestionCount,
@@ -875,10 +879,19 @@ async function main() {
       coordinatorNpub: coordinator.npub,
       workerNpub: worker.npub,
       expectedInviteeCount: expectedSubmissionCount,
-      whitelistNpubs: voters.map((voter) => voter.npub),
+      whitelistNpubs: privateInviteMode ? [] : voters.map((voter) => voter.npub),
       proxyVoterNpubs: voters.slice(0, proxyVoterCount).map((voter) => voter.npub),
       ballotGroupsByNpub,
-      bearerInviteCodes: [],
+      bearerInviteCodes: privateInviteMode
+        ? voters.map((voter, index) => ({
+          electionId: questionnaireId,
+          codeHash: privateInviteHashesByNpub.get(voter.npub) ?? "",
+          createdAt: new Date().toISOString(),
+          state: "available" as const,
+          credentialsPerVoter: index < proxyVoterCount ? 2 as const : 1 as const,
+          ballotGroup: voterBallotGroups[index] ?? null,
+        }))
+        : [],
       eligibilityRequired: true,
       blindSigningPrivateKey,
       definitionReference,
@@ -1166,6 +1179,7 @@ async function main() {
         blindSigningKeyId: blindSigningPublicKey.keyId,
         clientNonce: randomId("nonce"),
         createdAt: new Date().toISOString(),
+        ...(privateInviteMode ? { inviteCodeHash: privateInviteHashesByNpub.get(input.voterNpub) } : {}),
         ...(input.ballotScope ? { ballotScope: input.ballotScope } : {}),
       };
       return {

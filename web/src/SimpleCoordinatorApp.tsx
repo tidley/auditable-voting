@@ -161,7 +161,8 @@ import {
   publishOptionAWorkerElectionConfigDm,
   type WorkerElectionConfigSnapshot,
 } from "./questionnaireOptionABlindDm";
-import { loadStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
+import { fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
+import { loadStoredWorkerDelegation, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
 import { tryWriteClipboard } from "./clipboard";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -5680,7 +5681,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, optionAKnownVoterCount, whitelistNpubs.length) + unclaimedPrivateInviteCount;
-    const workerExpectedInviteeCount = expectedInviteeCount > 0 ? expectedInviteeCount : undefined;
     const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
     return {
       workerNpub: delegation.workerNpub,
@@ -5692,7 +5692,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         delegationId: delegation.delegationId,
         coordinatorNpub,
         workerNpub: delegation.workerNpub,
-        expectedInviteeCount: workerExpectedInviteeCount,
+        expectedInviteeCount,
         whitelistNpubs,
         proxyVoterNpubs,
         ballotGroupsByNpub,
@@ -5714,14 +5714,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!config) {
       return false;
     }
-    await publishOptionAWorkerElectionConfigDm({
+    const result = await publishOptionAWorkerElectionConfigDm({
       signer: createSignerService(),
       recipientNpub: config.workerNpub,
       snapshot: config.snapshot,
       fallbackNsec: keypair?.nsec ?? undefined,
       relays: config.relays,
     });
-    return true;
+    return result.successes > 0;
   }
 
   useEffect(() => {
@@ -5750,12 +5750,50 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       return;
     }
     try {
-      await optionACoordinatorRuntime.ensureBlindSigningPublicKey();
+      const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
+      const publishedBlindKeyId = cachedDefinition?.blindSigningPublicKey?.keyId?.trim() ?? "";
+      const localBlindKeyId = optionACoordinatorRuntime.getSnapshot()?.blindSigningPrivateKey?.keyId?.trim() ?? "";
+      if (publishedBlindKeyId && localBlindKeyId !== publishedBlindKeyId) {
+        throw new Error("The original blind-signing key for this published questionnaire is not available in this browser. Restore the original organiser state before creating a private link.");
+      }
+      if (!publishedBlindKeyId) {
+        await optionACoordinatorRuntime.ensureBlindSigningPublicKey();
+      }
+      const publicDelegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: electionId,
+        capability: "issue_blind_tokens",
+        coordinatorNpub: activeCoordinatorNpub.trim(),
+        relays: cachedDefinition?.questionnaireRelays,
+      }).catch(() => null);
+      if (publicDelegation) {
+        upsertStoredWorkerDelegation({
+          electionId,
+          mode: "delegated_worker",
+          activeDelegation: publicDelegation,
+          lastRevocation: null,
+          lastUpdatedAt: new Date().toISOString(),
+        });
+      }
+      const knownWorkerRouting = loadElectionSummary(electionId)?.issueBlindTokensWorker ?? null;
+      const knownWorkerRoutingActive = Boolean(
+        knownWorkerRouting?.workerNpub?.trim()
+        && Date.parse(knownWorkerRouting.expiresAt) > Date.now(),
+      );
+      if (knownWorkerRoutingActive && !loadStoredWorkerDelegation(electionId)?.activeDelegation) {
+        throw new Error("Could not recover the active audit proxy configuration. Check the relay connection and try again before creating a private link.");
+      }
       const credentialsPerVoter = options?.credentialsPerVoter === 2 ? 2 : 1;
       const ballotGroup = normaliseQuestionnaireBallotGroup(options?.ballotGroup);
       const inviteCode = generateQuestionnaireInviteCode();
       const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
       optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash, { credentialsPerVoter, ballotGroup });
+      const workerConfigRequired = buildActiveWorkerElectionConfigSnapshot(electionId) !== null;
+      const workerConfigSynced = await syncActiveWorkerElectionConfig(electionId).catch(() => false);
+      if (workerConfigRequired && !workerConfigSynced) {
+        optionACoordinatorRuntime.revokeBearerInviteCode(inviteCodeHash);
+        setKnownVoterInviteRefreshNonce((value) => value + 1);
+        throw new Error("Could not make the private link available to the audit proxy. Check the relay connection and try again.");
+      }
       const inviteUrl = buildQuestionnaireInviteUrl({
         electionId,
         coordinatorNpub: activeCoordinatorNpub.trim() || undefined,
@@ -5773,7 +5811,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         [inviteCodeHash]: inviteUrl,
       }));
       const copied = await tryWriteClipboard(inviteUrl);
-      await syncActiveWorkerElectionConfig().catch(() => false);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       if (copied) {
         showPrivateInviteCreateCopied();
@@ -7122,6 +7159,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (isMobileCoordinatorViewport()) {
       setSidebarCollapsed(true);
     }
+  }
+
+  function openQuestionnaireProxy(questionnaireId: string) {
+    updateQuestionnaireRosterAnnouncement({ questionnaireId, state: null });
+    selectTab("proxy");
   }
 
   const handleQuestionnaireReadinessChange = useCallback((items: QuestionnaireReadinessItem[]) => {
@@ -8591,7 +8633,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               questionnaireRelaysInput={questionnaireRelaysInput}
               onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
-              onConfigureWorker={() => selectTab('proxy')}
+              onConfigureWorker={openQuestionnaireProxy}
+              initialQuestionnaireId={optionAElectionId}
               setupFocusTarget={setupFocusRequest.target}
               setupFocusSignal={setupFocusRequest.signal}
               newRoundMode={newRoundMode}
@@ -8627,7 +8670,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               questionnaireRelaysInput={questionnaireRelaysInput}
               onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
-              onConfigureWorker={() => selectTab('proxy')}
+              onConfigureWorker={openQuestionnaireProxy}
+              initialQuestionnaireId={optionAElectionId}
               proxySetupSignal={proxySetupSignal}
               newRoundMode={newRoundMode}
               draftQuestionnaireId={draftQuestionnaireId}

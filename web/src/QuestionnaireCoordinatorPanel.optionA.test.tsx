@@ -196,6 +196,28 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(onConfigureWorker).not.toHaveBeenCalled();
   });
 
+  it("uses the active questionnaire id on build and proxy pages", async () => {
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({ questionnaireId: "q_stored_draft" }),
+    );
+    const onConfigureWorker = vi.fn();
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        buildPage='proxy'
+        initialQuestionnaireId='q_active'
+        proxySetupSignal={1}
+        onConfigureWorker={onConfigureWorker}
+      />,
+    );
+
+    expect((screen.getByLabelText("Questionnaire") as HTMLSelectElement).value).toBe("q_active");
+    expect((screen.getByLabelText("Questionnaire ID") as HTMLInputElement).value).toBe("q_active");
+    await waitFor(() => expect(onConfigureWorker).toHaveBeenCalledWith("q_active"));
+  });
+
   it("keeps questionnaire questions under one hidden ballot index", async () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
@@ -238,7 +260,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(stored.voterGroups).toEqual([{ id: groupOption?.value, label: "North district" }]);
       expect(stored.questions?.[0]?.requiredScope).toBe(groupOption?.value);
     });
-    expect((screen.getByRole("button", { name: "Remove" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Voter group is in use" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("does not show the JSON preview controls in the build actions", () => {
@@ -1399,9 +1421,18 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     const configInput = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0];
     expect(sharedNostrPoolMocks.querySync).not.toHaveBeenCalled();
-    expect(configInput?.snapshot.expectedInviteeCount).toBeUndefined();
+    expect(configInput?.snapshot.expectedInviteeCount).toBe(0);
     expect(configInput?.snapshot.definitionReference?.definitionEventId).toBe(publishedDefinitionEvent.id);
     expect(configInput?.snapshot.definitionReference?.definitionHash).toBe(questionnaireDefinitionEventHash(publishedDefinitionEvent.content));
     expect(configInput?.snapshot.definitionReference?.definitionHash).not.toBe(questionnaireDefinitionHash(staleCachedDefinition));
+
+    vi.mocked(publishOptionAWorkerElectionConfigDm).mockResolvedValueOnce({
+      eventId: "failed-worker-config-dm",
+      successes: 0,
+      failures: 1,
+      relayResults: [],
+    });
+    fireEvent.click(confirmButton);
+    expect(await screen.findByText("Audit proxy configuration could not reach any relay.")).toBeTruthy();
   });
 });
