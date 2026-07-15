@@ -103,6 +103,7 @@ This is experimental software.
 Known weak points:
 
 - Organiser invites and worker configuration reference the latest organiser-signed public definition event. Its event ID and exact published JSON hash are used consistently by organiser, voter, and audit proxy; browser-normalised or newer local draft data is not used for that reference.
+- Public audit-proxy discovery is scoped to the organiser named by the invite or questionnaire definition. Both the delegation payload and its signed Nostr event author must match that organiser, preventing a delegation from another organiser with the same questionnaire ID from taking over voter routing.
 
 - Every real deployment needs an explicit threat model and operating procedure before the vote opens, including who can admit voters, when eligibility freezes, how disputes are handled, and what fallback is used if browsers, keys, relays, or the proxy fail.
 - Public relay reliability can affect delivery and discovery.

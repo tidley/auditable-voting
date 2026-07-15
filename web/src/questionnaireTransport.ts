@@ -792,6 +792,10 @@ export async function fetchQuestionnaireActiveWorkerDelegationForCapability(inpu
   readRelayLimit?: number;
   coordinatorNpub?: string | null;
 }) {
+  const expectedCoordinatorHex = toHexPubkey(input.coordinatorNpub);
+  if (input.coordinatorNpub?.trim() && !expectedCoordinatorHex) {
+    return null;
+  }
   const delegationEvents = await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: OPTIONA_WORKER_DELEGATION_KIND,
@@ -826,16 +830,32 @@ export async function fetchQuestionnaireActiveWorkerDelegationForCapability(inpu
   });
   const revocationIds = new Set(
     mergeEventsById(revocationEvents.events, coordinatorRevocationEvents)
-      .map((event) => parseWorkerDelegationRevocationEvent(event))
-      .filter((entry): entry is WorkerDelegationRevocation => Boolean(entry))
-      .filter((entry) => entry.electionId === input.questionnaireId)
-      .map((entry) => entry.delegationId),
+      .map((event) => ({ event, revocation: parseWorkerDelegationRevocationEvent(event) }))
+      .filter((entry): entry is { event: NostrEvent; revocation: WorkerDelegationRevocation } => Boolean(entry.revocation))
+      .filter((entry) => entry.revocation.electionId === input.questionnaireId)
+      .filter((entry) => {
+        const declaredCoordinatorHex = toHexPubkey(entry.revocation.coordinatorNpub);
+        return Boolean(
+          declaredCoordinatorHex
+          && entry.event.pubkey.toLowerCase() === declaredCoordinatorHex
+          && (!expectedCoordinatorHex || declaredCoordinatorHex === expectedCoordinatorHex)
+        );
+      })
+      .map((entry) => entry.revocation.delegationId),
   );
   const nowMs = Date.now();
   const active = mergeEventsById(delegationEvents.events, coordinatorDelegationEvents)
     .map((event) => ({ event, delegation: parseWorkerDelegationEvent(event) }))
     .filter((entry): entry is { event: NostrEvent; delegation: WorkerDelegationCertificate } => Boolean(entry.delegation))
     .filter((entry) => entry.delegation.electionId === input.questionnaireId)
+    .filter((entry) => {
+      const declaredCoordinatorHex = toHexPubkey(entry.delegation.coordinatorNpub);
+      return Boolean(
+        declaredCoordinatorHex
+        && entry.event.pubkey.toLowerCase() === declaredCoordinatorHex
+        && (!expectedCoordinatorHex || declaredCoordinatorHex === expectedCoordinatorHex)
+      );
+    })
     .filter((entry) => entry.delegation.capabilities.includes(input.capability))
     .filter((entry) => !revocationIds.has(entry.delegation.delegationId))
     .filter((entry) => {

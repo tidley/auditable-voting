@@ -21,12 +21,13 @@ function eventForDelegation(input: {
   coordinatorHex: string;
   delegation: WorkerDelegationCertificate;
   tags?: string[][];
+  createdAt?: number;
 }): NostrEvent {
   return {
     id: input.id,
     kind: OPTIONA_WORKER_DELEGATION_KIND,
     pubkey: input.coordinatorHex,
-    created_at: 1781311216,
+    created_at: input.createdAt ?? 1781311216,
     tags: input.tags ?? [["t", "optiona_worker_delegation"]],
     content: JSON.stringify(input.delegation),
     sig: "sig",
@@ -85,6 +86,66 @@ describe("questionnaire worker routing", () => {
         kinds: [OPTIONA_WORKER_DELEGATION_KIND],
       }),
     );
+  });
+
+  it("does not route to a newer delegation from another organiser using the same questionnaire ID", async () => {
+    const otherCoordinatorHex = "c".repeat(64);
+    const otherCoordinatorNpub = nip19.npubEncode(otherCoordinatorHex);
+    const otherWorkerNpub = nip19.npubEncode("d".repeat(64));
+    const ownDelegation: WorkerDelegationCertificate = {
+      type: "worker_delegation",
+      schemaVersion: 1,
+      delegationId: "delegation_own_worker",
+      electionId: "q_shared",
+      coordinatorNpub,
+      workerNpub,
+      capabilities: ["issue_blind_tokens"],
+      controlRelays: ["wss://relay.nostr.net"],
+      issuedAt: "2026-06-13T00:40:16.219Z",
+      expiresAt: "2036-06-10T00:40:16.219Z",
+    };
+    const otherDelegation: WorkerDelegationCertificate = {
+      ...ownDelegation,
+      delegationId: "delegation_other_worker",
+      coordinatorNpub: otherCoordinatorNpub,
+      workerNpub: otherWorkerNpub,
+      issuedAt: "2026-06-13T00:41:16.219Z",
+    };
+    const forgedDelegation: WorkerDelegationCertificate = {
+      ...ownDelegation,
+      delegationId: "delegation_forged_author",
+      workerNpub: otherWorkerNpub,
+      issuedAt: "2026-06-13T00:42:16.219Z",
+    };
+    const ownEvent = eventForDelegation({
+      id: "own-delegation-event",
+      coordinatorHex,
+      delegation: ownDelegation,
+      createdAt: 20,
+    });
+    const otherEvent = eventForDelegation({
+      id: "other-delegation-event",
+      coordinatorHex: otherCoordinatorHex,
+      delegation: otherDelegation,
+      createdAt: 30,
+    });
+    const forgedEvent = eventForDelegation({
+      id: "forged-delegation-event",
+      coordinatorHex: otherCoordinatorHex,
+      delegation: forgedDelegation,
+      createdAt: 40,
+    });
+    querySync.mockResolvedValue([forgedEvent, otherEvent, ownEvent]);
+
+    const found = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+      questionnaireId: "q_shared",
+      capability: "issue_blind_tokens",
+      relays: ["wss://relay.nostr.net"],
+      coordinatorNpub,
+    });
+
+    expect(found?.delegationId).toBe("delegation_own_worker");
+    expect(found?.workerNpub).toBe(workerNpub);
   });
 
   it("uses explicit worker DM relays before public control relays for blind requests", () => {
