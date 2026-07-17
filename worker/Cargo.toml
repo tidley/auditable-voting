@@ -1,6 +1,6 @@
 [package]
 name = "auditable-voting-worker"
-version = "0.1.41"
+version = "0.1.42"
 edition = "2021"
 description = "Delegated Nostr worker for auditable-voting elections"
 license = "MIT"
