@@ -16,7 +16,7 @@ WORKER_NSEC=nsec1...
 COORDINATOR_NPUB=npub1...
 # Optional override:
 # WORKER_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net
-# WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com
+# WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol
 ```
 
 Optional:
@@ -25,7 +25,7 @@ Optional:
 WORKER_STATE_DIR=/var/lib/auditable-voting-worker
 WORKER_HEARTBEAT_SECONDS=30
 WORKER_POLL_SECONDS=5
-WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com
+WORKER_DM_RELAYS=wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol
 WORKER_PUBLIC_ARCHIVE_RELAYS=wss://nos.lol,wss://relay.primal.net,wss://relay.damus.io
 WORKER_PUBLIC_ARCHIVE_INTERVAL_MS=500
 WORKER_PUBLIC_ARCHIVE_QUEUE_SIZE=10000

@@ -15,7 +15,7 @@ import {
   queryQuestionnaireEvents,
 } from "./questionnaireNostr";
 import { getSharedNostrPool } from "./sharedNostrPool";
-import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
+import { DEFAULT_NOSTR_PUBLIC_RELAYS as SIMPLE_PUBLIC_RELAYS } from "./nostrRelayConfig";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type {
   QuestionnaireDefinition,
@@ -256,7 +256,7 @@ export async function fetchQuestionnairePrivateInviteStatus(input: {
   const statuses = events
     .map((event) => ({ event, status: parseQuestionnairePrivateInviteStatusEvent(event) }))
     .filter((entry): entry is { event: NostrEvent; status: QuestionnairePrivateInviteStatusEvent } => (
-      Boolean(entry.status) && entry.status.codeHash === normalizedCodeHash
+      entry.status !== null && entry.status.codeHash === normalizedCodeHash
     ))
     .sort((left, right) => {
       const createdDelta = Number(right.status.createdAt ?? 0) - Number(left.status.createdAt ?? 0);
@@ -524,7 +524,9 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
       decisions.push({
         ...entry,
         accepted: explicitDecision.decision.accepted,
-        rejectionReason: explicitDecision.decision.accepted ? null : explicitDecision.decision.reason,
+        rejectionReason: explicitDecision.decision.accepted
+          ? null
+          : explicitDecision.decision.reason as QuestionnaireBlindAdmissionDecision["rejectionReason"],
         decidedAt: explicitDecision.decision.decidedAt,
         decisionEventId: explicitDecision.event.id,
       });

@@ -81,17 +81,28 @@ export function sha256HexRust(input: string) {
 }
 
 export function deriveTokenIdFromProofSecretsRust(proofSecrets: string[], length: number) {
-  return sha256HexRust(proofSecrets.join("|")).slice(0, length);
+  const normalized = proofSecrets.map((secret) => secret.trim()).filter(Boolean).sort();
+  if (normalized.length === 0) {
+    return null;
+  }
+  return sha256HexRust(normalized.map(sha256HexRust).join(":")).slice(0, length);
 }
 
 export function tokenIdLabelRust(tokenId: string | null | undefined) {
-  return tokenId ? tokenId.slice(0, 8).toUpperCase() : "PENDING";
+  if (!tokenId) {
+    return "Unavailable";
+  }
+  return tokenId.length <= 14 ? tokenId : `${tokenId.slice(0, 8)}...${tokenId.slice(-6)}`;
 }
 
 export function tokenPatternDetailRust(tokenId: string, size: number) {
+  let seed = 0x811c9dc5;
+  for (const character of tokenId.toLowerCase()) {
+    seed = Math.imul(seed ^ character.charCodeAt(0), 0x01000193) >>> 0;
+  }
   return Array.from({ length: size * size }, (_, index) => ({
-    filled: (tokenId.charCodeAt(index % Math.max(1, tokenId.length)) + index) % 2 === 0,
-    colorIndex: index % 6,
+    filled: ((Math.imul(seed ^ index, 0x45d9f3b) >>> 16) & 1) === 0,
+    colorIndex: (Math.imul(seed ^ (index + 1), 0x27d4eb2d) >>> 16) % 6,
   }));
 }
 
@@ -100,7 +111,7 @@ export function tokenPatternCellsRust(tokenId: string, size: number) {
 }
 
 export function tokenQrPayloadRust(tokenId: string) {
-  return `auditable-voting:${tokenId}`;
+  return `auditable-voting:token:${tokenId}`;
 }
 
 export function sortSimpleVotesCanonicalRust<T extends { createdAt: string; eventId: string }>(votes: T[]) {
@@ -121,7 +132,28 @@ export function buildSimpleVoteTicketRowsRust<
     coordinatorNpub: string;
   },
 >(entries: T[], configuredCoordinatorTargets: string[]) {
-  return entries.map((entry) => ({ ...entry, countsByCoordinator: Object.fromEntries(configuredCoordinatorTargets.map((npub) => [npub, 0])) }));
+  const rows = new Map<string, T & { countsByCoordinator: Record<string, number> }>();
+  for (const entry of entries) {
+    if (!configuredCoordinatorTargets.includes(entry.coordinatorNpub) || !entry.prompt.trim()) {
+      continue;
+    }
+    const current = rows.get(entry.votingId);
+    if (!current) {
+      rows.set(entry.votingId, {
+        ...entry,
+        countsByCoordinator: { [entry.coordinatorNpub]: 1 },
+      });
+      continue;
+    }
+    if (entry.createdAt > current.createdAt) {
+      current.createdAt = entry.createdAt;
+      current.prompt = entry.prompt;
+      current.thresholdT = entry.thresholdT;
+      current.thresholdN = entry.thresholdN;
+    }
+    current.countsByCoordinator[entry.coordinatorNpub] = (current.countsByCoordinator[entry.coordinatorNpub] ?? 0) + 1;
+  }
+  return [...rows.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 export function buildVoterCoordinatorDiagnosticsRust(input: {
@@ -176,4 +208,10 @@ export function buildCoordinatorFollowerRowsRust(input: {
     ticket: { tone: "muted", text: "No ticket" },
     receipt: null,
   })) satisfies CoordinatorFollowerRowRust[];
+}
+
+export function selectTicketRetryTargetsRust(input: {
+  followers: Array<{ id: string }>;
+}) {
+  return input.followers.map((follower) => follower.id);
 }

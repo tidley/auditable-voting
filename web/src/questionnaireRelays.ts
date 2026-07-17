@@ -1,4 +1,4 @@
-import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
+import { DEFAULT_NOSTR_PUBLIC_RELAYS as SIMPLE_PUBLIC_RELAYS } from "./nostrRelayConfig";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 
 export const DEFAULT_QUESTIONNAIRE_RELAYS = normalizeRelaysRust(SIMPLE_PUBLIC_RELAYS);

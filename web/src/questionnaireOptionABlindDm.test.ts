@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateSecretKey, getPublicKey, nip17, nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip17, nip19, nip44 } from "nostr-tools";
 import type { SignerService } from "./services/signerService";
 import {
   buildOptionABlindIssuanceBundleEnvelope,
@@ -9,8 +9,13 @@ import {
   fetchOptionABlindIssuanceDms,
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDmsWithNsec,
+  fetchOptionAParticipantStatusDms,
+  fetchOptionAParticipantStatusDmsWithNsec,
   parseOptionADmEnvelopeContent,
+  parseOptionAParticipantStatusDmContent,
   publishOptionABlindRequestDm,
+  publishOptionAParticipantStatusDm,
+  type OptionAParticipantStatus,
 } from "./questionnaireOptionABlindDm";
 import type { BlindBallotIssuance, BlindBallotRequest } from "./questionnaireOptionA";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
@@ -117,6 +122,36 @@ function makeRequest(input: { requestId: string; invitedNpub: string; padding?: 
   };
 }
 
+function makeParticipantStatus(input: Partial<OptionAParticipantStatus> & Pick<OptionAParticipantStatus, "invitedNpub">): OptionAParticipantStatus {
+  return {
+    type: "participant_status",
+    schemaVersion: 1,
+    electionId: "q_status",
+    source: "voter",
+    state: "voter_live",
+    observedAt: "2026-07-15T12:00:00.000Z",
+    ...input,
+  };
+}
+
+function wrapParticipantStatus(input: {
+  senderSecret: Uint8Array;
+  recipientHex: string;
+  status: OptionAParticipantStatus;
+}) {
+  return nip17.wrapEvent(
+    input.senderSecret,
+    { publicKey: input.recipientHex, relayUrl: "wss://relay.example" },
+    JSON.stringify({
+      type: "optiona_participant_status_dm",
+      schemaVersion: 1,
+      status: input.status,
+      sentAt: "2026-07-15T12:00:01.000Z",
+    }),
+    "Auditable Voting participant status",
+  );
+}
+
 describe("questionnaireOptionABlindDm", () => {
   beforeEach(() => {
     querySync.mockReset();
@@ -156,6 +191,168 @@ describe("questionnaireOptionABlindDm", () => {
     const event = publish.mock.calls[0]?.[1] as { kind: number; tags: string[][] };
     expect(event.kind).toBe(1059);
     expect(event.tags[0]?.[0]).toBe("p");
+  });
+
+  it("publishes and parses a participant status DM roundtrip", async () => {
+    querySync.mockResolvedValue([]);
+    publish.mockReturnValue([Promise.resolve(undefined)]);
+    publishToRelaysStaggered.mockImplementation(
+      async (publishOne: (relay: string) => Promise<unknown>, relays: string[]) => Promise.allSettled(relays.slice(0, 1).map((relay) => publishOne(relay))),
+    );
+    queueNostrPublish.mockImplementation(async (fn: () => Promise<PromiseSettledResult<unknown>[]>) => fn());
+    const voterSecret = generateSecretKey();
+    const organiserSecret = generateSecretKey();
+    const status = makeParticipantStatus({
+      invitedNpub: nip19.npubEncode(getPublicKey(voterSecret)),
+    });
+
+    const result = await publishOptionAParticipantStatusDm({
+      signer: makeSigner(),
+      fallbackNsec: nip19.nsecEncode(voterSecret),
+      recipientNpub: nip19.npubEncode(getPublicKey(organiserSecret)),
+      status,
+    });
+    const giftWrap = publish.mock.calls[0]?.[1];
+    querySync.mockResolvedValue([giftWrap]);
+
+    const fetched = await fetchOptionAParticipantStatusDmsWithNsec({
+      nsec: nip19.nsecEncode(organiserSecret),
+      electionId: "q_status",
+    });
+    const content = JSON.stringify({
+      type: "optiona_participant_status_dm",
+      schemaVersion: 1,
+      status,
+      sentAt: "2026-07-15T12:00:01.000Z",
+    });
+
+    expect(result.successes).toBe(1);
+    expect(parseOptionAParticipantStatusDmContent(content)).toEqual(status);
+    expect(parseOptionAParticipantStatusDmContent(JSON.stringify({ ...JSON.parse(content), schemaVersion: 2 }))).toBeNull();
+    expect(fetched).toEqual([status]);
+  });
+
+  it("validates voter and issuer proxy participant status seal senders", async () => {
+    const organiserSecret = generateSecretKey();
+    const organiserHex = getPublicKey(organiserSecret);
+    const voterSecret = generateSecretKey();
+    const workerSecret = generateSecretKey();
+    const workerNpub = nip19.npubEncode(getPublicKey(workerSecret));
+    const voterStatus = makeParticipantStatus({
+      invitedNpub: nip19.npubEncode(getPublicKey(voterSecret)),
+    });
+    const proxyStatus = makeParticipantStatus({
+      invitedNpub: nip19.npubEncode(getPublicKey(generateSecretKey())),
+      source: "issuer_proxy",
+      state: "ballot_issued",
+      issuanceId: "issuance_status",
+    });
+    querySync.mockResolvedValue([
+      wrapParticipantStatus({ senderSecret: voterSecret, recipientHex: organiserHex, status: voterStatus }),
+      wrapParticipantStatus({ senderSecret: workerSecret, recipientHex: organiserHex, status: proxyStatus }),
+    ]);
+
+    const fetched = await fetchOptionAParticipantStatusDmsWithNsec({
+      nsec: nip19.nsecEncode(organiserSecret),
+      electionId: "q_status",
+      workerNpub,
+    });
+
+    expect(fetched).toEqual(expect.arrayContaining([voterStatus, proxyStatus]));
+    expect(fetched).toHaveLength(2);
+  });
+
+  it("filters organiser participant status reads by election", async () => {
+    const organiserSecret = generateSecretKey();
+    const organiserHex = getPublicKey(organiserSecret);
+    const targetVoter = generateSecretKey();
+    const otherVoter = generateSecretKey();
+    const target = makeParticipantStatus({ invitedNpub: nip19.npubEncode(getPublicKey(targetVoter)) });
+    const other = makeParticipantStatus({
+      electionId: "q_other",
+      invitedNpub: nip19.npubEncode(getPublicKey(otherVoter)),
+    });
+    querySync.mockResolvedValue([
+      wrapParticipantStatus({ senderSecret: targetVoter, recipientHex: organiserHex, status: target }),
+      wrapParticipantStatus({ senderSecret: otherVoter, recipientHex: organiserHex, status: other }),
+    ]);
+
+    const fetched = await fetchOptionAParticipantStatusDmsWithNsec({
+      nsec: nip19.nsecEncode(organiserSecret),
+      electionId: "q_status",
+    });
+
+    expect(fetched).toEqual([target]);
+  });
+
+  it("rejects participant status forged by a different signer", async () => {
+    const organiserSecret = generateSecretKey();
+    const organiserHex = getPublicKey(organiserSecret);
+    const voterSecret = generateSecretKey();
+    const attackerSecret = generateSecretKey();
+    const status = makeParticipantStatus({
+      invitedNpub: nip19.npubEncode(getPublicKey(voterSecret)),
+      state: "ballot_received",
+      issuanceId: "issuance_status",
+    });
+    querySync.mockResolvedValue([
+      wrapParticipantStatus({ senderSecret: attackerSecret, recipientHex: organiserHex, status }),
+    ]);
+    const signer = makeSigner({
+      getPublicKey: async () => organiserHex,
+      nip44Decrypt: async (pubkey, payload) => nip44.v2.decrypt(
+        payload,
+        nip44.v2.utils.getConversationKey(organiserSecret, pubkey),
+      ),
+    });
+
+    const fetched = await fetchOptionAParticipantStatusDms({
+      signer,
+      electionId: "q_status",
+    });
+
+    expect(fetched).toEqual([]);
+  });
+
+  it("rejects identity-linked participant activity after ballot receipt", () => {
+    const content = JSON.stringify({
+      type: "optiona_participant_status_dm",
+      schemaVersion: 1,
+      status: {
+        type: "participant_status",
+        schemaVersion: 1,
+        electionId: "q_status",
+        invitedNpub: "npub1voter",
+        source: "voter",
+        state: "vote_submitted",
+        observedAt: "2026-07-16T00:00:04.000Z",
+        submissionId: "submission_status",
+      },
+      sentAt: "2026-07-16T00:00:04.000Z",
+    });
+
+    expect(parseOptionAParticipantStatusDmContent(content)).toBeNull();
+  });
+
+  it("rejects ballot receipt claimed by an issuer proxy", () => {
+    const content = JSON.stringify({
+      type: "optiona_participant_status_dm",
+      schemaVersion: 1,
+      status: {
+        type: "participant_status",
+        schemaVersion: 1,
+        electionId: "q_status",
+        invitedNpub: "npub1voter",
+        source: "issuer_proxy",
+        state: "ballot_received",
+        observedAt: "2026-07-16T00:00:03.000Z",
+        requestId: "request_status",
+        issuanceId: "issuance_status",
+      },
+      sentAt: "2026-07-16T00:00:03.000Z",
+    });
+
+    expect(parseOptionAParticipantStatusDmContent(content)).toBeNull();
   });
 
   it("mixes recipient NIP-17 relay hints with fallback relays for delivery", async () => {
@@ -567,7 +764,6 @@ describe("questionnaireOptionABlindDm", () => {
     expect(relays).toEqual([
       "wss://vm-1734.lnvps.cloud/",
       "wss://relay.nostr.net",
-      "wss://relay.0xchat.com",
       "wss://nos.lol",
     ]);
     expect(relays).not.toContain("wss://nip17.com");

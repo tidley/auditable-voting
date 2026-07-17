@@ -3,11 +3,11 @@ import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff, withRelayOutcomes } from "./relayBackoff";
 import {
-  SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
-  SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
-  SIMPLE_PUBLIC_PUBLISH_STAGGER_MS,
-  SIMPLE_PUBLIC_RELAYS,
-} from "./simpleVotingSession";
+  DEFAULT_NOSTR_PUBLIC_RELAYS as SIMPLE_PUBLIC_RELAYS,
+  NOSTR_PUBLIC_MIN_PUBLISH_INTERVAL_MS as SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
+  NOSTR_PUBLIC_PUBLISH_MAX_WAIT_MS as SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
+  NOSTR_PUBLIC_PUBLISH_STAGGER_MS as SIMPLE_PUBLIC_PUBLISH_STAGGER_MS,
+} from "./nostrRelayConfig";
 import { normalizeRelaysRust, sha256HexRust } from "./wasm/auditableVotingCore";
 import type {
   QuestionnaireDefinition,

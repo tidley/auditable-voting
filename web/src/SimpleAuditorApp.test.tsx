@@ -170,8 +170,8 @@ describe("SimpleAuditorApp", () => {
     render(<SimpleAuditorApp />);
 
     expect(await screen.findByRole("combobox", { name: "Round" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "First questionnaire · q_first" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Second questionnaire · q_second" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "First questionnaire · Q_FIRST" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Second questionnaire · Q_SECOND" })).toBeTruthy();
   });
 
   it("does not show background response refresh as a top-level status", async () => {
@@ -225,7 +225,7 @@ describe("SimpleAuditorApp", () => {
     await waitFor(() => {
       expect(within(menuSlot).getByLabelText("Round")).toBeTruthy();
     });
-    const publicViewerPanel = screen.getByRole("heading", { name: "q_first" }).closest("section");
+    const publicViewerPanel = screen.getByRole("heading", { name: "Q_FIRST" }).closest("section");
     expect(publicViewerPanel).toBeTruthy();
     expect(within(publicViewerPanel as HTMLElement).queryByLabelText("Search")).toBeNull();
     expect(within(publicViewerPanel as HTMLElement).queryByRole("button", { name: "Refresh" })).toBeNull();

@@ -100,6 +100,7 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import { recordRelayCloseReasons } from "./relayBackoff";
 import { useHelplineUnreadIndicator } from "./useHelplineUnreadIndicator";
 import { UiButton, UiSelect, UiSwitch, UiTextField } from "./ui/DesignLayer";
+import type { ElectionInviteMessage } from "./questionnaireOptionA";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 export type VoterTab = "configure" | "vote" | "messages" | "settings";
@@ -2060,7 +2061,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     setActiveTab("messages");
   }, [setActiveTab]);
 
-  function applyDiscoveredQuestionnaireInvites(invites: Array<{ coordinatorNpub: string; electionId: string; invitedNpub: string; type: string; schemaVersion: number; title: string; description: string; voteUrl: string; expiresAt?: string | null }>) {
+  function applyDiscoveredQuestionnaireInvites(invites: ElectionInviteMessage[]) {
     for (const invite of invites) {
       publishInviteToMailbox(invite);
     }

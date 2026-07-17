@@ -16,7 +16,7 @@ Usage (Linux x86_64):
    COORDINATOR_NPUB=npub1... \
    ./auditable-voting-worker-linux-x64
 
-   The first launch checks the binary version and exits if it is below 0.1.35. Download a newer release from
+   The first launch checks the binary version and exits if it is below 0.1.41. Download a newer release from
    https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz
 
    WORKER_RELAYS is optional. If not set, the audit proxy uses the default public/delegation relay set.
@@ -30,7 +30,7 @@ Organiser Audit proxy quick start:
 - That command includes the current organiser npub, the effective relay list, and the generated audit proxy nsec.
 - It starts the audit proxy with `RUST_LOG=info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info` so blind-request processing shows up in the helper logs by default.
 - `.worker-state` is used by default so the proxy can keep operating across sessions; delete it to reset local state for that proxy identity.
-- On each run it downloads the matching raw binary asset, checks the version, then starts the audit proxy.
+- Place the matching executable in the current directory, then run the generated command; it checks the version and starts the local audit proxy binary.
 - The organiser page confirms configuration automatically when the proxy heartbeat appears; use Confirm configuration if the proxy is already running.
 
 Other platforms:

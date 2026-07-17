@@ -3,7 +3,8 @@ import * as nodeCrypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import {
   generateSecretKey,
   getPublicKey,
@@ -20,7 +21,9 @@ import {
 } from "../src/questionnaireBlindSignature";
 import {
   fetchOptionABlindIssuanceDmsWithNsec,
+  fetchOptionAParticipantStatusDmsWithNsec,
   fetchOptionAWorkerElectionConfigDmsWithNsec,
+  publishOptionABlindIssuanceAckDm,
   publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
   publishOptionAWorkerElectionConfigDm,
@@ -92,6 +95,8 @@ type LiveRustHelperSubmissionJob = {
   answers: QuestionnaireResponseAnswer[];
   ballotScope: BallotScope | null;
 };
+
+type WorkerProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 const webcrypto = nodeCrypto.webcrypto as unknown as Crypto;
 if (!globalThis.crypto) {
@@ -175,6 +180,13 @@ function buildRelays() {
     ? raw.split(",").map((entry) => entry.trim()).filter(Boolean)
     : SIMPLE_PUBLIC_RELAYS.slice(0, 4);
   return normalizeRelaysRust(relays);
+}
+
+function buildWorkerDmRelays() {
+  const raw = process.env.WORKER_DM_RELAYS?.trim();
+  return normalizeRelaysRust(raw
+    ? raw.split(",").map((entry) => entry.trim()).filter(Boolean)
+    : ["wss://vm-1734.lnvps.cloud/", "wss://relay.nostr.net", "wss://nos.lol"]);
 }
 
 function envBool(name: string, fallback: boolean) {
@@ -498,7 +510,7 @@ async function querySummaryEvents(relays: string[], workerHex: string) {
   }), 10_000);
 }
 
-async function waitForWorkerStartup(child: ChildProcessWithoutNullStreams, timeoutMs: number) {
+async function waitForWorkerStartup(child: WorkerProcess, timeoutMs: number) {
   const logs: string[] = [];
   return await new Promise<{ logs: string[] }>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -540,7 +552,7 @@ async function waitForWorkerStartup(child: ChildProcessWithoutNullStreams, timeo
   });
 }
 
-function attachWorkerLogCapture(child: ChildProcessWithoutNullStreams) {
+function attachWorkerLogCapture(child: WorkerProcess) {
   const lines: string[] = [];
   const onStdout = (chunk: Buffer) => {
     const text = chunk.toString("utf8");
@@ -563,7 +575,7 @@ function attachWorkerLogCapture(child: ChildProcessWithoutNullStreams) {
   };
 }
 
-function watchWorkerExit(child: ChildProcessWithoutNullStreams) {
+function watchWorkerExit(child: WorkerProcess) {
   let exitError: Error | null = null;
   let stopping = false;
   let expectedExitAllowed = false;
@@ -613,7 +625,7 @@ function getHelperElectionState(
   return state?.elections?.[questionnaireId] ?? null;
 }
 
-async function terminateProcess(child: ChildProcessWithoutNullStreams) {
+async function terminateProcess(child: WorkerProcess) {
   if (child.killed || child.exitCode !== null) {
     return;
   }
@@ -648,6 +660,7 @@ async function main() {
   }
 
   const relays = buildRelays();
+  const workerDmRelays = buildWorkerDmRelays();
   const timeoutMs = envInt("OPTIONA_LIVE_RUST_HELPER_TIMEOUT_MS", 180_000);
   const intervalMs = envInt("OPTIONA_LIVE_RUST_HELPER_POLL_MS", 4_000);
   const readRelayLimit = envInt("OPTIONA_LIVE_RUST_HELPER_READ_RELAY_LIMIT", Math.min(6, relays.length));
@@ -846,6 +859,7 @@ async function main() {
         "publish_result_summary",
       ],
       controlRelays: relays,
+      dmRelays: workerDmRelays,
       expiresAt: new Date(Date.now() + delegationTtlMs).toISOString(),
     });
     const publishedDelegation = await publishWorkerDelegationCertificate({
@@ -895,6 +909,7 @@ async function main() {
       eligibilityRequired: true,
       blindSigningPrivateKey,
       definitionReference,
+      definition,
       sentAt: new Date().toISOString(),
     };
     let configApplied = false;
@@ -952,8 +967,43 @@ async function main() {
       delegationId: delegation.delegationId,
       workerNpub: visibleDelegation?.workerNpub ?? worker.npub,
       controlRelays: visibleDelegation?.controlRelays ?? relays,
+      dmRelays: visibleDelegation?.dmRelays ?? workerDmRelays,
       expiresAt: delegation.expiresAt,
     });
+    const acknowledgedIssuanceIds = new Set<string>();
+    async function publishBlindIssuanceAck(
+      voter: ReturnType<typeof makeNostrIdentity>,
+      issuance: BlindBallotIssuance,
+    ) {
+      if (acknowledgedIssuanceIds.has(issuance.issuanceId)) {
+        return;
+      }
+      acknowledgedIssuanceIds.add(issuance.issuanceId);
+      try {
+        const publishedAck = await publishOptionABlindIssuanceAckDm({
+          signer: signer(voter.npub),
+          recipientNpub: worker.npub,
+          ack: {
+            type: "blind_ballot_issuance_ack",
+            schemaVersion: 1,
+            electionId: questionnaireId,
+            requestId: issuance.requestId,
+            issuanceId: issuance.issuanceId,
+            invitedNpub: voter.npub,
+            ackedAt: new Date().toISOString(),
+          },
+          fallbackNsec: voter.nsec,
+          relays: issueBlindTokensWorker.dmRelays,
+        });
+        assert(
+          publishedAck.successes > 0,
+          `expected issuance ACK for request ${issuance.requestId} to publish to at least one worker DM relay`,
+        );
+      } catch (error) {
+        acknowledgedIssuanceIds.delete(issuance.issuanceId);
+        throw error;
+      }
+    }
     process.stdout.write(`Bulk inviting ${voters.length} voters before responses start...\n`);
     let invitedCount = 0;
     await runWithConcurrency(voters, inviteConcurrency, async (voter, index) => {
@@ -996,7 +1046,7 @@ async function main() {
 
     const completedVoters: Array<{
       requestId: string;
-      issuanceId: string | undefined;
+      issuanceId: string;
       submissionId: string;
       tokenNullifier: string;
     }> = [];
@@ -1155,7 +1205,7 @@ async function main() {
     }
 
     async function buildBlindRequest(input: {
-      voterNpub: string;
+      voterNpub: `npub1${string}`;
       ballotScope: BallotScope | null;
     }) {
       const tokenSecret = nodeCrypto.randomBytes(32).toString("hex");
@@ -1325,7 +1375,13 @@ async function main() {
         undefined,
         () => workerExit.assertRunning(),
       );
-      return new Map(issuanceEntries.map((entry) => [entry.requestId, entry]));
+      const issuanceByRequestId = new Map(issuanceEntries.map((entry) => [entry.requestId, entry]));
+      await runWithConcurrency(input.requestEntries, Math.min(5, input.requestEntries.length), async (entry) => {
+        const issuance = issuanceByRequestId.get(entry.request.requestId);
+        assert(issuance, `missing ${voterLabel} ${entry.question.questionId} issuance before ACK`);
+        await publishBlindIssuanceAck(input.voter, issuance);
+      });
+      return issuanceByRequestId;
     }
 
     async function publishIssuedScopedEntry(input: {
@@ -1474,6 +1530,7 @@ async function main() {
       }
       assert(workerSawRequest, `helper never confirmed ${voterLabel} blind request ${entry.request.requestId} after ${requestRetryLimit} publish attempts`);
       assert(visibleIssuance, `missing ${voterLabel} issuance`);
+      await publishBlindIssuanceAck(input.voter, visibleIssuance);
       await publishCompletedSubmission({
         voterNsec: input.voter.nsec,
         voterLabel,
@@ -1710,6 +1767,11 @@ async function main() {
         );
         const issuanceByRequestId = new Map(issuanceEntries.map((entry) => [entry.requestId, entry]));
         await runWithConcurrency(requestEntries, Math.min(5, requestEntries.length), async (entry) => {
+          const issuance = issuanceByRequestId.get(entry.request.requestId);
+          assert(issuance, `missing ${voterLabel} ${entry.question.questionId} issuance before ACK`);
+          await publishBlindIssuanceAck(voter, issuance);
+        });
+        await runWithConcurrency(requestEntries, Math.min(5, requestEntries.length), async (entry) => {
           const visibleIssuance = issuanceByRequestId.get(entry.request.requestId);
           assert(visibleIssuance, `missing ${voterLabel} ${entry.question.questionId} issuance after batch readback`);
           await publishCompletedSubmission({
@@ -1856,6 +1918,7 @@ async function main() {
       }
       assert(workerSawRequest, `helper never confirmed ${voterLabel} blind request ${entry.request.requestId} after ${requestRetryLimit} publish attempts`);
       assert(visibleIssuance, `missing ${voterLabel} issuance`);
+      await publishBlindIssuanceAck(voter, visibleIssuance);
       await publishCompletedSubmission({
         voterNsec: voter.nsec,
         voterLabel,
@@ -1872,6 +1935,43 @@ async function main() {
       });
     }
     workerExit.allowExpectedExit();
+
+    const participantStatuses = await waitForValue(
+      "organiser participant status relay readback from spawned Rust helper",
+      () => fetchOptionAParticipantStatusDmsWithNsec({
+        nsec: coordinator.nsec,
+        electionId: questionnaireId,
+        workerNpub: worker.npub,
+        relays: issueBlindTokensWorker.dmRelays,
+        limit: Math.max(200, expectedSubmissionCount * 4),
+        pageLimit: Math.max(200, expectedSubmissionCount * 4),
+        maxPages: 4,
+        timeBudgetMs: Math.max(20_000, intervalMs * 2),
+      }),
+      (statuses) => completedVoters.every((entry) => (
+        statuses.some((status) => (
+          status.source === "issuer_proxy"
+          && status.state === "ballot_requested"
+          && status.requestId === entry.requestId
+        ))
+        && statuses.some((status) => (
+          status.source === "issuer_proxy"
+          && status.state === "ballot_issued"
+          && status.requestId === entry.requestId
+          && status.issuanceId === entry.issuanceId
+        ))
+      )),
+      timeoutMs,
+      intervalMs,
+      Math.max(30_000, intervalMs * 2),
+      () => workerExit.assertRunning(),
+    );
+    const issuerProxyStatusCounts = {
+      ballot_requested: participantStatuses.filter((status) => status.source === "issuer_proxy" && status.state === "ballot_requested").length,
+      ballot_issued: participantStatuses.filter((status) => status.source === "issuer_proxy" && status.state === "ballot_issued").length,
+    };
+    assert(issuerProxyStatusCounts.ballot_requested >= completedVoters.length);
+    assert(issuerProxyStatusCounts.ballot_issued >= completedVoters.length);
 
     const submissionIds = new Set(completedVoters.map((entry) => entry.submissionId));
     let publicResponses = [] as Awaited<ReturnType<typeof fetchQuestionnaireBlindResponses>>;
@@ -2036,6 +2136,7 @@ async function main() {
         Math.max(30_000, intervalMs * 2),
         () => workerExit.assertRunning(),
       );
+      assert(helperStateWithSummary, "expected helper result summary state");
       visibleSummary = {
         schemaVersion: 1,
         eventType: "questionnaire_result_summary",
@@ -2088,6 +2189,7 @@ async function main() {
     process.stdout.write(`First blind request: ${completedVoters[0]?.requestId ?? "none"}\n`);
     process.stdout.write(`First blind issuance: ${completedVoters[0]?.issuanceId ?? "none"}\n`);
     process.stdout.write(`First submission: ${completedVoters[0]?.submissionId ?? "none"}\n`);
+    process.stdout.write(`Issuer proxy statuses: ballot_requested=${issuerProxyStatusCounts.ballot_requested}, ballot_issued=${issuerProxyStatusCounts.ballot_issued}\n`);
   } finally {
     liveWorkerLogs.detach();
     workerExit.markStopping();
@@ -2100,10 +2202,12 @@ async function main() {
 }
 
 void main()
+  .then(() => {
+    getSharedNostrPool().destroy?.();
+    process.exit(0);
+  })
   .catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-    process.exitCode = 1;
-  })
-  .finally(() => {
     getSharedNostrPool().destroy?.();
+    process.exit(1);
   });

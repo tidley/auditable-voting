@@ -23,6 +23,7 @@ import {
 import {
   fetchOptionABallotSubmissionDmsWithNsec,
   fetchOptionABlindIssuanceAckDms,
+  fetchOptionAParticipantStatusDms,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
   publishOptionABlindIssuanceBundleDm,
@@ -30,6 +31,7 @@ import {
   publishOptionABlindIssuanceAckDm,
   publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
+  publishOptionAParticipantStatusDm,
   publishOptionAVoterStateDm,
   subscribeOptionABlindIssuanceDms,
   subscribeOptionABlindIssuanceDmsWithNsec,
@@ -118,6 +120,8 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   fetchOptionABlindIssuanceDmsWithNsec: vi.fn().mockResolvedValue([]),
   fetchOptionABlindRequestDms: vi.fn().mockResolvedValue([]),
   fetchOptionABlindRequestDmsWithNsec: vi.fn().mockResolvedValue([]),
+  fetchOptionAParticipantStatusDms: vi.fn().mockResolvedValue([]),
+  fetchOptionAParticipantStatusDmsWithNsec: vi.fn().mockResolvedValue([]),
   publishOptionABallotAcceptanceDm: vi.fn().mockResolvedValue({
     eventId: "mock-option-a-acceptance-dm",
     successes: 1,
@@ -184,6 +188,12 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
     failures: 0,
     relayResults: [],
   }),
+  publishOptionAParticipantStatusDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-participant-status-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
   subscribeOptionABlindRequestDms: vi.fn(() => () => undefined),
   subscribeOptionABlindIssuanceDms: vi.fn(() => () => undefined),
   subscribeOptionABlindIssuanceDmsWithNsec: vi.fn(() => () => undefined),
@@ -193,6 +203,7 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   subscribeOptionABlindIssuanceAckDms: vi.fn(() => () => undefined),
   subscribeOptionABlindRequestAckDms: vi.fn(() => () => undefined),
   subscribeOptionABlindRequestAckDmsWithNsec: vi.fn(() => () => undefined),
+  subscribeOptionAParticipantStatusDms: vi.fn(() => () => undefined),
 }));
 
 vi.mock("./questionnaireResponsePublish", () => ({
@@ -806,15 +817,19 @@ describe("questionnaireOptionARuntime", () => {
 
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(invite);
+    vi.mocked(publishOptionAParticipantStatusDm).mockClear();
     await voter.requestBlindBallot({ forceResend: true });
 
     expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: workerNpub,
       relays: expect.arrayContaining(["wss://worker-relay.example"]),
     }));
-    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
+    expect(vi.mocked(publishOptionABlindRequestDm)).not.toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: coordinatorNpub,
     }));
+    expect(vi.mocked(publishOptionAParticipantStatusDm).mock.calls.some(([input]) => (
+      input.status.state === "ballot_requested"
+    ))).toBe(false);
   });
 
   it("runs request -> issuance -> submit -> acceptance and supports resume", async () => {
@@ -834,6 +849,7 @@ describe("questionnaireOptionARuntime", () => {
     await voter.requestBlindBallot({ forceResend: true });
 
     await coordinator.processPendingBlindRequests();
+    vi.mocked(publishOptionAParticipantStatusDm).mockClear();
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
 
@@ -968,6 +984,12 @@ describe("questionnaireOptionARuntime", () => {
       .sort();
     expect(issuedScopes).toEqual(["1:v1", "2:v1"]);
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
+    await vi.waitFor(() => {
+      const receiptStatuses = vi.mocked(publishOptionAParticipantStatusDm).mock.calls.filter(([input]) => (
+        input.status.state === "ballot_received"
+      ));
+      expect(receiptStatuses).toHaveLength(1);
+    });
 
     await voter.submitVote(["q1"], { questionId: "q1" });
     const firstSubmission = voter.getSnapshot()?.submissions?.q1;
@@ -2429,7 +2451,7 @@ describe("questionnaireOptionARuntime", () => {
         recipientNpub: workerNpub,
         request: expect.objectContaining({ electionId: sessionId }),
       }));
-      expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+      expect(publishOptionABlindRequestDm).not.toHaveBeenCalledWith(expect.objectContaining({
         recipientNpub: coordinatorNpub,
         request: expect.objectContaining({ electionId: sessionId }),
       }));
@@ -2488,7 +2510,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: workerNpub,
     }));
-    expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+    expect(publishOptionABlindRequestDm).not.toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: coordinatorNpub,
     }));
     await coordinator.processPendingBlindRequests();
@@ -2510,6 +2532,9 @@ describe("questionnaireOptionARuntime", () => {
     await vi.waitFor(() => {
       expect(publishOptionABlindIssuanceAckDm).toHaveBeenCalled();
     });
+    expect(publishOptionABlindIssuanceAckDm).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: workerNpub,
+    }));
     const issuanceAck = vi.mocked(publishOptionABlindIssuanceAckDm).mock.calls.at(-1)?.[0].ack;
     expect(issuanceAck).toBeTruthy();
     vi.mocked(fetchOptionABlindIssuanceAckDms).mockResolvedValueOnce(issuanceAck ? [issuanceAck] : []);
@@ -2622,8 +2647,74 @@ describe("questionnaireOptionARuntime", () => {
     expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: workerNpub,
     }));
-    expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+    expect(publishOptionABlindRequestDm).not.toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: coordinatorNpub,
     }));
+  });
+
+  it("discovers proxy status routing and keeps unknown requesters pending until approval", async () => {
+    const workerNpub = "npub1participantstatusworker00000000000000000000000000";
+    const delegation = createWorkerDelegationCertificate({
+      electionId,
+      coordinatorNpub,
+      workerNpub,
+      capabilities: ["issue_blind_tokens"],
+      controlRelays: ["wss://worker-relay.example"],
+      dmRelays: ["wss://worker-dm.example"],
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValueOnce(delegation);
+    vi.mocked(fetchOptionAParticipantStatusDms).mockResolvedValueOnce([
+      {
+        type: "participant_status",
+        schemaVersion: 1,
+        electionId,
+        invitedNpub: voterNpub,
+        source: "issuer_proxy",
+        state: "ballot_requested",
+        observedAt: "2026-07-16T00:00:01.000Z",
+        requestId: "request_status",
+      },
+      {
+        type: "participant_status",
+        schemaVersion: 1,
+        electionId,
+        invitedNpub: voterNpub,
+        source: "issuer_proxy",
+        state: "ballot_issued",
+        observedAt: "2026-07-16T00:00:02.000Z",
+        requestId: "request_status",
+        issuanceId: "issuance_status",
+      },
+      {
+        type: "participant_status",
+        schemaVersion: 1,
+        electionId,
+        invitedNpub: voterNpub,
+        source: "voter",
+        state: "ballot_received",
+        observedAt: "2026-07-16T00:00:03.000Z",
+        requestId: "request_status",
+        issuanceId: "issuance_status",
+      },
+    ]);
+
+    await coordinator.syncParticipantStatusesFromDm();
+
+    expect(fetchOptionAParticipantStatusDms).toHaveBeenCalledWith(expect.objectContaining({
+      workerNpub,
+      relays: expect.arrayContaining(["wss://worker-dm.example"]),
+    }));
+    expect(coordinator.getSnapshot()?.whitelist[voterNpub]).toBeUndefined();
+    expect(coordinator.getPendingAuthorizations()).toEqual([
+      expect.objectContaining({ invitedNpub: voterNpub, requestCount: 1 }),
+    ]);
+
+    await coordinator.authorizeRequester(voterNpub);
+
+    expect(coordinator.getSnapshot()?.whitelist[voterNpub]?.claimState).toBe("whitelisted");
+    expect(coordinator.getPendingAuthorizations()).toEqual([]);
   });
 });

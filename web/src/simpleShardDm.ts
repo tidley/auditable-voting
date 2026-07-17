@@ -34,7 +34,6 @@ import {
   subscribeMailboxShardRequests,
   subscribeMailboxShardResponses,
 } from "./simpleMailbox";
-
 export const SIMPLE_DM_RELAYS = [
   'wss://vm-1734.lnvps.cloud/',
   'wss://relay.nostr.net',

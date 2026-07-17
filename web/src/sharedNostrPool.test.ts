@@ -11,6 +11,10 @@ vi.mock("nostr-tools/pool", () => ({
       poolMocks.options = options;
     }
 
+    set allowConnectingToRelay(allowConnectingToRelay: (relay: string) => boolean) {
+      poolMocks.options = { ...poolMocks.options, allowConnectingToRelay };
+    }
+
     destroy() {}
   },
   useWebSocketImplementation: (implementation: typeof WebSocket) => {

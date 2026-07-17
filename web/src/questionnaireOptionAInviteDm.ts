@@ -1,7 +1,7 @@
-import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip17, nip19, nip44, type NostrEvent } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip17, nip19, nip44, type Filter, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { getSharedNostrPool } from "./sharedNostrPool";
-import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
+import { DEFAULT_NOSTR_DM_RELAYS as SIMPLE_DM_RELAYS } from "./nostrRelayConfig";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
@@ -124,7 +124,7 @@ async function withInviteQuerySlot<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-async function queryInviteDmSync(relays: string[], filter: Record<string, unknown>) {
+async function queryInviteDmSync(relays: string[], filter: Filter) {
   const queryRelays = filterInviteReadRelays(normalizeRelaysRust(relays));
   const key = JSON.stringify({ relays: queryRelays, filter });
   const existing = optionAInviteDmInFlightQueries.get(key);
@@ -583,7 +583,7 @@ export async function fetchOptionAInviteDms(input: {
     "#p": [recipientHex],
     since: Math.round(Date.now() / 1000) - lookbackSeconds,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
-  } as const;
+  };
   const primaryEvents = await queryInviteDmSync(primaryRelays, filter);
   const primaryResult = await collectInvitesFromGiftWrapEvents({
     events: primaryEvents.slice(0, maxDecryptAttempts),
@@ -641,7 +641,7 @@ export async function fetchOptionAInviteDmsWithNsec(input: {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 50),
-  } as const;
+  };
   const primaryEvents = await queryInviteDmSync(primaryRelays, filter);
   const primaryResult = await collectInvitesFromGiftWrapEvents({
     events: primaryEvents,

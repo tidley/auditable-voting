@@ -338,7 +338,7 @@ async function uploadPackBodyToBlossom(input: {
       "X-SHA-256": input.sha256,
       "Authorization": auth,
     },
-    body: input.body,
+    body: new Uint8Array(input.body),
   }, BLOSSOM_UPLOAD_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 240)}`);
@@ -463,7 +463,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
 }
 
 async function sha256HexBytes(bytes: Uint8Array) {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

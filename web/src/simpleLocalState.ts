@@ -2,6 +2,7 @@ import {
   deriveIdentityWords,
   formatIdentityWordsForFilename,
 } from "./identityWords";
+import { buildNamespacedLocalStorageKey, getAppStorageNamespace as getStorageNamespace } from "./appStorageNamespace";
 
 export type SimpleActorRole = "voter" | "coordinator";
 
@@ -106,8 +107,6 @@ const memoryState = new Map<string, SimpleStoredActorState>();
 const BACKUP_KDF_ITERATIONS = 250_000;
 const ACTIVE_STATE_KDF_ITERATIONS = 250_000;
 const DEFAULT_STORAGE_NAMESPACE = "default";
-const STORAGE_NAMESPACE_PATTERN = /^[a-z0-9_-]{1,64}$/;
-let cachedStorageNamespace: string | null = null;
 const INDEXEDDB_FAILURE_BASE_BACKOFF_MS = 15_000;
 const INDEXEDDB_FAILURE_MAX_BACKOFF_MS = 5 * 60 * 1000;
 let indexedDbDisabledUntilMs = 0;
@@ -223,30 +222,12 @@ function clearIndexedDbFailureBackoff() {
   indexedDbDisabledUntilMs = 0;
 }
 
-function getStorageNamespace() {
-  if (cachedStorageNamespace) {
-    return cachedStorageNamespace;
-  }
-  if (typeof window === "undefined") {
-    cachedStorageNamespace = DEFAULT_STORAGE_NAMESPACE;
-    return cachedStorageNamespace;
-  }
-
-  const rawNamespace = new URLSearchParams(window.location.search).get("ns")?.trim().toLowerCase() ?? "";
-  if (!rawNamespace || !STORAGE_NAMESPACE_PATTERN.test(rawNamespace)) {
-    cachedStorageNamespace = DEFAULT_STORAGE_NAMESPACE;
-    return cachedStorageNamespace;
-  }
-  cachedStorageNamespace = rawNamespace;
-  return cachedStorageNamespace;
-}
-
 export function getSimpleStorageNamespace() {
   return getStorageNamespace();
 }
 
 export function buildSimpleNamespacedLocalStorageKey(key: string) {
-  return `app:auditable-voting:${getStorageNamespace()}:${key}`;
+  return buildNamespacedLocalStorageKey(key);
 }
 
 function getStorageDbName() {

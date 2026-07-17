@@ -73,6 +73,7 @@ describe("simpleRoundState", () => {
     expect(rows).toEqual([
       {
         votingId: "vote-1",
+        coordinatorNpub: "npub1coord1",
         prompt: "Question one",
         createdAt: "2026-04-02T00:00:01.000Z",
         thresholdT: 2,

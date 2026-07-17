@@ -2,8 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-pub const OPTIONA_WORKER_DELEGATION_KIND: u16 = 31994;
-pub const OPTIONA_WORKER_DELEGATION_REVOCATION_KIND: u16 = 31995;
+#[cfg(test)]
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION: u16 = 6420;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE: u16 = 6421;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND: u16 = 6424;
@@ -286,6 +285,63 @@ pub struct BlindBallotIssuanceBundleEnvelope {
     pub sent_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OptionAParticipantStatusState {
+    BallotRequested,
+    BallotIssued,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionAParticipantStatus {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub invited_npub: String,
+    pub source: String,
+    pub state: OptionAParticipantStatusState,
+    pub observed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuance_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionAParticipantStatusEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub status: OptionAParticipantStatus,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindIssuanceAck {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub request_id: String,
+    pub issuance_id: String,
+    pub invited_npub: String,
+    pub acked_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindIssuanceAckEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub ack: BlindIssuanceAck,
+    pub sent_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlindTokenProof {
@@ -390,6 +446,8 @@ pub struct ElectionRuntimeState {
     pub issued_invited_npubs: HashSet<String>,
     #[serde(default)]
     pub issued_invited_scope_keys: HashSet<String>,
+    #[serde(default)]
+    pub issued_issuances_by_request_id: HashMap<String, BlindBallotIssuance>,
     #[serde(default)]
     pub whitelist_npubs: HashSet<String>,
     #[serde(default)]
@@ -522,10 +580,55 @@ mod tests {
         assert!(election.deferred_blind_requests.is_empty());
         assert!(election.issued_invited_npubs.is_empty());
         assert!(election.issued_invited_scope_keys.is_empty());
+        assert!(election.issued_issuances_by_request_id.is_empty());
         assert!(election.whitelist_npubs.is_empty());
         assert!(election.bearer_invite_codes.is_empty());
         assert!(!election.eligibility_required);
         assert!(election.last_election_config_sent_at.is_none());
         assert!(state.seen_control_event_ids.is_empty());
+    }
+
+    #[test]
+    fn participant_status_and_ack_use_web_json_schema() {
+        let status = OptionAParticipantStatusEnvelope {
+            message_type: "optiona_participant_status_dm".to_string(),
+            schema_version: 1,
+            status: OptionAParticipantStatus {
+                message_type: "participant_status".to_string(),
+                schema_version: 1,
+                election_id: "election_1".to_string(),
+                invited_npub: "npub1voter".to_string(),
+                source: "issuer_proxy".to_string(),
+                state: OptionAParticipantStatusState::BallotIssued,
+                observed_at: "2026-07-15T12:00:00Z".to_string(),
+                request_id: Some("request_1".to_string()),
+                issuance_id: Some("issuance_1".to_string()),
+            },
+            sent_at: "2026-07-15T12:00:01Z".to_string(),
+        };
+        let value = serde_json::to_value(status).unwrap();
+        assert_eq!(value["type"], "optiona_participant_status_dm");
+        assert_eq!(value["status"]["type"], "participant_status");
+        assert_eq!(value["status"]["state"], "ballot_issued");
+        assert_eq!(value["status"]["source"], "issuer_proxy");
+        assert_eq!(value["status"]["requestId"], "request_1");
+        assert!(value["status"].get("submissionId").is_none());
+
+        let ack: BlindIssuanceAckEnvelope = serde_json::from_value(serde_json::json!({
+            "type": "optiona_blind_issuance_ack_dm",
+            "schemaVersion": 1,
+            "ack": {
+                "type": "blind_ballot_issuance_ack",
+                "schemaVersion": 1,
+                "electionId": "election_1",
+                "requestId": "request_1",
+                "issuanceId": "issuance_1",
+                "invitedNpub": "npub1voter",
+                "ackedAt": "2026-07-15T12:00:02Z"
+            },
+            "sentAt": "2026-07-15T12:00:03Z"
+        }))
+        .unwrap();
+        assert_eq!(ack.ack.issuance_id, "issuance_1");
     }
 }

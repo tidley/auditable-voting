@@ -1,5 +1,5 @@
 import type { QuestionnaireDefinition, QuestionnaireDefinitionReference } from "./questionnaireProtocol";
-import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
+import { buildNamespacedLocalStorageKey as buildSimpleNamespacedLocalStorageKey } from "./appStorageNamespace";
 
 const QUESTIONNAIRE_DEFINITION_CACHE_KEY = "questionnaire:definitions:v1";
 const QUESTIONNAIRE_DEFINITION_REFERENCE_CACHE_KEY = "questionnaire:definition-references:v1";

@@ -702,13 +702,15 @@ async function main() {
   try {
     visibleSummary = await waitForValue(
       "public result summary visibility",
-      () => fetchQuestionnaireResultSummary({
-        questionnaireId,
-        relays,
-        readRelayLimit,
-        preferKindOnly: true,
-        limit: 50,
-      }),
+      async () => (
+        await fetchQuestionnaireResultSummary({
+          questionnaireId,
+          relays,
+          readRelayLimit,
+          preferKindOnly: true,
+          limit: 50,
+        })
+      ).find((entry) => entry.summary.questionnaireId === questionnaireId)?.summary ?? null,
       (value) => Boolean(value?.questionnaireId === questionnaireId && value.acceptedResponseCount === 1),
       timeoutMs,
       intervalMs,
@@ -725,6 +727,7 @@ async function main() {
       timeoutMs,
       intervalMs,
     );
+    assert(summaryEvent, "expected published result summary event to be queryable");
     visibleSummary = JSON.parse(summaryEvent.content) as QuestionnaireResultSummary;
   }
   assert.equal(visibleSummary?.acceptedResponseCount, 1);

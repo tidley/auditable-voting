@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
 import {
@@ -82,7 +82,7 @@ function createLocalNsecSignerService(nsec: string): SignerService {
       const signed = finalizeEvent({
         ...(event as Record<string, unknown>),
       } as never, secretKey);
-      return signed as T & { id?: string; sig?: string; pubkey?: string };
+      return signed as unknown as T & { id?: string; sig?: string; pubkey?: string };
     },
     async nip44Encrypt(pubkey: string, plaintext: string) {
       const targetHex = toHexPubkey(pubkey);
@@ -419,7 +419,7 @@ const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_PAGE_LOAD_REQUEST_DELAY_MS = 1_000;
 const AUTO_BALLOT_RETRY_POLL_MS = 5_000;
 const AUTO_BALLOT_RETRY_RESEND_MS = 10_000;
-const MANUAL_BALLOT_RESEND_DELAY_MS = 10_000;
+const MANUAL_BALLOT_RESEND_DELAY_MS = 5_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [3_000, 8_000, 20_000, 45_000] as const;
 const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 30_000;
 const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 20_000;
@@ -503,7 +503,7 @@ function resolveRoundProgressDefinition(
     electionId ? readCachedQuestionnaireDefinition(electionId) : null,
   ];
   return definitions.find((definition): definition is QuestionnaireDefinition => (
-    Boolean(definition) && (!electionId || definition.questionnaireId === electionId)
+    Boolean(definition) && (!electionId || definition?.questionnaireId === electionId)
   )) ?? null;
 }
 
@@ -900,7 +900,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const linkedContextElectionId = inviteContext.electionId?.trim() ?? "";
   const currentQuestionnaireId = snapshot?.electionId?.trim() || electionId.trim() || linkedContextElectionId || latestAnnouncedQuestionnaireId.trim();
   useEffect(() => {
-    setQuestionnaireStarted(false);
+    if (previousElectionIdRef.current !== currentQuestionnaireId) {
+      setQuestionnaireStarted(false);
+      previousElectionIdRef.current = currentQuestionnaireId;
+    }
   }, [currentQuestionnaireId]);
   const draftPersistenceVoterNpub = signedInNpub.trim() || snapshot?.invitedNpub?.trim() || props.localVoterNpub?.trim() || "";
   const draftPersistenceKey = useMemo(
@@ -932,7 +935,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? contextPendingInvites.find((invite) => invite.electionId === currentQuestionnaireId)?.blindSigningPublicKey
     ?? (inviteContext.invite?.electionId === currentQuestionnaireId ? inviteContext.invite.blindSigningPublicKey : null)
     ?? autoRequestDefinition?.blindSigningPublicKey
-    ?? (currentQuestionnaireId ? loadElectionSummary(currentQuestionnaireId)?.blindSigningPublicKey : null),
+    ?? (currentQuestionnaireId ? loadElectionSummary(currentQuestionnaireId)?.blindSigningPublicKey : null)
+    ?? snapshot?.credentialReady,
   );
   const currentDefinition = autoRequestDefinition
     ?? (questionnaireDefinition?.questionnaireId === currentQuestionnaireId ? questionnaireDefinition : null)
@@ -952,7 +956,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ...contextPendingInvites,
     inviteContext.invite,
   ].find((invite) => inviteGrantsProxyCredential(invite, currentQuestionnaireId)) ?? null;
-  const credentialCount = proxyCredentialInvite ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
+  const recoveredProxyCredential = [...Object.values(snapshot?.blindRequests ?? {}), ...Object.values(snapshot?.blindIssuances ?? {})]
+    .some((entry) => credentialIndexFromBallotScope(entry.ballotScope) >= 2);
+  const persistedProxyCredential = snapshot?.privateInviteCredentialsPerVoter === 2
+    || inviteContext.credentialsPerVoter === 2
+    || recoveredProxyCredential;
+  const credentialCount = proxyCredentialInvite || persistedProxyCredential ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
   const showProxyBallotsTogether = credentialCount > 1;
   const credentialIndexes = useMemo(
     () => Array.from({ length: credentialCount }, (_, index) => index + 1),
@@ -2108,7 +2117,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
-  async function buildPublicQuestionnaireInvite(voterNpub: string) {
+  async function buildPublicQuestionnaireInvite(voterNpub: string): Promise<ElectionInviteMessage | null> {
     const targetElectionId = linkedContextElectionId || electionId.trim() || latestAnnouncedQuestionnaireId.trim();
     if (!targetElectionId) {
       return null;
@@ -2149,7 +2158,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           delegationId: delegation.delegationId,
           workerNpub: delegation.workerNpub,
           controlRelays: delegation.controlRelays,
-          dmRelays: SIMPLE_DM_RELAYS,
+          dmRelays: delegation.dmRelays ?? SIMPLE_DM_RELAYS,
           expiresAt: delegation.expiresAt,
         })
         : null;
@@ -3520,22 +3529,26 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     answerNextPrefetchLastAttemptAtRef.current[requestKey] = Date.now();
     void (async () => {
       const prefetchRuntime = new QuestionnaireOptionAVoterRuntime(createVoterSignerService(localVoterNsec), nextElectionId, localVoterNsec);
-      const next = prefetchRuntime.bootstrapWithLocalIdentity({
-        invitedNpub,
-        coordinatorNpub: nextInviteDropdownOption.coordinatorNpub,
-        invite: nextInviteDropdownOption,
-        allowInviteRecipientMismatch: true,
-        allowInviteMissing: true,
-      });
-      if (next.blindRequestSent || next.credentialReady || next.submission) {
+      try {
+        const next = prefetchRuntime.bootstrapWithLocalIdentity({
+          invitedNpub,
+          coordinatorNpub: nextInviteDropdownOption.coordinatorNpub,
+          invite: nextInviteDropdownOption,
+          allowInviteRecipientMismatch: true,
+          allowInviteMissing: true,
+        });
+        if (next.blindRequestSent || next.credentialReady || next.submission) {
+          answerNextPrefetchSentForRef.current[requestKey] = true;
+          return;
+        }
+        await prefetchRuntime.requestBlindBallot();
         answerNextPrefetchSentForRef.current[requestKey] = true;
-        return;
+        markSignerWaitRecoveryBaseline();
+        scheduleSignerInitialPull();
+        setRefreshNonce((value) => value + 1);
+      } finally {
+        prefetchRuntime.dispose();
       }
-      await prefetchRuntime.requestBlindBallot();
-      answerNextPrefetchSentForRef.current[requestKey] = true;
-      markSignerWaitRecoveryBaseline();
-      scheduleSignerInitialPull();
-      setRefreshNonce((value) => value + 1);
     })().catch(() => {
       // Best-effort prefetch. The visible Answer next path still requests explicitly.
     }).finally(() => {
@@ -3600,7 +3613,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && manualResendAvailableAtMs !== null
     && manualResendClockMs >= manualResendAvailableAtMs;
   const canRequestOrResendBallot = !privateInviteBlock && (flags.canRequestBallot || manualResendRequestVisible);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof document === "undefined") {
       return;
     }
@@ -3752,9 +3765,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           ? "This vote is not ready to submit yet. Check that every required answer is complete."
           : "This vote cannot be submitted yet."
     : "";
-  const hasGroupSpecificQuestions = Boolean(questionnaireDefinition?.questions.some((question) => questionRequiredScope(question)));
+  const hasGroupSpecificQuestions = Boolean(currentDefinition?.questions.some((question) => questionRequiredScope(question)));
   const showMainOnlyScopeWarning = questionnaireCredentialReady
-    && receivedCredentialBallotGroup === null
+    && (!activeBallotGroup || activeBallotGroup === "0")
     && hasGroupSpecificQuestions
     && !responseSubmittedForCurrentQuestionnaire;
   const questionNavForwardHighlighted = showViewResultsFromQuestionNav || canSubmitFromQuestionNav || (nextQuestionIndex >= 0 && activeQuestionReadyForNavigation);
@@ -3800,7 +3813,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     snapshot: snapshotForAction,
     requiredQuestionsAnswered: requiredQuestionsAnsweredForAction,
     canSubmitNow,
-    blindSigningKeyReady: autoRequestBlindSigningKeyReady,
+    blindSigningKeyReady: autoRequestBlindSigningKeyReady || questionnaireCredentialReady,
     ballotRequestSent: activeQuestionRequestSent,
     credentialReady: activeQuestionCredentialReady,
     coordinatorNpub: actionCoordinatorNpub,
@@ -4436,7 +4449,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           <UiButton
             icon='message'
             className='simple-voter-secondary'
-            onPress={() => props.onMessageOrganiser?.(privateInviteBlock.coordinatorNpub)}
+            onPress={() => props.onMessageOrganiser?.(privateInviteBlock.coordinatorNpub ?? undefined)}
           >
             Message organiser
           </UiButton>

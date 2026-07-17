@@ -610,8 +610,8 @@ function whitelistStatusIndicator(state: WhitelistClaimState): StatusIndicatorVi
     case "vote_received":
       return {
         className: "simple-vote-status-icon simple-status-indicator is-voter-received",
-        icon: "V",
-        label: "Vote received",
+        icon: "B",
+        label: "Ballot received",
       };
     case "blind_signature_issued":
       return {
@@ -723,8 +723,8 @@ function privateInviteVoterStatusIndicator(input: {
     if (input.claimState === "vote_received") {
       return {
         className: "simple-vote-status-icon simple-status-indicator is-voter-received",
-        icon: "V",
-        label: "Vote submitted",
+        icon: "B",
+        label: "Ballot received",
       };
     }
     const indicator = whitelistStatusIndicator(input.claimState);
@@ -1446,7 +1446,7 @@ function createLocalNsecSignerService(nsec: string) {
       const signed = finalizeEvent({
         ...(event as Record<string, unknown>),
       } as never, secretKey);
-      return signed as T & { id?: string; sig?: string; pubkey?: string };
+      return signed as unknown as T & { id?: string; sig?: string; pubkey?: string };
     },
     async nip44Encrypt(pubkey: string, plaintext: string) {
       const targetHex = toHexPubkey(pubkey);
@@ -1702,7 +1702,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [privateInviteCreateCopied, setPrivateInviteCreateCopied] = useState(false);
   const [expandedInviteQr, setExpandedInviteQr] = useState<InviteQrPreview | null>(null);
   const closeExpandedInviteQr = useCallback(() => setExpandedInviteQr(null), []);
-  const privateInviteCreateCopiedTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const privateInviteCreateCopiedTimerRef = useRef<number | null>(null);
   const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
@@ -2252,10 +2252,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     );
     const labelsById = new Map((definition?.voterGroups ?? []).map((group) => [group.id, group.label]));
     return [
-      { value: "", label: "Main (everyone)" },
+      { value: "", label: "Main" },
       ...[...usedGroupIds].map((value) => ({ value, label: labelsById.get(value) ?? `Legacy group ${value}` })),
     ];
   }, [knownVoterInviteRefreshNonce, optionAElectionId]);
+  const hasActiveVoterGroups = activeVoterGroupOptions.length > 1;
   const filteredAdmittedVoterDisplayRows = useMemo(() => {
     const query = participantSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -2317,13 +2318,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
       const privateInviteActive = privateInviteEntry?.state === "available";
       const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
-      const ballotReceivedAck = currentQuestionnaireEntry?.claimState === "blind_signature_issued"
+      const ballotReceivedAck = Boolean(currentQuestionnaireEntry?.ballotReceivedAt)
+        || (currentQuestionnaireEntry?.claimState === "blind_signature_issued"
         && hasAcknowledgedBlindIssuanceForNpub(
           optionACoordinatorRuntime?.getSnapshot()?.issuedBlindResponses,
           optionACoordinatorRuntime?.getSnapshot()?.pendingBlindRequests,
           participant.npub,
           optionAElectionId,
-        );
+        ));
       const privateInviteStatusIndicator = privateInviteEntry
         ? privateInviteVoterStatusIndicator({
           state: privateInviteEntry.state,
@@ -2655,7 +2657,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       },
     ];
     const columns = preserveParticipantBallotGroupCellWhileFocused(
-      nextColumns,
+      hasActiveVoterGroups ? nextColumns : nextColumns.filter((column) => column.id !== "ballotGroup"),
       participantTableColumnsRef.current,
       participantBallotGroupFocusId,
     );
@@ -2663,6 +2665,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     return columns;
   }, [
     activeCoordinatorNpub,
+    hasActiveVoterGroups,
     activeVoterGroupOptions,
     optionACoordinatorRuntime,
     optionAElectionId,
@@ -5707,6 +5710,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             relays: cachedDefinitionReference?.relays,
           })
           : null,
+        definition: cachedDefinition,
         sentAt: new Date().toISOString(),
       },
     };
@@ -5730,6 +5734,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           definitionHash: publishedDefinition.definitionHash,
           relays: publishedDefinition.definition.questionnaireRelays ?? config.snapshot.definitionReference.relays,
         });
+        config.snapshot.definition = publishedDefinition.definition;
       }
     }
     const result = await publishOptionAWorkerElectionConfigDm({
@@ -5795,7 +5800,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const knownWorkerRouting = loadElectionSummary(electionId)?.issueBlindTokensWorker ?? null;
       const knownWorkerRoutingActive = Boolean(
         knownWorkerRouting?.workerNpub?.trim()
-        && Date.parse(knownWorkerRouting.expiresAt) > Date.now(),
+        && Date.parse(knownWorkerRouting.expiresAt ?? "") > Date.now(),
       );
       if (knownWorkerRoutingActive && !loadStoredWorkerDelegation(electionId)?.activeDelegation) {
         throw new Error("Could not recover the active audit proxy configuration. Check the relay connection and try again before creating a private link.");
@@ -6175,6 +6180,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         if (!optionACoordinatorRuntime) {
           return null;
         }
+        // Surface public-link admission requests before slower mailbox recovery work.
+        await optionACoordinatorRuntime.syncParticipantStatusesFromDm();
         const blindRequestsSynced = await optionACoordinatorRuntime.syncBlindRequestsFromDm();
         await optionACoordinatorRuntime.processPendingBlindRequests();
         await optionACoordinatorRuntime.syncBlindIssuanceAcksFromDm();
@@ -6220,8 +6227,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           blindRequestDiagnosticsByElectionId: {},
         });
       const processingResult = await syncStep;
+      const queueProcessingResult = "blindRequestsSynced" in processingResult
+        ? processingResult
+        : {
+          ...processingResult,
+          blindRequestsSynced: 0,
+          submissionsSynced: 0,
+          blindIssuancesDelivered: 0,
+          acceptanceResultsDelivered: 0,
+          blindRequestDiagnosticsByElectionId: {},
+        };
       const blindRequestDiagnostics = processingElectionId
-        ? processingResult.blindRequestDiagnosticsByElectionId?.[processingElectionId] ?? null
+        ? queueProcessingResult.blindRequestDiagnosticsByElectionId?.[processingElectionId] ?? null
         : null;
       setOptionAQueueProcessingDebug((current) => ({
         ...current,
@@ -6229,11 +6246,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         lastFinishedAt: new Date().toISOString(),
         lastElectionId: processingElectionId || current.lastElectionId,
         lastLocalNsecMode: localNsecMode,
-        lastProcessedElections: processingResult.processedElections,
-        lastBlindRequestsSynced: processingResult.blindRequestsSynced,
-        lastSubmissionsSynced: processingResult.submissionsSynced,
-        lastBlindIssuancesDelivered: processingResult.blindIssuancesDelivered,
-        lastAcceptanceResultsDelivered: processingResult.acceptanceResultsDelivered,
+        lastProcessedElections: queueProcessingResult.processedElections,
+        lastBlindRequestsSynced: queueProcessingResult.blindRequestsSynced,
+        lastSubmissionsSynced: queueProcessingResult.submissionsSynced,
+        lastBlindIssuancesDelivered: queueProcessingResult.blindIssuancesDelivered,
+        lastAcceptanceResultsDelivered: queueProcessingResult.acceptanceResultsDelivered,
         lastBlindRequestDiagnostics: blindRequestDiagnostics,
         lastSkippedReason: null,
         lastError: null,

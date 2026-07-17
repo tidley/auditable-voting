@@ -85,6 +85,8 @@ import {
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDms,
   fetchOptionABlindRequestDmsWithNsec,
+  fetchOptionAParticipantStatusDms,
+  fetchOptionAParticipantStatusDmsWithNsec,
   publishOptionABallotSubmissionAckDm,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
@@ -96,6 +98,7 @@ import {
   publishOptionABlindRequestAckDm,
   publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
+  publishOptionAParticipantStatusDm,
   subscribeOptionABallotAcceptanceDms,
   subscribeOptionABallotSubmissionAckDms,
   subscribeOptionABallotSubmissionDms,
@@ -105,10 +108,12 @@ import {
   subscribeOptionABlindRequestAckDms,
   subscribeOptionABlindRequestAckDmsWithNsec,
   subscribeOptionABlindRequestDms,
+  subscribeOptionAParticipantStatusDms,
   type BallotSubmissionAck,
   type BlindRequestAck,
   type BlindIssuanceAck,
   type OptionACoordinatorStateSnapshot,
+  type OptionAParticipantStatus,
   type OptionAVoterStateSnapshot,
   type OptionABlindRequestFetchDiagnostics,
 } from "./questionnaireOptionABlindDm";
@@ -160,7 +165,7 @@ import {
 } from "./questionnaireProtocol";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
-import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
+import { DEFAULT_NOSTR_DM_RELAYS as SIMPLE_DM_RELAYS } from "./nostrRelayConfig";
 import { QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1, type QuestionnaireFlowMode } from "./questionnaireProtocolConstants";
 import {
   buildIssueBlindTokensWorkerRouting,
@@ -1321,7 +1326,7 @@ export class QuestionnaireOptionAVoterRuntime {
           delegationId: delegation.delegationId,
           workerNpub: delegation.workerNpub,
           controlRelays: delegation.controlRelays,
-          dmRelays: getPreferredQuestionnaireDmRelays(this.electionId),
+          dmRelays: delegation.dmRelays ?? getPreferredQuestionnaireDmRelays(this.electionId),
           expiresAt: delegation.expiresAt,
         });
         this.rememberIssueBlindTokensWorkerRouting(resolved);
@@ -1427,6 +1432,41 @@ export class QuestionnaireOptionAVoterRuntime {
         electionId: this.state.electionId,
         invitedNpub: this.state.invitedNpub,
         reason: options?.reason ?? "unspecified",
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+
+  private async publishParticipantStatus(
+    state: OptionAParticipantStatus["state"],
+    ids?: Pick<OptionAParticipantStatus, "requestId" | "issuanceId">,
+  ) {
+    if (!this.state?.coordinatorNpub?.trim() || !this.state.invitedNpub?.trim()) {
+      return;
+    }
+    const status: OptionAParticipantStatus = {
+      type: "participant_status",
+      schemaVersion: 1,
+      electionId: this.state.electionId,
+      invitedNpub: this.state.invitedNpub,
+      source: "voter",
+      state,
+      observedAt: nowIso(),
+      ...ids,
+    };
+    try {
+      const result = await publishOptionAParticipantStatusDm({
+        signer: this.signer,
+        recipientNpub: this.state.coordinatorNpub,
+        status,
+        fallbackNsec: this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
+      });
+      this.rememberPrivateRelaySuccesses(result);
+    } catch (error) {
+      optionAFlowLog("voter", "participant_status_publish_failed", {
+        electionId: status.electionId,
+        state: status.state,
         error: error instanceof Error ? error.message : "unknown",
       });
     }
@@ -1584,6 +1624,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state) {
       return false;
     }
+    const wasCredentialReady = this.state.credentialReady;
     const received = reduceVoterEvent(this.state, {
       type: "BLIND_ISSUANCE_RECEIVED",
       issuance,
@@ -1605,6 +1646,12 @@ export class QuestionnaireOptionAVoterRuntime {
     this.startVoterDmSubscriptions();
     void this.publishVoterStateSelfDm({ reason });
     void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
+    if (!wasCredentialReady && nextState.credentialReady) {
+      void this.publishParticipantStatus("ballot_received", {
+        requestId: issuance.requestId,
+        issuanceId: issuance.issuanceId,
+      });
+    }
     this.notifyStateChanged();
     return true;
   }
@@ -1775,12 +1822,14 @@ export class QuestionnaireOptionAVoterRuntime {
         ackedAt: nowIso(),
       };
       try {
+        const routing = await this.resolveIssueBlindTokensWorkerRouting();
+        const recipientNpub = routing?.workerNpub?.trim() || this.state?.coordinatorNpub || issuance.invitedNpub;
         const result = await publishOptionABlindIssuanceAckDm({
           signer: this.signer,
-          recipientNpub: this.state?.coordinatorNpub ?? issuance.invitedNpub,
+          recipientNpub,
           ack,
           fallbackNsec: this.fallbackNsec,
-          relays: this.getPreferredDmRelays(),
+          relays: mergeBlindRequestRoutingRelays(this.getPreferredDmRelays(), routing),
         });
         optionAFlowLog("voter", "blind_issuance_ack_publish_result", {
           electionId: ack.electionId,
@@ -1908,6 +1957,7 @@ export class QuestionnaireOptionAVoterRuntime {
     await this.recoverVoterStateFromSelfDm().catch(() => readyState);
     await this.recoverSubmittedBallotFromSelfDm().catch(() => readyState);
     void this.publishVoterStateSelfDm({ reason: "login_with_signer" });
+    void this.publishParticipantStatus("voter_live");
     return this.state ?? readyState;
   }
 
@@ -2027,6 +2077,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     void this.recoverVoterStateFromSelfDm().catch(() => readyState);
     void this.publishVoterStateSelfDm({ reason: "bootstrap_local_identity" });
+    void this.publishParticipantStatus("voter_live");
     return readyState;
   }
 
@@ -2142,7 +2193,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const published = await publishQuestionnaireProvisionalResponsePublic({
       responseNsec,
       questionnaireId: this.state.electionId,
-      questionnaireDefinitionEventId: definition?.definitionEventId ?? null,
+      questionnaireDefinitionEventId: null,
       responseId: `provisional_${responseIdHash.slice(0, 20)}`,
       submittedAt: Math.floor(Date.now() / 1000),
       questionIds: targetQuestionIds,
@@ -2682,68 +2733,28 @@ export class QuestionnaireOptionAVoterRuntime {
     const routing = await this.resolveIssueBlindTokensWorkerRouting();
     const coordinatorNpub = this.state.coordinatorNpub.trim();
     const workerNpub = routing?.workerNpub?.trim() || "";
-    const primaryRecipientNpub = workerNpub || coordinatorNpub;
-    const recipientNpubs = [...new Set([primaryRecipientNpub, coordinatorNpub, workerNpub].filter(Boolean))];
+    const recipientNpub = workerNpub || coordinatorNpub;
     const relays = mergeBlindRequestRoutingRelays(this.getPreferredDmRelays(), routing);
     optionAFlowLog("voter", "blind_request_publish_attempt", {
       electionId: this.state.electionId,
       requestId: request.requestId,
       coordinatorNpub,
       workerNpub: workerNpub || null,
-      recipientNpub: primaryRecipientNpub,
-      recipientCount: recipientNpubs.length,
+      recipientNpub,
+      recipientCount: 1,
       delegationId: routing?.delegationId ?? null,
-      organizerCopy: Boolean(workerNpub && coordinatorNpub !== workerNpub),
-      proxyCopy: Boolean(workerNpub),
+      recipientRole: workerNpub ? "proxy" : "organiser",
     });
     try {
-      let combined: Awaited<ReturnType<typeof publishOptionABlindRequestDm>> | null = null;
-      for (const recipientNpub of recipientNpubs) {
-        try {
-          const relaySet = recipientNpub === workerNpub ? relays : this.getPreferredDmRelays();
-          const result = await publishOptionABlindRequestDm({
-            signer: this.signer,
-            recipientNpub,
-            request,
-            fallbackNsec: this.fallbackNsec,
-            relays: relaySet,
-          });
-          this.rememberPrivateRelaySuccesses(result);
-          optionAFlowLog("voter", "blind_request_recipient_publish_result", {
-            electionId: this.state.electionId,
-            requestId: request.requestId,
-            recipientNpub,
-            recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
-            successes: result.successes,
-            failures: result.failures,
-          });
-          combined = combined
-            ? {
-              ...combined,
-              successes: combined.successes + result.successes,
-              failures: combined.failures + result.failures,
-              relayResults: [...combined.relayResults, ...result.relayResults],
-            }
-            : result;
-        } catch (error) {
-          optionAFlowLog("voter", "blind_request_recipient_publish_failed", {
-            electionId: this.state.electionId,
-            requestId: request.requestId,
-            recipientNpub,
-            recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-      if (combined) {
-        return {
-          ...combined,
-          successes: combined.successes,
-          failures: combined.failures,
-          relayResults: combined.relayResults,
-        };
-      }
-      return null;
+      const result = await publishOptionABlindRequestDm({
+        signer: this.signer,
+        recipientNpub,
+        request,
+        fallbackNsec: this.fallbackNsec,
+        relays: workerNpub ? relays : this.getPreferredDmRelays(),
+      });
+      this.rememberPrivateRelaySuccesses(result);
+      return result;
     } catch {
       return null;
     }
@@ -2759,56 +2770,29 @@ export class QuestionnaireOptionAVoterRuntime {
     const routing = await this.resolveIssueBlindTokensWorkerRouting();
     const coordinatorNpub = this.state.coordinatorNpub.trim();
     const workerNpub = routing?.workerNpub?.trim() || "";
-    const primaryRecipientNpub = workerNpub || coordinatorNpub;
-    const recipientNpubs = [...new Set([primaryRecipientNpub, coordinatorNpub, workerNpub].filter(Boolean))];
+    const recipientNpub = workerNpub || coordinatorNpub;
     const relays = mergeBlindRequestRoutingRelays(this.getPreferredDmRelays(), routing);
     optionAFlowLog("voter", "blind_request_bundle_publish_attempt", {
       electionId: this.state.electionId,
       requestCount: requests.length,
       coordinatorNpub,
       workerNpub: workerNpub || null,
-      recipientCount: recipientNpubs.length,
+      recipientCount: 1,
       delegationId: routing?.delegationId ?? null,
     });
-    let combined: Awaited<ReturnType<typeof publishOptionABlindRequestBundleDm>> | null = null;
-    for (const recipientNpub of recipientNpubs) {
-      try {
-        const relaySet = recipientNpub === workerNpub ? relays : this.getPreferredDmRelays();
-        const result = await publishOptionABlindRequestBundleDm({
-          signer: this.signer,
-          recipientNpub,
-          requests,
-          fallbackNsec: this.fallbackNsec,
-          relays: relaySet,
-        });
-        this.rememberPrivateRelaySuccesses(result);
-        optionAFlowLog("voter", "blind_request_bundle_recipient_publish_result", {
-          electionId: this.state.electionId,
-          requestCount: requests.length,
-          recipientNpub,
-          recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
-          successes: result.successes,
-          failures: result.failures,
-        });
-        combined = combined
-          ? {
-            ...combined,
-            successes: combined.successes + result.successes,
-            failures: combined.failures + result.failures,
-            relayResults: [...combined.relayResults, ...result.relayResults],
-          }
-          : result;
-      } catch (error) {
-        optionAFlowLog("voter", "blind_request_bundle_recipient_publish_failed", {
-          electionId: this.state.electionId,
-          requestCount: requests.length,
-          recipientNpub,
-          recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+    try {
+      const result = await publishOptionABlindRequestBundleDm({
+        signer: this.signer,
+        recipientNpub,
+        requests,
+        fallbackNsec: this.fallbackNsec,
+        relays: workerNpub ? relays : this.getPreferredDmRelays(),
+      });
+      this.rememberPrivateRelaySuccesses(result);
+      return result;
+    } catch {
+      return null;
     }
-    return combined;
   }
 
   refreshIssuanceAndAcceptance(options?: { restartSubscriptions?: boolean }) {
@@ -2906,7 +2890,7 @@ export class QuestionnaireOptionAVoterRuntime {
         const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
         const submissionId = this.state.submission?.submissionId ?? "";
         const publicDecisionRelays = readCachedQuestionnaireDefinition(electionId)?.questionnaireRelays
-          ?? this.state.election?.questionnaireRelays
+          ?? loadElectionSummary(electionId)?.questionnaireRelays
           ?? this.getPreferredDmRelays();
         const publicDecisionFetch = submissionId
           ? fetchQuestionnaireSubmissionDecisions({
@@ -3025,6 +3009,15 @@ export class QuestionnaireOptionAVoterRuntime {
       }
     }
     next = reconcileVoterCredentialReadyForDefinition(next, activeDefinition);
+    if (!previousState.credentialReady && next.credentialReady) {
+      const terminalIssuance = Object.values(next.blindIssuances ?? {}).at(-1) ?? next.blindIssuance;
+      if (terminalIssuance) {
+        void this.publishParticipantStatus("ballot_received", {
+          requestId: terminalIssuance.requestId,
+          issuanceId: terminalIssuance.issuanceId,
+        });
+      }
+    }
     if (next.submission) {
       const acceptance = readAcceptance(next.submission.submissionId);
       if (acceptance?.accepted) {
@@ -3149,7 +3142,7 @@ export class QuestionnaireOptionAVoterRuntime {
         blindSigningKeyId: issuance.blindSigningKeyId,
         credential,
         nullifier: deriveQuestionnaireTokenNullifier({
-          questionnaireId: this.state.electionId,
+          questionnaireId: this.electionId,
           tokenSecret: tokenSecret.tokenSecret,
           ballotScope,
         }),
@@ -3197,7 +3190,7 @@ export class QuestionnaireOptionAVoterRuntime {
         blindSigningKeyId: issuance.blindSigningKeyId,
         credential,
         nullifier: deriveQuestionnaireTokenNullifier({
-          questionnaireId: this.state.electionId,
+          questionnaireId: this.electionId,
           tokenSecret: tokenSecret.tokenSecret,
           ballotScope: scope,
         }),
@@ -3367,13 +3360,13 @@ export class QuestionnaireOptionAVoterRuntime {
         })) : undefined,
         tokenProof: {
           tokenCommitment: this.state.submission.tokenCommitment,
-          questionnaireId: this.state.electionId,
+          questionnaireId: this.electionId,
           signature: this.state.submission.credential,
           ballotScope: existingCredentialBundle[0]?.ballotScope ?? null,
         },
         tokenProofs: includeExistingCredentialBundle ? existingCredentialBundle.map((proof) => ({
           tokenCommitment: proof.tokenCommitment,
-          questionnaireId: this.state.electionId,
+          questionnaireId: submission.electionId,
           signature: proof.credential,
           questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
           ballotScope: proof.ballotScope ?? null,
@@ -3483,9 +3476,9 @@ export class QuestionnaireOptionAVoterRuntime {
         signature: submission.credential,
         ballotScope: primaryCredential.ballotScope ?? null,
       },
-      tokenProofs: includeCredentialBundle ? credentialBundle.map((proof) => ({
-        tokenCommitment: proof.tokenCommitment,
-        questionnaireId: this.state.electionId,
+        tokenProofs: includeCredentialBundle ? credentialBundle.map((proof) => ({
+          tokenCommitment: proof.tokenCommitment,
+          questionnaireId: submission.electionId,
         signature: proof.credential,
         questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
         ballotScope: proof.ballotScope ?? null,
@@ -3588,10 +3581,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private lastSelfStateSnapshotPublishedAt = 0;
   private lastBlindRequestSyncDiagnostics: OptionABlindRequestFetchDiagnostics | null = null;
   private pendingAuthorizationsByNpub: Record<string, BlindBallotRequest[]> = {};
+  private pendingParticipantStatusesByNpub: Record<string, OptionAParticipantStatus[]> = {};
   private issuanceDmRepublishRequests = new Map<string, string>();
   private stopBlindRequestSubscription: (() => void) | null = null;
   private stopSubmissionSubscription: (() => void) | null = null;
   private stopBlindIssuanceAckSubscription: (() => void) | null = null;
+  private stopParticipantStatusSubscription: (() => void) | null = null;
   private liveBlindRequestProcessInFlight: Promise<void> | null = null;
   private liveSubmissionProcessInFlight: Promise<void> | null = null;
   private processBlindRequestsInFlight: Promise<CoordinatorElectionState> | null = null;
@@ -3636,13 +3631,25 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   getPendingAuthorizations() {
-    return Object.entries(this.pendingAuthorizationsByNpub)
-      .map(([invitedNpub, requests]) => ({
+    const invitedNpubs = new Set([
+      ...Object.keys(this.pendingAuthorizationsByNpub),
+      ...Object.keys(this.pendingParticipantStatusesByNpub),
+    ]);
+    return [...invitedNpubs]
+      .map((invitedNpub) => {
+        const requests = this.pendingAuthorizationsByNpub[invitedNpub] ?? [];
+        const statuses = this.pendingParticipantStatusesByNpub[invitedNpub] ?? [];
+        const requestIds = new Set([
+          ...requests.map((request) => request.requestId),
+          ...statuses.map((status) => status.requestId).filter((requestId): requestId is string => Boolean(requestId)),
+        ]);
+        return {
         invitedNpub,
         latestRequest: [...requests].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null,
-        requestCount: requests.length,
-      }))
-      .filter((entry) => entry.latestRequest !== null);
+          latestStatus: [...statuses].sort((left, right) => right.observedAt.localeCompare(left.observedAt))[0] ?? null,
+          requestCount: Math.max(1, requestIds.size),
+        };
+      });
   }
 
   dispose() {
@@ -3679,6 +3686,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.stopSubmissionSubscription = null;
     this.stopBlindIssuanceAckSubscription?.();
     this.stopBlindIssuanceAckSubscription = null;
+    this.stopParticipantStatusSubscription?.();
+    this.stopParticipantStatusSubscription = null;
   }
 
   private triggerBlindRequestProcessingFromLive() {
@@ -3745,6 +3754,87 @@ export class QuestionnaireOptionACoordinatorRuntime {
         this.recordBlindIssuanceAck(ack);
       },
     });
+    this.stopParticipantStatusSubscription = subscribeOptionAParticipantStatusDms({
+      signer: this.signer,
+      electionId: this.electionId,
+      workerNpub: this.activeIssuerWorkerNpub() || undefined,
+      relays,
+      onStatus: (status) => {
+        this.applyParticipantStatus(status);
+      },
+    });
+  }
+
+  private activeIssuerWorkerNpub() {
+    const stored = loadStoredWorkerDelegation(this.electionId)?.activeDelegation?.workerNpub?.trim() ?? "";
+    return stored || selectIssueBlindTokensWorkerRouting({ summary: loadElectionSummary(this.electionId) })?.workerNpub?.trim() || "";
+  }
+
+  private applyParticipantStatus(status: OptionAParticipantStatus) {
+    if (!this.state || status.electionId !== this.electionId) {
+      return false;
+    }
+    const existing = this.state.whitelist[status.invitedNpub];
+    if (!existing) {
+      if (status.source !== "issuer_proxy" || status.state !== "ballot_requested") {
+        return false;
+      }
+      const pending = this.pendingParticipantStatusesByNpub[status.invitedNpub] ?? [];
+      const alreadySeen = pending.some((entry) => (
+        entry.requestId === status.requestId && entry.state === status.state
+      ));
+      if (!alreadySeen) {
+        this.pendingParticipantStatusesByNpub[status.invitedNpub] = [...pending, status];
+      }
+      this.state = {
+        ...this.state,
+        lastUpdatedAt: Date.parse(status.observedAt) >= Date.parse(this.state.lastUpdatedAt)
+          ? status.observedAt
+          : this.state.lastUpdatedAt,
+      };
+      this.persistCoordinatorState("participant_status_ballot_requested");
+      return true;
+    }
+    const entry: WhitelistEntry = existing;
+    const claimOrder = [
+      "whitelisted",
+      "invited",
+      "claimed",
+      "blind_request_received",
+      "blind_signature_issued",
+      "vote_received",
+      "vote_accepted",
+      "vote_rejected",
+    ];
+    const targetClaimState = status.state === "ballot_requested"
+      ? "blind_request_received"
+      : status.state === "ballot_issued" || status.state === "ballot_received"
+        ? "blind_signature_issued"
+        : "claimed";
+    const nextClaimState = claimOrder.indexOf(targetClaimState) > claimOrder.indexOf(entry.claimState)
+      ? targetClaimState as WhitelistEntry["claimState"]
+      : entry.claimState;
+    const nextEntry: WhitelistEntry = {
+      ...entry,
+      claimState: nextClaimState,
+      ...(status.state === "voter_live" ? { voterLastSeenAt: status.observedAt } : {}),
+      ...(status.state === "ballot_requested" ? { ballotRequestedAt: status.observedAt } : {}),
+      ...(status.state === "ballot_issued" ? { ballotIssuedAt: status.observedAt } : {}),
+      ...(status.state === "ballot_received" ? { ballotReceivedAt: status.observedAt } : {}),
+      ...(status.issuanceId ? { issuanceId: status.issuanceId } : {}),
+    };
+    this.state = {
+      ...this.state,
+      whitelist: {
+        ...this.state.whitelist,
+        [status.invitedNpub]: nextEntry,
+      },
+      lastUpdatedAt: Date.parse(status.observedAt) >= Date.parse(this.state.lastUpdatedAt)
+        ? status.observedAt
+        : this.state.lastUpdatedAt,
+    };
+    this.persistCoordinatorState(`participant_status_${status.state}`);
+    return true;
   }
 
   private getDmReadSince() {
@@ -3770,6 +3860,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
     const pendingAuthorizationsByNpub = Object.fromEntries(
       Object.entries(this.pendingAuthorizationsByNpub).map(([npub, requests]) => [npub, [...requests]]),
     );
+    const pendingParticipantStatusesByNpub = Object.fromEntries(
+      Object.entries(this.pendingParticipantStatusesByNpub).map(([npub, statuses]) => [npub, [...statuses]]),
+    );
     return {
       type: "coordinator_state_snapshot",
       schemaVersion: 1,
@@ -3777,6 +3870,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       coordinatorNpub: state.election.coordinatorNpub,
       state: stateWithoutPrivateKey,
       pendingAuthorizationsByNpub,
+      pendingParticipantStatusesByNpub,
       lastUpdatedAt: state.lastUpdatedAt,
     };
   }
@@ -3873,6 +3967,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       || Object.keys(snapshot.state.acceptanceResults).length > Object.keys(this.state.acceptanceResults).length
       || Object.keys(snapshot.state.bearerInviteCodes ?? {}).length > Object.keys(this.state.bearerInviteCodes ?? {}).length
       || Object.keys(snapshot.pendingAuthorizationsByNpub ?? {}).length > Object.keys(this.pendingAuthorizationsByNpub).length
+      || Object.keys(snapshot.pendingParticipantStatusesByNpub ?? {}).length > Object.keys(this.pendingParticipantStatusesByNpub).length
     );
     if (!snapshotLooksNewer && !fillsMissingProgress) {
       return false;
@@ -3920,6 +4015,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.pendingAuthorizationsByNpub = {
       ...this.pendingAuthorizationsByNpub,
       ...(snapshot.pendingAuthorizationsByNpub ?? {}),
+    };
+    this.pendingParticipantStatusesByNpub = {
+      ...this.pendingParticipantStatusesByNpub,
+      ...(snapshot.pendingParticipantStatusesByNpub ?? {}),
     };
     this.state = merged;
     upsertElectionSummary(this.state.election);
@@ -4822,6 +4921,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       enqueueBlindRequest(request);
     }
     delete this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub];
+    delete this.pendingParticipantStatusesByNpub[normalizedInvitedNpub || invitedNpub];
     await this.processPendingBlindRequests();
     const delivered = await this.publishPendingBlindIssuancesToDm({
       requestIds: pendingForVoter.map((request) => request.requestId),
@@ -4887,7 +4987,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           delegationId: delegation.delegationId,
           workerNpub: delegation.workerNpub,
           controlRelays: delegation.controlRelays,
-          dmRelays: getPreferredQuestionnaireDmRelays(this.electionId),
+          dmRelays: delegation.dmRelays ?? getPreferredQuestionnaireDmRelays(this.electionId),
           expiresAt: delegation.expiresAt,
         });
         this.state.election = withIssueBlindTokensWorkerRouting(this.state.election, issueBlindTokensWorker);
@@ -4992,11 +5092,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
         }
         enqueueBlindRequest(request);
       }
-      if (diagnostics) {
-        this.lastBlindRequestSyncDiagnostics = diagnostics;
+      const syncDiagnostics = diagnostics as OptionABlindRequestFetchDiagnostics | null;
+      if (syncDiagnostics) {
+        this.lastBlindRequestSyncDiagnostics = syncDiagnostics;
         optionAFlowLog("coordinator", "blind_requests_sync_diagnostics", {
           electionId: this.electionId,
-          ...diagnostics,
+          ...syncDiagnostics,
         });
       }
       optionAFlowLog("coordinator", "blind_requests_synced", {
@@ -5013,7 +5114,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     forceAll?: boolean;
     requestIds?: string[];
     minRetryMs?: number;
-  }) {
+  }): Promise<number> {
     if (this.publishBlindIssuancesInFlight) {
       const pending = this.pendingBlindIssuancePublishOptions ?? {};
       const requestIds = new Set([...(pending.requestIds ?? []), ...(options?.requestIds ?? [])]);
@@ -5198,6 +5299,56 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
   }
 
+  async syncParticipantStatusesFromDm() {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    try {
+      const since = this.getDmReadSince();
+      const publicDelegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: this.electionId,
+        capability: "issue_blind_tokens",
+        coordinatorNpub: this.coordinatorNpub,
+        readRelayLimit: 6,
+      }).catch(() => null);
+      const workerNpub = publicDelegation?.workerNpub?.trim() || this.activeIssuerWorkerNpub() || undefined;
+      const relays = mergeQuestionnaireRelayHints(
+        this.getPreferredDmRelays(),
+        publicDelegation?.dmRelays,
+      );
+      const statuses = this.fallbackNsec?.trim()
+        ? await fetchOptionAParticipantStatusDmsWithNsec({
+          nsec: this.fallbackNsec,
+          electionId: this.electionId,
+          workerNpub,
+          relays,
+          limit: OPTION_A_COORDINATOR_NSEC_DM_LIMIT,
+          since,
+          pageLimit: OPTION_A_COORDINATOR_DM_PAGE_LIMIT,
+          maxPages: OPTION_A_COORDINATOR_DM_MAX_PAGES,
+          timeBudgetMs: OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS,
+        })
+        : await fetchOptionAParticipantStatusDms({
+          signer: this.signer,
+          electionId: this.electionId,
+          workerNpub,
+          relays,
+          limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
+          since,
+          maxDecryptAttempts: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
+          pageLimit: OPTION_A_COORDINATOR_DM_PAGE_LIMIT,
+          maxPages: OPTION_A_COORDINATOR_DM_MAX_PAGES,
+          timeBudgetMs: OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS,
+        });
+      statuses
+        .sort((left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt))
+        .forEach((status) => this.applyParticipantStatus(status));
+      return statuses.length;
+    } catch {
+      return 0;
+    }
+  }
+
   async syncSubmissionsFromDm() {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
@@ -5255,7 +5406,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
   }
 
-  async publishPendingAcceptanceResultsToDm(options?: { forceAll?: boolean }) {
+  async publishPendingAcceptanceResultsToDm(options?: { forceAll?: boolean }): Promise<number> {
     if (this.publishAcceptanceResultsInFlight) {
       this.pendingAcceptancePublishForceAll = this.pendingAcceptancePublishForceAll || Boolean(options?.forceAll);
       return this.publishAcceptanceResultsInFlight;
@@ -5787,7 +5938,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.coordinatorNpub) {
       return null;
     }
-    const coordinatorNsec = this.fallbackNsec ?? this.state?.coordinatorNsec ?? null;
+    const coordinatorNsec = this.fallbackNsec ?? null;
     if (!coordinatorNsec) {
       optionAFlowLog("coordinator", "submission_decision_publish_skipped_no_nsec", {
         electionId: this.electionId,
@@ -5926,6 +6077,7 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
       recoverSelfState: false,
       publishSelfState: false,
     });
+    await runtime.syncParticipantStatusesFromDm();
     blindRequestsSynced += await runtime.syncBlindRequestsFromDm();
     blindRequestDiagnosticsByElectionId[electionId] = runtime.getLastBlindRequestSyncDiagnostics();
     await runtime.processPendingBlindRequests();

@@ -127,7 +127,8 @@ export function UiIcon({ name, className }: { name: UiIconName; className?: stri
   return <Icon className={cx("av-ui-icon", className)} aria-hidden='true' focusable='false' />;
 }
 
-type UiButtonProps = Omit<AriaButtonProps, "className"> & {
+type UiButtonProps = Omit<AriaButtonProps, "className"> &
+  Omit<ButtonHTMLAttributes<HTMLButtonElement>, keyof AriaButtonProps | "className"> & {
   className?: string;
   variant?: "primary" | "secondary" | "danger" | "ghost";
   disabled?: boolean;
@@ -149,7 +150,7 @@ export function UiButton({
   ...props
 }: UiButtonProps) {
   const iconElement = icon ? <UiIcon name={icon} /> : null;
-  const labelElement = children ? <span className='av-ui-button-label'>{children}</span> : null;
+  const labelElement = children ? <span className='av-ui-button-label'>{children as ReactNode}</span> : null;
   const baseClassName = cx(
     "av-ui-button",
     `av-ui-button-${variant}`,
@@ -375,7 +376,7 @@ export function UiMenuItem({ className, icon = "action", children, ...props }: U
       )}
     >
       {icon ? <UiIcon name={icon} /> : null}
-      <span className='av-ui-menu-item-label'>{children}</span>
+      <span className='av-ui-menu-item-label'>{children as ReactNode}</span>
     </AriaMenuItem>
   );
 }

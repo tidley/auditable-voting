@@ -6,17 +6,20 @@ use crate::config::WorkerConfig;
 use crate::model::{
     is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance,
     BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotRequest,
-    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, BlindTokenProof,
-    CompressedBundleEnvelope, ElectionRuntimeState, QuestionnaireBlindResponseEvent,
-    QuestionnairePublishedResponseRef, QuestionnaireSubmissionDecisionEvent, WorkerCapability,
-    WorkerDelegationCertificate, WorkerDelegationEnvelope, WorkerDelegationRevocation,
-    WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot, WorkerPersistentState,
-    WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, BlindIssuanceAck,
+    BlindIssuanceAckEnvelope, BlindTokenProof, CompressedBundleEnvelope, ElectionRuntimeState,
+    OptionAParticipantStatus, OptionAParticipantStatusEnvelope, OptionAParticipantStatusState,
+    QuestionnaireBlindResponseEvent, QuestionnairePublishedResponseRef,
+    QuestionnaireSubmissionDecisionEvent, WorkerCapability, WorkerDelegationCertificate,
+    WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
+    WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
+    WorkerStatusEnvelope, WorkerStatusSnapshot,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION, OPTIONA_WORKER_DELEGATION_KIND,
-    OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
 };
+#[cfg(test)]
+use crate::model::IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION;
 use crate::store::WorkerStore;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -90,17 +93,21 @@ const PRIVATE_DM_REJECTING_RELAYS: &[&str] = &[
     // Public questionnaire relay. It currently rejects NIP-17 gift wraps with
     // "kind 1059 not permitted", so keep it out of worker private DM publish/read paths.
     "wss://relay.nostr.info",
+    // These currently require unsupported browser read auth or reject worker connections.
+    "wss://nip17.com",
+    "wss://relay.0xchat.com",
 ];
 const PRIVATE_DM_FALLBACK_RELAYS: &[&str] = &[
     "wss://vm-1734.lnvps.cloud/",
     "wss://relay.nostr.net",
-    "wss://nip17.com",
-    "wss://relay.0xchat.com",
+    "wss://nos.lol",
 ];
 const WORKER_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
 const WORKER_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
 const WORKER_RELAY_FAILURES_BEFORE_BACKOFF: u32 = 2;
+#[cfg(test)]
 const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = WORKER_RELAY_INITIAL_BACKOFF_SECS;
+#[cfg(test)]
 const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = WORKER_RELAY_MAX_BACKOFF_SECS;
 const PUBLIC_RESPONSE_CONCURRENCY: usize = 16;
 const CONTROL_BLIND_REQUEST_QUEUE_SIZE: usize = 1024;
@@ -272,9 +279,9 @@ fn valid_voter_group_id(value: &str) -> bool {
     !bytes.is_empty()
         && bytes.len() <= 64
         && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
 }
 
 fn normalize_allowed_scopes(
@@ -862,6 +869,7 @@ fn definition_blind_signing_key_id(definition: &Option<serde_json::Value>) -> Op
         .and_then(definition_value_blind_signing_key_id)
 }
 
+#[cfg(test)]
 fn public_definition_matches_worker_private_key(
     definition: &serde_json::Value,
     election: &ElectionRuntimeState,
@@ -1546,6 +1554,52 @@ fn record_issuance_for_request(election: &mut ElectionRuntimeState, request: &Bl
     }
 }
 
+fn blind_issuance_ack_matches(
+    authenticated_sender: &str,
+    ack: &BlindIssuanceAck,
+    election: Option<&ElectionRuntimeState>,
+) -> bool {
+    if ack.message_type != "blind_ballot_issuance_ack"
+        || ack.schema_version != 1
+        || authenticated_sender != ack.invited_npub
+    {
+        return false;
+    }
+    election
+        .and_then(|entry| entry.issued_issuances_by_request_id.get(&ack.request_id))
+        .is_some_and(|issuance| {
+            issuance.election_id == ack.election_id
+                && issuance.request_id == ack.request_id
+                && issuance.issuance_id == ack.issuance_id
+                && issuance.invited_npub == ack.invited_npub
+        })
+}
+
+fn build_participant_status_envelope(
+    election_id: &str,
+    invited_npub: &str,
+    status_state: OptionAParticipantStatusState,
+    request_id: Option<&str>,
+    issuance_id: Option<&str>,
+) -> OptionAParticipantStatusEnvelope {
+    OptionAParticipantStatusEnvelope {
+        message_type: "optiona_participant_status_dm".to_string(),
+        schema_version: 1,
+        status: OptionAParticipantStatus {
+            message_type: "participant_status".to_string(),
+            schema_version: 1,
+            election_id: election_id.to_string(),
+            invited_npub: invited_npub.to_string(),
+            source: "issuer_proxy".to_string(),
+            state: status_state,
+            observed_at: now_iso(),
+            request_id: request_id.map(str::to_string),
+            issuance_id: issuance_id.map(str::to_string),
+        },
+        sent_at: now_iso(),
+    }
+}
+
 fn remember_deferred_blind_request(
     election: &mut ElectionRuntimeState,
     request: &BlindBallotRequest,
@@ -1657,6 +1711,7 @@ struct ControlBlindRequestJob {
     event_id: String,
     requests: Vec<BlindBallotRequest>,
     mark_seen_on_deferred: bool,
+    emit_requested_status: bool,
 }
 
 struct QueuedPreparedBlindIssuance {
@@ -2128,15 +2183,20 @@ impl WorkerRuntime {
                         label,
                         if relay_success { None } else { relay_error },
                     )
-                        .await;
+                    .await;
                     successes += output.success.len();
                     if !relay_success {
                         failures.push(format!("{}: {:?}", relay, output.failed));
                     }
                 }
                 Ok((relay, Ok(Err(error)))) => {
-                    self.record_relay_attempt_result(&relay, false, label, Some(&error.to_string()))
-                        .await;
+                    self.record_relay_attempt_result(
+                        &relay,
+                        false,
+                        label,
+                        Some(&error.to_string()),
+                    )
+                    .await;
                     failures.push(format!("{relay}: {error}"));
                 }
                 Ok((relay, Err(_))) => {
@@ -2162,6 +2222,29 @@ impl WorkerRuntime {
             );
         }
         Ok(successes)
+    }
+
+    async fn send_participant_status(
+        &self,
+        election_id: &str,
+        invited_npub: &str,
+        status_state: OptionAParticipantStatusState,
+        request_id: Option<&str>,
+        issuance_id: Option<&str>,
+    ) -> Result<usize> {
+        let envelope = build_participant_status_envelope(
+            election_id,
+            invited_npub,
+            status_state,
+            request_id,
+            issuance_id,
+        );
+        self.send_private_msg_best_effort(
+            self.coordinator_pubkey,
+            serde_json::to_string(&envelope)?,
+            "participant status",
+        )
+        .await
     }
 
     fn enqueue_public_archive_event(&self, event: &Event, label: &str) {
@@ -2264,6 +2347,23 @@ impl WorkerRuntime {
         for (job_index, job) in jobs.iter().enumerate() {
             let mut seen_bundle_scope_keys = HashSet::new();
             for request in job.requests.iter().cloned() {
+                if job.emit_requested_status {
+                    if let Err(error) = self
+                        .send_participant_status(
+                            &request.election_id,
+                            &request.invited_npub,
+                            OptionAParticipantStatusState::BallotRequested,
+                            Some(&request.request_id),
+                            None,
+                        )
+                        .await
+                    {
+                        warn!(
+                            "participant ballot-requested status delivery failed: election_id={}, request_id={}, error={error}",
+                            request.election_id, request.request_id
+                        );
+                    }
+                }
                 let scope_key = blind_request_issuance_scope_key(&request);
                 if !seen_bundle_scope_keys.insert(scope_key.clone()) {
                     warn!(
@@ -2335,7 +2435,25 @@ impl WorkerRuntime {
             for entry in &entries {
                 handled_by_job[entry.job_index] = true;
             }
-            self.mark_blind_issuances_published(&requests).await?;
+            self.mark_blind_issuances_published(&requests, &issuances)
+                .await?;
+            for issuance in &issuances {
+                if let Err(error) = self
+                    .send_participant_status(
+                        &issuance.election_id,
+                        &issuance.invited_npub,
+                        OptionAParticipantStatusState::BallotIssued,
+                        Some(&issuance.request_id),
+                        Some(&issuance.issuance_id),
+                    )
+                    .await
+                {
+                    warn!(
+                        "participant ballot-issued status delivery failed: election_id={}, request_id={}, error={error}",
+                        issuance.election_id, issuance.request_id
+                    );
+                }
+            }
         }
 
         for (job_index, job) in jobs.iter().enumerate() {
@@ -2358,10 +2476,9 @@ impl WorkerRuntime {
                         && !is_expired(&election.expires_at)
                         && election.blind_signing_private_key.is_some()
                         && election.definition.is_some()
-                        && election
-                            .deferred_blind_requests
-                            .values()
-                            .any(|request| deferred_blind_request_ready_for_retry(election, request))
+                        && election.deferred_blind_requests.values().any(|request| {
+                            deferred_blind_request_ready_for_retry(election, request)
+                        })
                 })
                 .map(|(election_id, _)| election_id.clone())
                 .collect::<Vec<_>>()
@@ -2405,6 +2522,7 @@ impl WorkerRuntime {
                 event_id: format!("deferred:{}:{}", election_id, request.request_id),
                 requests: vec![request],
                 mark_seen_on_deferred: true,
+                emit_requested_status: false,
             })
             .collect::<Vec<_>>();
         self.process_control_blind_request_jobs(jobs).await
@@ -2583,11 +2701,19 @@ impl WorkerRuntime {
 
         let unwrapped = self.client.unwrap_gift_wrap(event).await?;
         log_decrypted_worker_dm(event, &unwrapped.rumor);
+        let authenticated_sender = unwrapped
+            .rumor
+            .pubkey
+            .to_bech32()
+            .unwrap_or_else(|_| unwrapped.rumor.pubkey.to_string());
         let rumor_content = unwrapped.rumor.content;
         if rumor_content.trim().is_empty() {
             return Ok(());
         }
-        match self.process_control_message(&rumor_content).await {
+        match self
+            .process_control_message(&rumor_content, &authenticated_sender)
+            .await
+        {
             Ok(ControlMessageAction::Processed(true)) => {
                 self.mark_control_event_processed(&event_id).await?;
             }
@@ -2608,6 +2734,7 @@ impl WorkerRuntime {
                     event_id: event_id.clone(),
                     requests,
                     mark_seen_on_deferred: replay_seen_control_events,
+                    emit_requested_status: true,
                 };
                 if let Err(error) = self.control_blind_request_sender.send(job).await {
                     let mut queued = self.queued_control_event_ids.lock().await;
@@ -2712,9 +2839,7 @@ impl WorkerRuntime {
             {
                 Some(next_retry_at) if next_retry_at > now => {
                     let wait_secs = next_retry_at.saturating_duration_since(now).as_secs();
-                    debug!(
-                        "worker relay {relay} is in backoff; retrying in {wait_secs}s"
-                    );
+                    debug!("worker relay {relay} is in backoff; retrying in {wait_secs}s");
                     delayed.push((relay, next_retry_at));
                 }
                 _ => {
@@ -2749,7 +2874,11 @@ impl WorkerRuntime {
         record_worker_relay_backoff_result(&mut relay_backoff, relay, success, label, error);
     }
 
-    async fn process_control_message(&self, content: &str) -> Result<ControlMessageAction> {
+    async fn process_control_message(
+        &self,
+        content: &str,
+        authenticated_sender: &str,
+    ) -> Result<ControlMessageAction> {
         let raw_value: serde_json::Value = match serde_json::from_str(content) {
             Ok(parsed) => parsed,
             Err(_) => return Ok(ControlMessageAction::Processed(true)),
@@ -2768,6 +2897,9 @@ impl WorkerRuntime {
         debug!("control message parsed: type={message_type}");
         match message_type {
             "optiona_worker_delegation_dm" => {
+                if authenticated_sender != self.config.coordinator_npub {
+                    return Ok(ControlMessageAction::Processed(true));
+                }
                 let envelope: WorkerDelegationEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
                     Err(_) => return Ok(ControlMessageAction::Processed(true)),
@@ -2775,6 +2907,9 @@ impl WorkerRuntime {
                 self.apply_delegation(envelope.delegation).await?;
             }
             "optiona_worker_delegation_revocation_dm" => {
+                if authenticated_sender != self.config.coordinator_npub {
+                    return Ok(ControlMessageAction::Processed(true));
+                }
                 let envelope: WorkerRevocationEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
                     Err(_) => return Ok(ControlMessageAction::Processed(true)),
@@ -2782,6 +2917,9 @@ impl WorkerRuntime {
                 self.apply_revocation(envelope.revocation).await?;
             }
             "optiona_worker_election_config_dm" => {
+                if authenticated_sender != self.config.coordinator_npub {
+                    return Ok(ControlMessageAction::Processed(true));
+                }
                 let envelope: WorkerElectionConfigEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
                     Err(_) => return Ok(ControlMessageAction::Processed(true)),
@@ -2808,6 +2946,13 @@ impl WorkerRuntime {
                     envelope.request.request_id,
                     envelope.request.invited_npub
                 );
+                if authenticated_sender != envelope.request.invited_npub {
+                    warn!(
+                        "blind request ignored because authenticated sender does not match invited npub: election_id={}, request_id={}",
+                        envelope.request.election_id, envelope.request.request_id
+                    );
+                    return Ok(ControlMessageAction::Processed(true));
+                }
                 return Ok(ControlMessageAction::BlindRequests(vec![envelope.request]));
             }
             "optiona_blind_request_bundle_dm" => {
@@ -2825,7 +2970,46 @@ impl WorkerRuntime {
                     "blind request bundle received: requests={}",
                     envelope.requests.len()
                 );
-                return Ok(ControlMessageAction::BlindRequests(envelope.requests));
+                let requests = envelope
+                    .requests
+                    .into_iter()
+                    .filter(|request| {
+                        let accepted = authenticated_sender == request.invited_npub;
+                        if !accepted {
+                            warn!(
+                                "blind request bundle entry ignored because authenticated sender does not match invited npub: election_id={}, request_id={}",
+                                request.election_id, request.request_id
+                            );
+                        }
+                        accepted
+                    })
+                    .collect::<Vec<_>>();
+                if requests.is_empty() {
+                    return Ok(ControlMessageAction::Processed(true));
+                }
+                return Ok(ControlMessageAction::BlindRequests(requests));
+            }
+            "optiona_blind_issuance_ack_dm" => {
+                let envelope: BlindIssuanceAckEnvelope = match serde_json::from_value(value) {
+                    Ok(parsed) => parsed,
+                    Err(_) => return Ok(ControlMessageAction::Processed(true)),
+                };
+                if envelope.message_type != "optiona_blind_issuance_ack_dm"
+                    || envelope.schema_version != 1
+                {
+                    return Ok(ControlMessageAction::Processed(true));
+                }
+                let valid = {
+                    let state = self.state.lock().await;
+                    blind_issuance_ack_matches(
+                        authenticated_sender,
+                        &envelope.ack,
+                        state.elections.get(&envelope.ack.election_id),
+                    )
+                };
+                if !valid {
+                    debug!("ignored invalid blind issuance acknowledgement");
+                }
             }
             _ => return Ok(ControlMessageAction::Processed(true)),
         }
@@ -2841,21 +3025,6 @@ impl WorkerRuntime {
             .hashtag("questionnaire_response_blind")
             .since(since_ts)
             .limit(500);
-        let delegation_filter = Filter::new()
-            .author(self.coordinator_pubkey)
-            .kinds(vec![
-                Kind::Custom(OPTIONA_WORKER_DELEGATION_KIND),
-                Kind::Custom(OPTIONA_WORKER_DELEGATION_REVOCATION_KIND),
-            ])
-            .since(since_ts)
-            .limit(300);
-        let definition_filter = Filter::new()
-            .author(self.coordinator_pubkey)
-            .kind(Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION))
-            .hashtag("questionnaire_definition")
-            .since(since_ts)
-            .limit(300);
-
         let relays = self.effective_worker_relays().await;
         self.ensure_relays_connected(&relays).await;
 
@@ -2865,29 +3034,6 @@ impl WorkerRuntime {
             .await
             .context("failed to subscribe to public response plane")?;
         let public_response_subscription_id = response_output.val.clone();
-        let delegation_subscription_id = SubscriptionId::generate();
-        let definition_subscription_id = SubscriptionId::generate();
-        let delegation_output = self
-            .client
-            .subscribe_with_id_to(
-                relays.clone(),
-                delegation_subscription_id.clone(),
-                delegation_filter,
-                None,
-            )
-            .await
-            .context("failed to subscribe to public delegation plane")?;
-        let definition_output = self
-            .client
-            .subscribe_with_id_to(
-                relays,
-                definition_subscription_id.clone(),
-                definition_filter,
-                None,
-            )
-            .await
-            .context("failed to subscribe to public definition plane")?;
-
         for relay in response_output.success.iter() {
             self.record_relay_attempt_result(relay, true, "public response subscription", None)
                 .await;
@@ -2901,33 +3047,6 @@ impl WorkerRuntime {
             )
             .await;
         }
-        for relay in delegation_output.success.iter() {
-            self.record_relay_attempt_result(relay, true, "public delegation subscription", None)
-                .await;
-        }
-        for (relay, error) in delegation_output.failed.iter() {
-            self.record_relay_attempt_result(
-                relay,
-                false,
-                "public delegation subscription",
-                Some(error.as_str()),
-            )
-            .await;
-        }
-        for relay in definition_output.success.iter() {
-            self.record_relay_attempt_result(relay, true, "public definition subscription", None)
-                .await;
-        }
-        for (relay, error) in definition_output.failed.iter() {
-            self.record_relay_attempt_result(
-                relay,
-                false,
-                "public definition subscription",
-                Some(error.as_str()),
-            )
-            .await;
-        }
-
         if !response_output.failed.is_empty() {
             warn!(
                 "public response subscription rejected by {} relays: {}",
@@ -2940,47 +3059,11 @@ impl WorkerRuntime {
                     .join("; ")
             );
         }
-        if !delegation_output.failed.is_empty() {
-            warn!(
-                "public delegation subscription rejected by {} relays: {}",
-                delegation_output.failed.len(),
-                delegation_output
-                    .failed
-                    .into_iter()
-                    .map(|(relay, error)| format!("{relay}: {error}"))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            );
-        }
-        if !definition_output.failed.is_empty() {
-            warn!(
-                "public definition subscription rejected by {} relays: {}",
-                definition_output.failed.len(),
-                definition_output
-                    .failed
-                    .into_iter()
-                    .map(|(relay, error)| format!("{relay}: {error}"))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            );
-        }
-
         info!(
             "public response subscription active: id={}, relays={}",
             response_output.val,
             response_output.success.len()
         );
-        info!(
-            "public delegation subscription active: id={}, relays={}",
-            delegation_subscription_id,
-            delegation_output.success.len()
-        );
-        info!(
-            "public definition subscription active: id={}, relays={}",
-            definition_subscription_id,
-            definition_output.success.len()
-        );
-
         let mut notification_receiver = self.client.notifications();
         loop {
             match notification_receiver.recv().await {
@@ -3007,36 +3090,6 @@ impl WorkerRuntime {
                         }
                     });
                 }
-                Ok(RelayPoolNotification::Event {
-                    subscription_id: event_subscription_id,
-                    event,
-                    ..
-                }) if event_subscription_id == definition_subscription_id => {
-                    self.process_public_definition_event(&event).await?;
-                }
-                Ok(RelayPoolNotification::Event {
-                    subscription_id: event_subscription_id,
-                    event,
-                    ..
-                }) if event_subscription_id == delegation_subscription_id => {
-                    if event.kind == Kind::Custom(OPTIONA_WORKER_DELEGATION_KIND) {
-                        if let Ok(delegation) =
-                            serde_json::from_str::<WorkerDelegationCertificate>(&event.content)
-                        {
-                            self.apply_delegation(delegation).await?;
-                        }
-                    } else if event.kind == Kind::Custom(OPTIONA_WORKER_DELEGATION_REVOCATION_KIND)
-                    {
-                        if let Ok(revocation) =
-                            serde_json::from_str::<WorkerDelegationRevocation>(&event.content)
-                        {
-                            self.apply_revocation(revocation).await?;
-                        }
-                    }
-                    let mut state = self.state.lock().await;
-                    state.last_public_scan_at = Some(now_iso());
-                    self.store.save(&state)?;
-                }
                 Ok(RelayPoolNotification::Event { .. }) => {}
                 Ok(RelayPoolNotification::Shutdown) => {
                     info!("public plane notification channel closed; stopping public worker loop");
@@ -3054,6 +3107,7 @@ impl WorkerRuntime {
         }
     }
 
+    #[cfg(test)]
     async fn process_public_definition_event(&self, event: &Event) -> Result<bool> {
         if event.kind != Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION) {
             return Ok(false);
@@ -3722,6 +3776,13 @@ impl WorkerRuntime {
         if snapshot.coordinator_npub != self.config.coordinator_npub {
             return Ok(());
         }
+        if snapshot.definition.is_none() {
+            warn!(
+                "worker election config ignored because it does not include a questionnaire definition: election_id={}, delegation_id={}",
+                snapshot.election_id, snapshot.delegation_id
+            );
+            return Ok(());
+        }
         if worker_election_config_has_blind_key_mismatch(&snapshot) {
             warn!(
                 "worker election config ignored because blind signing key does not match definition: election_id={}, delegation_id={}, private_key={}, definition_key={}",
@@ -3766,8 +3827,6 @@ impl WorkerRuntime {
             return Ok(());
         }
         self.store.save(&state)?;
-        let should_fetch_public_definition =
-            snapshot.definition_reference.is_some() && snapshot.definition.is_none();
         drop(state);
         info!(
             "worker election config applied: election_id={}, delegation_id={}, expected_invitee_count={:?}, has_blind_signing_key={}, has_definition_reference={}, has_legacy_definition={}",
@@ -3778,10 +3837,6 @@ impl WorkerRuntime {
             snapshot.definition_reference.is_some(),
             snapshot.definition.is_some(),
         );
-        if should_fetch_public_definition {
-            self.fetch_public_definition_for_election(&snapshot.election_id)
-                .await?;
-        }
         if let Err(error) = self
             .process_deferred_blind_requests_for_election(&snapshot.election_id)
             .await
@@ -3789,40 +3844,6 @@ impl WorkerRuntime {
             warn!(
                 "deferred blind request replay failed after config load for election {}; requests remain retryable: {error}",
                 snapshot.election_id
-            );
-        }
-        Ok(())
-    }
-
-    async fn fetch_public_definition_for_election(&self, election_id: &str) -> Result<()> {
-        let relays = self.effective_worker_relays().await;
-        self.ensure_relays_connected(&relays).await;
-        let filter = Filter::new()
-            .author(self.coordinator_pubkey)
-            .kind(Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION))
-            .hashtag("questionnaire_definition")
-            .custom_tag(
-                SingleLetterTag::lowercase(Alphabet::Q),
-                election_id.to_string(),
-            )
-            .limit(100);
-        let events = self
-            .client
-            .fetch_events(filter, Duration::from_secs(5))
-            .await
-            .context("failed to fetch public questionnaire definition")?;
-        let mut handled = false;
-        for event in events.into_iter() {
-            if event.content.contains(election_id)
-                && self.process_public_definition_event(&event).await?
-            {
-                handled = true;
-            }
-        }
-        if !handled {
-            debug!(
-                "public questionnaire definition fetch found no matching definition: election_id={}",
-                election_id
             );
         }
         Ok(())
@@ -3857,6 +3878,29 @@ impl WorkerRuntime {
                 .capabilities
                 .contains(&WorkerCapability::IssueBlindTokens)
             {
+                return Ok(PreparedBlindIssuance::Handled);
+            }
+            if let Some(issuance) = election
+                .issued_issuances_by_request_id
+                .get(&request.request_id)
+                .cloned()
+            {
+                if issuance.election_id == request.election_id
+                    && issuance.request_id == request.request_id
+                    && issuance.invited_npub == request.invited_npub
+                    && issuance.blind_signing_key_id == request.blind_signing_key_id
+                    && issuance.ballot_scope == request.ballot_scope
+                {
+                    debug!(
+                        "blind request replay received; re-publishing persisted issuance: election_id={}, request_id={}, issuance_id={}",
+                        request.election_id, request.request_id, issuance.issuance_id
+                    );
+                    return Ok(PreparedBlindIssuance::Issuance { request, issuance });
+                }
+                warn!(
+                    "blind request ignored because request ID conflicts with persisted issuance: election_id={}, request_id={}",
+                    request.election_id, request.request_id
+                );
                 return Ok(PreparedBlindIssuance::Handled);
             }
             if election
@@ -3999,7 +4043,11 @@ impl WorkerRuntime {
         Ok(PreparedBlindIssuance::Issuance { request, issuance })
     }
 
-    async fn mark_blind_issuances_published(&self, requests: &[BlindBallotRequest]) -> Result<()> {
+    async fn mark_blind_issuances_published(
+        &self,
+        requests: &[BlindBallotRequest],
+        issuances: &[BlindBallotIssuance],
+    ) -> Result<()> {
         let mut state = self.state.lock().await;
         for request in requests {
             let Some(election) = state.elections.get_mut(&request.election_id) else {
@@ -4010,6 +4058,14 @@ impl WorkerRuntime {
             election
                 .seen_blind_request_ids
                 .insert(request.request_id.clone());
+            if let Some(issuance) = issuances
+                .iter()
+                .find(|issuance| issuance.request_id == request.request_id)
+            {
+                election
+                    .issued_issuances_by_request_id
+                    .insert(request.request_id.clone(), issuance.clone());
+            }
             election.last_blind_issuance_at = Some(now_iso());
         }
         self.store.save(&state)?;
@@ -4104,6 +4160,7 @@ impl WorkerRuntime {
             existing.deferred_blind_requests.clear();
             existing.issued_invited_npubs.clear();
             existing.issued_invited_scope_keys.clear();
+            existing.issued_issuances_by_request_id.clear();
             existing.whitelist_npubs.clear();
             existing.proxy_voter_npubs.clear();
             existing.ballot_groups_by_npub.clear();
@@ -4253,7 +4310,10 @@ fn build_result_pack_csv(
 }
 
 fn csv_cell(value: &str) -> String {
-    if value.chars().any(|ch| matches!(ch, ',' | '"' | '\r' | '\n')) {
+    if value
+        .chars()
+        .any(|ch| matches!(ch, ',' | '"' | '\r' | '\n'))
+    {
         format!("\"{}\"", value.replace('"', "\"\""))
     } else {
         value.to_string()
@@ -4424,6 +4484,7 @@ fn record_worker_relay_backoff_result(
     );
 }
 
+#[cfg(test)]
 fn discouraged_relay_retry_delay(failures: u32) -> Duration {
     worker_relay_retry_delay(failures, None)
 }
@@ -4755,7 +4816,9 @@ mod tests {
 
         assert!(!deferred_blind_request_ready_for_retry(&election, &request));
 
-        election.whitelist_npubs.insert(request.invited_npub.clone());
+        election
+            .whitelist_npubs
+            .insert(request.invited_npub.clone());
         assert!(deferred_blind_request_ready_for_retry(&election, &request));
     }
 
@@ -4823,7 +4886,7 @@ mod tests {
         };
         assert_eq!(issuance.request_id, request.request_id);
         runtime
-            .mark_blind_issuances_published(&[request.clone()])
+            .mark_blind_issuances_published(&[request.clone()], &[issuance.clone()])
             .await
             .expect("mark issued");
 
@@ -4841,7 +4904,26 @@ mod tests {
         assert!(election
             .seen_blind_request_ids
             .contains(&request.request_id));
+        assert_eq!(
+            election
+                .issued_issuances_by_request_id
+                .get(&request.request_id)
+                .expect("persisted issuance")
+                .issuance_id,
+            issuance.issuance_id
+        );
         drop(state);
+
+        let PreparedBlindIssuance::Issuance {
+            issuance: replayed, ..
+        } = runtime
+            .prepare_blind_issuance(request)
+            .await
+            .expect("prepare replayed issuance")
+        else {
+            panic!("expected persisted issuance replay");
+        };
+        assert_eq!(replayed.issuance_id, issuance.issuance_id);
         fs::remove_dir_all(state_dir).ok();
     }
 
@@ -5163,7 +5245,9 @@ mod tests {
             .expect("process definition"));
 
         let state = runtime.state.lock().await;
-        assert!(!state.elections.contains_key("q_public_definition_undelegated"));
+        assert!(!state
+            .elections
+            .contains_key("q_public_definition_undelegated"));
         drop(state);
         let _ = fs::remove_dir_all(state_dir);
     }
@@ -6392,9 +6476,10 @@ mod tests {
         let started = Instant::now();
         let mut decoded_requests = 0usize;
 
-        for bundle in &bundles {
+        for (voter_index, bundle) in bundles.iter().enumerate() {
+            let authenticated_sender = format!("npub1throughput{voter_index:048}");
             match runtime
-                .process_control_message(bundle)
+                .process_control_message(bundle, &authenticated_sender)
                 .await
                 .expect("process bundled control message")
             {
@@ -6934,6 +7019,7 @@ mod tests {
         let single_handled = runtime
             .process_control_message(
                 r#"{"type":"optiona_blind_request_dm","schemaVersion":1,"request":{"type":"blind_ballot_request"}}"#,
+                "npub1voter",
             )
             .await
             .expect("process malformed single blind request");
@@ -6945,6 +7031,7 @@ mod tests {
         let bundle_handled = runtime
             .process_control_message(
                 r#"{"type":"optiona_blind_request_bundle_dm","schemaVersion":1,"requests":[{"type":"blind_ballot_request"}]}"#,
+                "npub1voter",
             )
             .await
             .expect("process malformed blind request bundle");
@@ -6954,6 +7041,142 @@ mod tests {
         ));
 
         fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn control_messages_enforce_authenticated_senders() {
+        let coordinator_keys = Keys::generate();
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+        let request = sample_request();
+        let content = serde_json::to_string(&BlindBallotRequestEnvelope {
+            message_type: "optiona_blind_request_dm".to_string(),
+            schema_version: 1,
+            request: request.clone(),
+            sent_at: "2026-07-15T12:00:00Z".to_string(),
+        })
+        .expect("serialize request envelope");
+
+        assert!(matches!(
+            runtime
+                .process_control_message(&content, "npub1different")
+                .await
+                .expect("reject mismatched sender"),
+            ControlMessageAction::Processed(true)
+        ));
+        assert!(matches!(
+            runtime
+                .process_control_message(&content, &request.invited_npub)
+                .await
+                .expect("accept voter sender"),
+            ControlMessageAction::BlindRequests(requests) if requests.len() == 1
+        ));
+
+        let delegation = WorkerDelegationEnvelope {
+            message_type: "optiona_worker_delegation_dm".to_string(),
+            schema_version: 1,
+            delegation: WorkerDelegationCertificate {
+                message_type: "worker_delegation".to_string(),
+                schema_version: 1,
+                delegation_id: "delegation_untrusted".to_string(),
+                election_id: "election_untrusted".to_string(),
+                coordinator_npub: runtime.config.coordinator_npub.clone(),
+                worker_npub: runtime.worker_npub.clone(),
+                capabilities: vec![WorkerCapability::IssueBlindTokens],
+                control_relays: Vec::new(),
+                issued_at: now_iso(),
+                expires_at: (Utc::now() + ChronoDuration::days(1)).to_rfc3339(),
+            },
+            sent_at: now_iso(),
+        };
+        runtime
+            .process_control_message(
+                &serde_json::to_string(&delegation).expect("serialize delegation"),
+                &request.invited_npub,
+            )
+            .await
+            .expect("ignore untrusted delegation");
+        assert!(!runtime
+            .state
+            .lock()
+            .await
+            .elections
+            .contains_key("election_untrusted"));
+
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[test]
+    fn blind_issuance_ack_requires_sender_and_exact_persisted_issuance() {
+        let request = sample_request();
+        let issuance = BlindBallotIssuance {
+            message_type: "blind_ballot_response".to_string(),
+            schema_version: 1,
+            election_id: request.election_id.clone(),
+            request_id: request.request_id.clone(),
+            issuance_id: "issuance_exact".to_string(),
+            invited_npub: request.invited_npub.clone(),
+            blind_signing_key_id: request.blind_signing_key_id.clone(),
+            blind_signature: "signature".to_string(),
+            definition_hash: None,
+            definition_event_id: None,
+            ballot_scope: request.ballot_scope.clone(),
+            definition: None,
+            issued_at: now_iso(),
+        };
+        let mut election = ElectionRuntimeState::default();
+        election
+            .issued_issuances_by_request_id
+            .insert(request.request_id.clone(), issuance.clone());
+        let mut ack = BlindIssuanceAck {
+            message_type: "blind_ballot_issuance_ack".to_string(),
+            schema_version: 1,
+            election_id: issuance.election_id.clone(),
+            request_id: issuance.request_id.clone(),
+            issuance_id: issuance.issuance_id.clone(),
+            invited_npub: issuance.invited_npub.clone(),
+            acked_at: now_iso(),
+        };
+
+        assert!(blind_issuance_ack_matches(
+            &ack.invited_npub,
+            &ack,
+            Some(&election)
+        ));
+        assert!(!blind_issuance_ack_matches(
+            "npub1different",
+            &ack,
+            Some(&election)
+        ));
+        ack.issuance_id = "issuance_wrong".to_string();
+        assert!(!blind_issuance_ack_matches(
+            &ack.invited_npub,
+            &ack,
+            Some(&election)
+        ));
+    }
+
+    #[test]
+    fn ballot_requested_status_contains_request_identity() {
+        let request = sample_request();
+        let envelope = build_participant_status_envelope(
+            &request.election_id,
+            &request.invited_npub,
+            OptionAParticipantStatusState::BallotRequested,
+            Some(&request.request_id),
+            None,
+        );
+        let value = serde_json::to_value(envelope).expect("serialize participant status");
+
+        assert_eq!(value["type"], "optiona_participant_status_dm");
+        assert_eq!(value["status"]["type"], "participant_status");
+        assert_eq!(value["status"]["source"], "issuer_proxy");
+        assert_eq!(value["status"]["state"], "ballot_requested");
+        assert_eq!(value["status"]["electionId"], request.election_id);
+        assert_eq!(value["status"]["invitedNpub"], request.invited_npub);
+        assert_eq!(value["status"]["requestId"], request.request_id);
+        assert!(value["status"].get("issuanceId").is_none());
+        assert!(value["status"].get("submissionId").is_none());
     }
 
     #[test]

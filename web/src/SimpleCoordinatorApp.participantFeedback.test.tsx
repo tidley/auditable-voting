@@ -144,7 +144,7 @@ describe("organiser participant feedback", () => {
         id='participant-group'
         value=''
         options={[
-          { value: "", label: "Main (everyone)" },
+          { value: "", label: "Main" },
           { value: "group_north", label: "North district" },
         ]}
         onCommit={onCommit}

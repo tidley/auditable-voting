@@ -50,7 +50,8 @@ export function selectNewestMatchingQuestionnaireDefinition(
   }
   return definitions
     .filter((definition): definition is QuestionnaireDefinition => (
-      Boolean(definition)
+      definition !== null
+      && definition !== undefined
       && definition.questionnaireId === targetId
     ))
     .sort((left, right) => Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0))[0] ?? null;

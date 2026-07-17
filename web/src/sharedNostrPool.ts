@@ -178,15 +178,15 @@ export function getSharedNostrPool() {
     sharedNostrPool = new SimplePool({
       enablePing: true,
       enableReconnect: true,
-      allowConnectingToRelay: (relay) => {
-        const relayUrl = normalizeRelayUrl(relay);
-        if (!relayCanAttempt(relayUrl)) {
-          incrementCounter(relayConnectionSkipped, relayUrl);
-          return false;
-        }
-        return true;
-      },
     });
+    sharedNostrPool.allowConnectingToRelay = (relay) => {
+      const relayUrl = normalizeRelayUrl(relay);
+      if (!relayCanAttempt(relayUrl)) {
+        incrementCounter(relayConnectionSkipped, relayUrl);
+        return false;
+      }
+      return true;
+    };
   }
 
   return sharedNostrPool;

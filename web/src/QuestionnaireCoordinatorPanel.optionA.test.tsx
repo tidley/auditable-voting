@@ -330,6 +330,9 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
   it("refreshes a stored proxy account when the setup page is opened", async () => {
     const staleWorkerNpub = nip19.npubEncode("2".repeat(64));
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
     window.localStorage.setItem(
       buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
       JSON.stringify({
@@ -349,7 +352,14 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       }),
     );
 
-    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        buildPage='proxy'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+      />,
+    );
 
     const workerNpubInput = await screen.findByLabelText("Audit proxy npub") as HTMLInputElement;
     const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
@@ -404,8 +414,11 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(quickStart.value).toContain(generatedWorkerNpub);
   });
 
-  it("refreshes a manually generated proxy account when the setup page is reopened", async () => {
-    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
+  it("reuses a generated proxy account when the setup page is reopened", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Generate new account" }));
 
@@ -422,14 +435,51 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
 
     cleanup();
-    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' />);
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
 
     const restoredWorkerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
     await waitFor(() => {
       expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toMatch(/^npub1/);
-      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).not.toBe(generatedWorkerNpub);
+      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(generatedWorkerNpub);
       expect(restoredWorkerNsecInput.value).toMatch(/^nsec1/);
-      expect(restoredWorkerNsecInput.value).not.toBe(generatedWorkerNsec);
+      expect(restoredWorkerNsecInput.value).toBe(generatedWorkerNsec);
+    });
+  });
+
+  it("generates a new proxy account when the coordinator account changes", async () => {
+    const firstCoordinatorSecret = generateSecretKey();
+    const firstCoordinatorNpub = nip19.npubEncode(getPublicKey(firstCoordinatorSecret));
+    const firstCoordinatorNsec = nip19.nsecEncode(firstCoordinatorSecret);
+    const secondCoordinatorSecret = generateSecretKey();
+    const secondCoordinatorNpub = nip19.npubEncode(getPublicKey(secondCoordinatorSecret));
+    const secondCoordinatorNsec = nip19.nsecEncode(secondCoordinatorSecret);
+    const { rerender } = render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        buildPage='proxy'
+        coordinatorNpub={firstCoordinatorNpub}
+        coordinatorNsec={firstCoordinatorNsec}
+      />,
+    );
+    const firstWorkerNpub = await waitFor(() => {
+      const value = (screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value;
+      expect(value).toMatch(/^npub1/);
+      return value;
+    });
+
+    rerender(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        buildPage='proxy'
+        coordinatorNpub={secondCoordinatorNpub}
+        coordinatorNsec={secondCoordinatorNsec}
+      />,
+    );
+
+    await waitFor(() => {
+      const value = (screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value;
+      expect(value).toMatch(/^npub1/);
+      expect(value).not.toBe(firstWorkerNpub);
     });
   });
 
@@ -449,7 +499,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const quickStart = await screen.findByLabelText("Quick start command") as HTMLTextAreaElement;
     expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net"');
-    expect(quickStart.value).toContain('WORKER_DM_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nip17.com,wss://relay.0xchat.com,wss://nos.lol,wss://nostr.mom,wss://relay.primal.net"');
+    expect(quickStart.value).toContain('WORKER_DM_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.primal.net"');
     expect(screen.queryByText("Audit proxy downloads")).toBeNull();
     expect(screen.queryByLabelText("Direct command-line launch")).toBeNull();
   });
@@ -563,6 +613,40 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     } finally {
       confirmSpy.mockRestore();
     }
+  });
+
+  it("allows an organiser to close and publish an empty questionnaire", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId: "q_publish_empty",
+      title: "Empty questionnaire",
+      coordinatorNpub,
+    }));
+    upsertElectionSummary({
+      electionId: "q_publish_empty",
+      title: "Empty questionnaire",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-02T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='responses'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+      />,
+    );
+
+    const closeButton = await screen.findByRole("button", { name: "Close + publish results" }) as HTMLButtonElement;
+    expect(closeButton.disabled).toBe(false);
+    fireEvent.click(closeButton);
+    expect(await screen.findByRole("dialog", { name: "Close and publish?" })).toBeTruthy();
+    expect(screen.getByText(/0 accepted responses will be published/i)).toBeTruthy();
   });
 
   it("prefers the published summary title over a cached draft title in the live status selector", async () => {

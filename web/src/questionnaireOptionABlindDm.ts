@@ -1,5 +1,5 @@
 import { gzipSync, gunzipSync, strFromU8, strToU8 } from "fflate";
-import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type Filter, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 import {
@@ -24,7 +24,7 @@ import type {
   WorkerStatusSnapshot,
 } from "./questionnaireWorkerDelegation";
 import { getSharedNostrPool } from "./sharedNostrPool";
-import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
+import { DEFAULT_NOSTR_DM_RELAYS as SIMPLE_DM_RELAYS } from "./nostrRelayConfig";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 import {
@@ -217,6 +217,7 @@ export type OptionACoordinatorStateSnapshot = {
   coordinatorNpub: string;
   state: Omit<CoordinatorElectionState, "blindSigningPrivateKey">;
   pendingAuthorizationsByNpub?: Record<string, BlindBallotRequest[]>;
+  pendingParticipantStatusesByNpub?: Record<string, OptionAParticipantStatus[]>;
   lastUpdatedAt: string;
 };
 
@@ -238,6 +239,25 @@ type WorkerStatusDmEnvelope = {
   type: "optiona_worker_status_dm";
   schemaVersion: 1;
   snapshot: WorkerStatusSnapshot;
+  sentAt: string;
+};
+
+export type OptionAParticipantStatus = {
+  type: "participant_status";
+  schemaVersion: 1;
+  electionId: string;
+  invitedNpub: string;
+  source: "voter" | "issuer_proxy";
+  state: "voter_live" | "ballot_requested" | "ballot_issued" | "ballot_received";
+  observedAt: string;
+  requestId?: string;
+  issuanceId?: string;
+};
+
+type ParticipantStatusDmEnvelope = {
+  type: "optiona_participant_status_dm";
+  schemaVersion: 1;
+  status: OptionAParticipantStatus;
   sentAt: string;
 };
 
@@ -270,7 +290,7 @@ export type WorkerElectionConfigSnapshot = {
   eligibilityRequired?: boolean;
   blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
   definitionReference?: QuestionnaireDefinitionReference | null;
-  /** Legacy worker configs embedded the definition directly. */
+  /** The worker only accepts the definition supplied in this authenticated configuration DM. */
   definition?: QuestionnaireDefinition | null;
   sentAt: string;
 };
@@ -306,6 +326,7 @@ type OptionABlindDmEnvelope =
   | VoterStateDmEnvelope
   | CoordinatorStateDmEnvelope
   | WorkerStatusDmEnvelope
+  | ParticipantStatusDmEnvelope
   | WorkerDelegationDmEnvelope
   | WorkerDelegationRevocationDmEnvelope
   | WorkerElectionConfigDmEnvelope;
@@ -510,7 +531,7 @@ async function withBlindDmTimeout<T>(task: Promise<T>, timeoutMs = OPTION_A_BLIN
   }
 }
 
-async function queryBlindDmSync(relays: string[], filter: Record<string, unknown>) {
+async function queryBlindDmSync(relays: string[], filter: Filter) {
   const queryRelays = filterBlindDmReadRelays(normalizeRelaysRust(relays));
   const key = JSON.stringify({ relays: queryRelays, filter });
   const existing = optionABlindDmInFlightQueries.get(key);
@@ -892,7 +913,7 @@ function sortGiftWrapEventsNewestFirst(events: NostrEvent[]) {
 
 async function queryBlindDmSyncPaginated(
   relays: string[],
-  filter: Record<string, unknown>,
+  filter: Filter,
   options?: BlindDmBackfillOptions,
 ) {
   const rawLimit = Number(filter.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
@@ -943,7 +964,7 @@ async function queryBlindDmSyncPaginated(
   return sortGiftWrapEventsNewestFirst([...eventsById.values()]).slice(0, requestedLimit);
 }
 
-async function queryBlindDmSyncWithFallback(relayCandidates: string[], filter: Record<string, unknown>) {
+async function queryBlindDmSyncWithFallback(relayCandidates: string[], filter: Filter) {
   const primaryRelays = selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_MAX);
   const primaryEvents = await queryBlindDmSync(primaryRelays, filter);
   const shouldFallbackRead = primaryEvents.length === 0
@@ -962,7 +983,7 @@ async function queryBlindDmSyncWithFallback(relayCandidates: string[], filter: R
 
 async function queryBlindDmSyncWithFallbackPaginated(
   relayCandidates: string[],
-  filter: Record<string, unknown>,
+  filter: Filter,
   options?: BlindDmBackfillOptions,
 ) {
   const primaryRelays = selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_MAX);
@@ -1248,6 +1269,48 @@ function parseWorkerStatusDmContent(content: string): WorkerStatusSnapshot | nul
   }
 }
 
+export function parseOptionAParticipantStatusDmContent(content: string): OptionAParticipantStatus | null {
+  try {
+    const envelope = JSON.parse(content) as Partial<ParticipantStatusDmEnvelope>;
+    const status = envelope.status;
+    if (
+      envelope.type !== "optiona_participant_status_dm"
+      || envelope.schemaVersion !== 1
+      || typeof envelope.sentAt !== "string"
+      || status?.type !== "participant_status"
+      || status.schemaVersion !== 1
+      || typeof status.electionId !== "string"
+      || typeof status.invitedNpub !== "string"
+      || (status.source !== "voter" && status.source !== "issuer_proxy")
+      || !["voter_live", "ballot_requested", "ballot_issued", "ballot_received"].includes(status.state)
+      || (status.source === "voter" && status.state !== "voter_live" && status.state !== "ballot_received")
+      || (status.source === "issuer_proxy" && status.state !== "ballot_requested" && status.state !== "ballot_issued")
+      || typeof status.observedAt !== "string"
+      || (status.requestId !== undefined && typeof status.requestId !== "string")
+      || (status.issuanceId !== undefined && typeof status.issuanceId !== "string")
+      || Object.prototype.hasOwnProperty.call(status, "submissionId")
+    ) {
+      return null;
+    }
+    return status;
+  } catch {
+    return null;
+  }
+}
+
+function isAuthenticatedParticipantStatusSender(
+  status: OptionAParticipantStatus,
+  sealPubkey: string,
+  workerNpub?: string,
+) {
+  const senderNpub = toNpub(sealPubkey);
+  if (status.source === "voter") {
+    return senderNpub === status.invitedNpub;
+  }
+  const workerFilter = workerNpub?.trim();
+  return Boolean(workerFilter && senderNpub === toNpub(workerFilter));
+}
+
 function parseWorkerDelegationDmContent(content: string): WorkerDelegationCertificate | null {
   try {
     const parsed = JSON.parse(content) as Partial<WorkerDelegationDmEnvelope> | WorkerDelegationCertificate;
@@ -1386,6 +1449,8 @@ function optionABlindDmSubject(
       return "Auditable Voting organiser state";
     case "optiona_worker_status_dm":
       return "Auditable Voting worker status";
+    case "optiona_participant_status_dm":
+      return "Auditable Voting participant status";
     case "optiona_worker_delegation_dm":
       return "Auditable Voting worker delegation";
     case "optiona_worker_delegation_revocation_dm":
@@ -2239,6 +2304,28 @@ export async function publishOptionAWorkerStatusDm(input: {
       type: "optiona_worker_status_dm",
       schemaVersion: 1,
       snapshot: input.snapshot,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionAParticipantStatusDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  status: OptionAParticipantStatus;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-participant-status:${input.status.electionId}:${input.status.invitedNpub}:${input.status.state}`,
+    envelope: {
+      type: "optiona_participant_status_dm",
+      schemaVersion: 1,
+      status: input.status,
       sentAt: new Date().toISOString(),
     },
   });
@@ -3424,6 +3511,112 @@ export async function fetchOptionACoordinatorStateDmsWithNsec(input: {
   return [...unique.values()];
 }
 
+export async function fetchOptionAParticipantStatusDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  workerNpub?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as OptionAParticipantStatus[];
+  }
+  const recipientHex = toHexPubkey(await input.signer.getPublicKey());
+  const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const { events } = await queryBlindDmSyncWithFallbackPaginated(relayCandidates, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+  });
+  const electionFilter = input.electionId?.trim() ?? "";
+  const unique = new Map<string, OptionAParticipantStatus>();
+  for (const event of events.slice(0, maxDecryptAttempts)) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({ signer: input.signer, event });
+      if (!decoded) {
+        continue;
+      }
+      const status = parseOptionAParticipantStatusDmContent(decoded.rumorContent);
+      if (
+        !status
+        || (electionFilter && status.electionId !== electionFilter)
+        || !isAuthenticatedParticipantStatusSender(status, decoded.sealPubkey, input.workerNpub)
+      ) {
+        continue;
+      }
+      const key = `${status.electionId}:${status.invitedNpub}:${status.source}:${status.state}:${status.observedAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, status);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionAParticipantStatusDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  workerNpub?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
+  const { events } = await queryBlindDmSyncWithFallbackPaginated(relayCandidates, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since,
+    limit: Math.max(1, input.limit ?? 100),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+  });
+  const electionFilter = input.electionId?.trim() ?? "";
+  const unique = new Map<string, OptionAParticipantStatus>();
+  for (const event of events) {
+    try {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
+        continue;
+      }
+      const status = parseOptionAParticipantStatusDmContent(decoded.rumorContent);
+      if (
+        !status
+        || (electionFilter && status.electionId !== electionFilter)
+        || !isAuthenticatedParticipantStatusSender(status, decoded.sealPubkey, input.workerNpub)
+      ) {
+        continue;
+      }
+      const key = `${status.electionId}:${status.invitedNpub}:${status.source}:${status.state}:${status.observedAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, status);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
 export async function fetchOptionAWorkerStatusDms(input: {
   signer: SignerService;
   coordinatorNpub?: string;
@@ -3882,6 +4075,29 @@ export function subscribeOptionABlindIssuanceAckDms(input: {
     keyOf: (value) => `${value.electionId}:${value.requestId}:${value.issuanceId}`,
     onValue: input.onAck,
     onError: input.onError,
+  });
+}
+
+export function subscribeOptionAParticipantStatusDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  workerNpub?: string;
+  relays?: string[];
+  since?: number;
+  onStatus: (status: OptionAParticipantStatus) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<OptionAParticipantStatus>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_participant_status",
+    parse: parseOptionAParticipantStatusDmContent,
+    keyOf: (value) => `${value.electionId}:${value.invitedNpub}:${value.source}:${value.state}:${value.observedAt}`,
+    onValue: input.onStatus,
+    onError: input.onError,
+    validate: (value, decoded) => isAuthenticatedParticipantStatusSender(value, decoded.sealPubkey, input.workerNpub),
   });
 }
 

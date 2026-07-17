@@ -243,9 +243,9 @@ function withQuestionBallotSlot(
   const current = question.ballotSlot ?? null;
   const slotIndex = Number.isFinite(options?.slotIndex)
     ? Math.max(1, Math.floor(options?.slotIndex as number))
-    : ballotSlotIndexForQuestion(question, index);
+    : ballotSlotIndexForQuestion(question);
   const currentVersion = Number.isFinite(current?.version)
-    ? Math.max(1, Math.floor(current.version))
+    ? Math.max(1, Math.floor(current?.version as number))
     : 1;
   const version = Number.isFinite(options?.version)
     ? Math.max(1, Math.floor(options?.version as number))
@@ -267,14 +267,14 @@ function bumpQuestionBallotSlotVersion(question: QuestionnaireQuestionDraft): Qu
 function alignQuestionBallotGroups(questions: QuestionnaireQuestionDraft[]) {
   const groupVersionByIndex = new Map<number, number>();
   questions.forEach((question, index) => {
-    const slotIndex = ballotSlotIndexForQuestion(question, index);
+    const slotIndex = ballotSlotIndexForQuestion(question);
     const version = Number.isFinite(question.ballotSlot?.version)
       ? Math.max(1, Math.floor(question.ballotSlot?.version as number))
       : 1;
     groupVersionByIndex.set(slotIndex, Math.max(groupVersionByIndex.get(slotIndex) ?? 1, version));
   });
   return questions.map((question, index) => {
-    const slotIndex = ballotSlotIndexForQuestion(question, index);
+    const slotIndex = ballotSlotIndexForQuestion(question);
     return withQuestionBallotSlot(question, index, {
       slotIndex,
       version: groupVersionByIndex.get(slotIndex) ?? 1,
@@ -478,6 +478,7 @@ function readStoredQuestionnaireDraftId() {
 }
 
 const QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY = "coordinator.questionnaire-draft-data.v1";
+const WORKER_CREDENTIALS_STORAGE_KEY = "coordinator.worker-credentials.v1";
 
 type StoredQuestionnaireDraft = {
   questionnaireId: string;
@@ -497,6 +498,7 @@ type StoredQuestionnaireDraft = {
   delegatedWorkerCapabilities?: WorkerCapability[];
   generatedWorkerNsec?: string;
   generatedWorkerNpub?: string;
+  generatedWorkerCoordinatorNpub?: string;
 };
 
 const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
@@ -510,14 +512,12 @@ const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
 const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
-  "wss://nip17.com",
-  "wss://relay.0xchat.com",
   "wss://nos.lol",
-  "wss://nostr.mom",
-  "wss://relay.primal.net",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
+  "wss://nip17.com",
+  "wss://relay.0xchat.com",
 ]);
 const WORKER_DM_DISCOURAGED_RELAYS = new Set([
   "wss://relay.damus.io",
@@ -642,6 +642,37 @@ function createWorkerCredentials() {
   };
 }
 
+function readStoredWorkerCredentials(coordinatorNpub: string) {
+  if (typeof window === "undefined" || !coordinatorNpub) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey(WORKER_CREDENTIALS_STORAGE_KEY));
+    const stored = JSON.parse(raw ?? "{}") as Record<string, { nsec?: unknown; npub?: unknown }>;
+    const nsec = typeof stored[coordinatorNpub]?.nsec === "string" ? stored[coordinatorNpub].nsec.trim() : "";
+    const npub = deriveWorkerNpubFromNsec(nsec);
+    return npub && npub === stored[coordinatorNpub]?.npub ? { nsec, npub } : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeWorkerCredentials(coordinatorNpub: string, credentials: { nsec: string; npub: string }) {
+  if (typeof window === "undefined" || !coordinatorNpub || !credentials.nsec || !credentials.npub) {
+    return;
+  }
+  try {
+    const key = buildSimpleNamespacedLocalStorageKey(WORKER_CREDENTIALS_STORAGE_KEY);
+    const existing = JSON.parse(window.localStorage.getItem(key) ?? "{}") as Record<string, unknown>;
+    window.localStorage.setItem(key, JSON.stringify({
+      ...existing,
+      [coordinatorNpub]: credentials,
+    }));
+  } catch {
+    // The draft still retains the currently displayed credentials if storage is unavailable.
+  }
+}
+
 function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
   const fallbackId = readStoredQuestionnaireDraftId();
   if (typeof window === "undefined") {
@@ -700,6 +731,9 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
         : [...CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES],
       generatedWorkerNsec: generatedWorkerNpubFromNsec ? parsedGeneratedWorkerNsec : "",
       generatedWorkerNpub: generatedWorkerNpubFromNsec || parsedGeneratedWorkerNpub,
+      generatedWorkerCoordinatorNpub: normaliseWorkerNpub(
+        typeof parsed.generatedWorkerCoordinatorNpub === "string" ? parsed.generatedWorkerCoordinatorNpub : "",
+      ),
     };
   } catch {
     return {
@@ -788,7 +822,7 @@ function electionSummaryStateFromQuestionnaireState(state: QuestionnaireStateVal
   if (state === "results_published") {
     return "counted";
   }
-  if (state === "draft" || state === "published" || state === "open" || state === "closed") {
+  if (state === "draft" || state === "open" || state === "closed") {
     return state;
   }
   return null;
@@ -925,7 +959,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.39";
+const WORKER_MINIMUM_VERSION = "0.1.41";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -1417,14 +1451,35 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const buildPage = props.buildPage ?? "questionnaire";
   const isProxyBuildPage = view === "build" && buildPage === "proxy";
   const storedDraft = useMemo(() => readStoredQuestionnaireDraft(), []);
+  const initialCoordinatorNpub = props.coordinatorNpub?.trim() ?? "";
+  const storedWorkerCredentialsMatchCoordinator = Boolean(
+    initialCoordinatorNpub
+    && storedDraft.generatedWorkerCoordinatorNpub === initialCoordinatorNpub
+    && storedDraft.generatedWorkerNsec
+    && storedDraft.generatedWorkerNpub,
+  );
+  const legacyWorkerCredentialsAreCurrent = Boolean(
+    !storedDraft.generatedWorkerCoordinatorNpub
+    && storedDraft.generatedWorkerNsec
+    && storedDraft.generatedWorkerNpub
+    && storedDraft.generatedWorkerNpub === normaliseWorkerNpub(storedDraft.delegatedWorkerNpub ?? ""),
+  );
   const initialWorkerCredentials = useMemo(() => (
-    isProxyBuildPage
-      ? createWorkerCredentials()
-      : {
+    !isProxyBuildPage
+      ? {
           nsec: storedDraft.generatedWorkerNsec ?? "",
           npub: storedDraft.generatedWorkerNpub ?? "",
         }
-  ), [isProxyBuildPage, storedDraft.generatedWorkerNpub, storedDraft.generatedWorkerNsec]);
+      : !initialCoordinatorNpub
+        ? { nsec: "", npub: "" }
+        : readStoredWorkerCredentials(initialCoordinatorNpub)
+          ?? (storedWorkerCredentialsMatchCoordinator || legacyWorkerCredentialsAreCurrent
+            ? {
+                nsec: storedDraft.generatedWorkerNsec ?? "",
+                npub: storedDraft.generatedWorkerNpub ?? "",
+              }
+            : createWorkerCredentials())
+  ), [isProxyBuildPage, legacyWorkerCredentialsAreCurrent, storedDraft.generatedWorkerNpub, storedDraft.generatedWorkerNsec, storedWorkerCredentialsMatchCoordinator]);
   const [questionnaireId, setQuestionnaireId] = useState(() => (
     props.initialQuestionnaireId?.trim() || storedDraft.questionnaireId
   ));
@@ -1472,6 +1527,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [selectedWorkerDownloadTarget, setSelectedWorkerDownloadTarget] = useState<WorkerLauncherTargetKey>("linuxX64");
   const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState(initialWorkerCredentials.nsec);
   const [generatedWorkerNpub, setGeneratedWorkerNpub] = useState(initialWorkerCredentials.npub);
+  const [generatedWorkerCoordinatorNpub, setGeneratedWorkerCoordinatorNpub] = useState(
+    isProxyBuildPage ? initialCoordinatorNpub : "",
+  );
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
@@ -1729,6 +1787,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setCoordinatorNpub((current) => (current === nextNpub ? current : nextNpub));
     }
   }, [props.coordinatorNsec, props.coordinatorNpub]);
+
+  useEffect(() => {
+    const owner = coordinatorNpub.trim();
+    if (!isProxyBuildPage || !owner) {
+      return;
+    }
+    const savedCredentials = readStoredWorkerCredentials(owner);
+    const credentials = savedCredentials
+      ?? (generatedWorkerCoordinatorNpub === owner && generatedWorkerNsec && generatedWorkerNpub
+        ? { nsec: generatedWorkerNsec, npub: generatedWorkerNpub }
+        : createWorkerCredentials());
+    storeWorkerCredentials(owner, credentials);
+    setGeneratedWorkerNsec(credentials.nsec);
+    setGeneratedWorkerNpub(credentials.npub);
+    setGeneratedWorkerCoordinatorNpub(owner);
+    setDelegationMode("delegated_worker");
+    setDelegatedWorkerNpub(credentials.npub);
+  }, [coordinatorNpub, generatedWorkerCoordinatorNpub, generatedWorkerNpub, generatedWorkerNsec, isProxyBuildPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2748,6 +2824,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       delegatedWorkerCapabilities,
       generatedWorkerNsec,
       generatedWorkerNpub,
+      generatedWorkerCoordinatorNpub,
       questionnaireRelays: questionnaireRelaysInput,
     };
     window.localStorage.setItem(
@@ -2767,6 +2844,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     description,
     generatedWorkerNpub,
     generatedWorkerNsec,
+    generatedWorkerCoordinatorNpub,
     questionnaireRelaysInput,
     questionnaireId,
     questions,
@@ -2916,7 +2994,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     setQuestions((current) => {
       const previous = current[current.length - 1] ?? null;
       const previousBallotIndex = previous
-        ? ballotSlotIndexForQuestion(previous, current.length - 1)
+        ? ballotSlotIndexForQuestion(previous)
         : 1;
       const previousBallotVersion = Number.isFinite(previous?.ballotSlot?.version)
         ? Math.max(1, Math.floor(previous?.ballotSlot?.version as number))
@@ -3433,7 +3511,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   ), [acceptedResponsesForDisplay]);
   const closeAndPublishButtonDisabled = (currentState === "open"
     ? !canCloseQuestionnaire
-    : !canPublishResults) || displayAcceptedCount <= 0 || isCloseAndPublishInFlight;
+    : !canPublishResults) || isCloseAndPublishInFlight;
   const hasIncompleteResponses = knownVoterCount > 0 && displayAcceptedCount < knownVoterCount;
   const canExportResults = currentState === "results_published" && Boolean(activePublishedDefinition);
   const publishStatusText = useMemo(() => {
@@ -3942,6 +4020,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             if (!responseId) {
               return null;
             }
+            const tokenCommitment = response.envelope.payloadHash.trim() || response.eventId;
+            const tokenNullifier = `legacy_${tokenCommitment}`;
             return {
               responseId,
               authorPubkey: response.authorPubkey,
@@ -4111,6 +4191,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         workerNpub,
         capabilities: delegatedWorkerCapabilities,
         controlRelays,
+        dmRelays: workerDmRelays,
         expiresAt: new Date(
           Date.now() + (
             delegatedWorkerExpiryEnabled
@@ -4255,6 +4336,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           ? blindSigningPrivateKeyForWorker
           : null,
         definitionReference: workerDefinitionReference,
+        definition: workerConfigDefinition,
         sentAt: new Date().toISOString(),
       }
       : null;
@@ -4304,7 +4386,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
               delegationId: storedDelegation.delegationId,
               workerNpub: storedDelegation.workerNpub,
               controlRelays: storedDelegation.controlRelays,
-              dmRelays: workerDmRelays,
+              dmRelays: storedDelegation.dmRelays ?? workerDmRelays,
               expiresAt: storedDelegation.expiresAt,
             })
             : null,
@@ -4458,6 +4540,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     const credentials = createWorkerCredentials();
     setGeneratedWorkerNsec(credentials.nsec);
     setGeneratedWorkerNpub(credentials.npub);
+    setGeneratedWorkerCoordinatorNpub(coordinatorNpub.trim());
+    storeWorkerCredentials(coordinatorNpub.trim(), credentials);
     setDelegationMode("delegated_worker");
     setDelegatedWorkerNpub(credentials.npub);
   }
@@ -4558,14 +4642,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             </>
           ) : (
             <>
-              <UiButton
-                icon='uploadLine'
-                className='simple-voter-primary'
-                isDisabled={closeAndPublishButtonDisabled}
-                onPress={requestCloseAndPublishResults}
-              >
-                {currentState === "open" ? "Close + publish results" : "Publish results"}
-              </UiButton>
+              {currentState !== "results_published" ? (
+                <UiButton
+                  icon='uploadLine'
+                  className='simple-voter-primary'
+                  isDisabled={closeAndPublishButtonDisabled}
+                  onPress={requestCloseAndPublishResults}
+                >
+                  {currentState === "open" ? "Close + publish results" : "Publish results"}
+                </UiButton>
+              ) : null}
               {canExportResults ? (
                 <UiButton
                   icon='export'
@@ -4581,14 +4667,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           <>
             {publishedDefinition ? (
               <>
-                <UiButton
-                  icon='uploadLine'
-                  className='simple-voter-primary'
-                  isDisabled={closeAndPublishButtonDisabled}
-                  onPress={requestCloseAndPublishResults}
-                >
-                  {currentState === "open" ? "Close + publish results" : "Publish results"}
-                </UiButton>
+                {currentState !== "results_published" ? (
+                  <UiButton
+                    icon='uploadLine'
+                    className='simple-voter-primary'
+                    isDisabled={closeAndPublishButtonDisabled}
+                    onPress={requestCloseAndPublishResults}
+                  >
+                    {currentState === "open" ? "Close + publish results" : "Publish results"}
+                  </UiButton>
+                ) : null}
                 {canExportResults ? (
                   <UiButton
                     icon='export'
@@ -5369,7 +5457,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <div>
                       <h4 className='simple-delegate-title'>Quick start command</h4>
                       <p className='simple-voter-note'>
-                        Copy this command to refresh the audit proxy binary, verify it is at least <code>{WORKER_MINIMUM_VERSION}</code>, and start it with this organiser and account. Once the proxy heartbeat appears, configuration is confirmed automatically; use the button below if it does not.
+                        Copy this command to verify and start a local audit proxy binary with this organiser and account. Once the proxy heartbeat appears, configuration is confirmed automatically; use the button below if it does not.
                       </p>
                     </div>
                     <UiButton

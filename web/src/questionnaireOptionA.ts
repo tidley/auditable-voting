@@ -12,6 +12,8 @@ import {
 import type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import type { QuestionnaireFlowMode, QuestionnaireResponseMode } from "./questionnaireProtocolConstants";
 
+export type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey };
+
 export type ElectionId = string;
 export type Npub = string;
 export type Hex = string;
@@ -90,7 +92,10 @@ export interface WhitelistEntry {
   inviteCodeRedeemedAt?: IsoTime | null;
   claimState: WhitelistClaimState;
   issuanceId?: IssuanceId | null;
-  submissionId?: SubmissionId | null;
+  voterLastSeenAt?: IsoTime | null;
+  ballotRequestedAt?: IsoTime | null;
+  ballotIssuedAt?: IsoTime | null;
+  ballotReceivedAt?: IsoTime | null;
 }
 
 export type BearerInviteCodeState = "available" | "redeemed" | "revoked";

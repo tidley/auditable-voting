@@ -1,11 +1,11 @@
 import { finalizeEvent, getPublicKey, nip19, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
-import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
+import { buildNamespacedLocalStorageKey as buildSimpleNamespacedLocalStorageKey } from "./appStorageNamespace";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 import { decodeNsec } from "./nostrIdentity";
-import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
+import { DEFAULT_NOSTR_PUBLIC_RELAYS as SIMPLE_PUBLIC_RELAYS } from "./nostrRelayConfig";
 import { recordRelayOutcome, selectRelaysWithBackoff } from "./relayBackoff";
 
 export const OPTIONA_WORKER_DELEGATION_KIND = 31994;
@@ -36,6 +36,7 @@ export type WorkerDelegationCertificate = {
   workerNpub: string;
   capabilities: WorkerCapability[];
   controlRelays: string[];
+  dmRelays?: string[];
   issuedAt: string;
   expiresAt: string;
 };
@@ -169,6 +170,7 @@ export function createWorkerDelegationCertificate(input: {
   workerNpub: string;
   capabilities: WorkerCapability[];
   controlRelays: string[];
+  dmRelays?: string[];
   expiresAt: string;
 }): WorkerDelegationCertificate {
   const randomPart = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random().toString(16).slice(2)}`)
@@ -183,6 +185,7 @@ export function createWorkerDelegationCertificate(input: {
     workerNpub: input.workerNpub.trim(),
     capabilities: [...new Set(input.capabilities)],
     controlRelays: normalizeRelaysRust(input.controlRelays),
+    dmRelays: normalizeRelaysRust(input.dmRelays ?? []),
     issuedAt: new Date().toISOString(),
     expiresAt: input.expiresAt,
   };

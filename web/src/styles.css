@@ -6221,6 +6221,12 @@ code {
   justify-content: flex-end;
 }
 
+.simple-participants-subsection .av-ui-data-table .is-number {
+  width: 24px;
+  padding-inline: 6px;
+  text-align: center;
+}
+
 @media (max-width: 760px) {
   .simple-participants-subsection .av-ui-data-table-shell {
     overflow: visible;

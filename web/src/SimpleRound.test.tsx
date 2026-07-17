@@ -2089,7 +2089,7 @@ describe("Simple round flow", () => {
     expect(voterUi.queryByText(/Vote ticket received/i)).toBeNull();
   }, 40000);
 
-  it("renders the questionnaire observer shell when legacy simple rounds are not questionnaire definitions", async () => {
+  it("shows questionnaire discovery loading when legacy simple rounds are not questionnaire definitions", async () => {
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 101);
@@ -2147,9 +2147,9 @@ describe("Simple round flow", () => {
     const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
       expect(observerUi.getByText(/Loading questionnaires from Nostr relays\.\.\./i)).toBeTruthy();
     });
+    expect(observerUi.queryByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeNull();
     expect(observerUi.queryByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeNull();
     expect(observerUi.queryByText(/Choose a questionnaire round to inspect results\./i)).toBeNull();
     expect(observerUi.queryByText(/Choose a questionnaire round to inspect responses\./i)).toBeNull();
@@ -2192,8 +2192,9 @@ describe("Simple round flow", () => {
     const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByText(/Loading questionnaires from Nostr relays\.\.\./i)).toBeTruthy();
     });
+    expect(observerUi.queryByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeNull();
     expect(observerUi.queryByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeNull();
 
     expect(observerUi.queryByLabelText(/Search/i)).toBeNull();

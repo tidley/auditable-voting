@@ -16,7 +16,7 @@ import {
   type WhitelistEntry,
 } from "./questionnaireOptionA";
 import { normaliseQuestionnaireBallotGroup } from "./questionnaireProtocol";
-import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
+import { buildNamespacedLocalStorageKey as buildSimpleNamespacedLocalStorageKey } from "./appStorageNamespace";
 
 function getKey(key: string) {
   return buildSimpleNamespacedLocalStorageKey(key);

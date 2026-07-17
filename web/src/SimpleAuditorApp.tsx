@@ -19,6 +19,7 @@ import {
   calculateRankQuestionScores,
   normaliseRankedOptionIds,
   type QuestionnaireQuestion,
+  type QuestionnairePublishedResponseRef,
   type QuestionnaireResponseAnswer,
   type QuestionnaireResultQuestionSummary,
   type QuestionnaireResultSummary,
@@ -1565,7 +1566,14 @@ function optionASummaryRefToAuditorDetail(input: {
       answers: input.ref.answers ?? [],
     },
     accepted: input.ref.accepted,
-    rejectionReason: input.ref.accepted ? null : input.ref.rejectionReason ?? "duplicate_nullifier",
+    rejectionReason: input.ref.accepted
+      ? null
+      : input.ref.rejectionReason === "duplicate_response"
+        || input.ref.rejectionReason === "invalid_token_proof"
+        || input.ref.rejectionReason === "invalid_payload_shape"
+        || input.ref.rejectionReason === "questionnaire_closed"
+        ? input.ref.rejectionReason
+        : "duplicate_nullifier",
     includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : true,
   };
 }

@@ -54,6 +54,7 @@ describe("questionnaire worker routing", () => {
       workerNpub,
       capabilities: ["issue_blind_tokens"],
       controlRelays: ["wss://relay.nostr.net", "wss://nos.lol"],
+      dmRelays: ["wss://vm-1734.lnvps.cloud/"],
       issuedAt: "2026-06-13T00:40:16.219Z",
       expiresAt: "2036-06-10T00:40:16.219Z",
     };
@@ -79,6 +80,7 @@ describe("questionnaire worker routing", () => {
 
     expect(found?.workerNpub).toBe(workerNpub);
     expect(found?.delegationId).toBe("delegation_legacy_without_q_tag");
+    expect(found?.dmRelays).toEqual(["wss://vm-1734.lnvps.cloud/"]);
     expect(querySync).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({

@@ -876,7 +876,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       const responseFetch = await fetchQuestionnaireEventsWithFallback({
         questionnaireId: id,
         kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireResponseEnvelope(
+          event as Pick<NostrEvent, "kind" | "content" | "pubkey">,
+        )?.questionnaireId ?? null,
       });
       const resultFetch = await fetchQuestionnaireEventsWithFallback({
         questionnaireId: id,
@@ -1088,7 +1090,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           return parseQuestionnaireStateEvent(event)?.questionnaireId ?? null;
         }
         if (event.kind === QUESTIONNAIRE_RESPONSE_PRIVATE_KIND) {
-          return parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null;
+          return parseQuestionnaireResponseEnvelope(
+            event as Pick<NostrEvent, "kind" | "content" | "pubkey">,
+          )?.questionnaireId ?? null;
         }
         if (event.kind === QUESTIONNAIRE_RESULT_SUMMARY_KIND) {
           try {

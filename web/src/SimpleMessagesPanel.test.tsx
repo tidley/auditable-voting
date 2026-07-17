@@ -7,7 +7,7 @@ import type { HelplineDmMessage } from "./simpleHelplineDm";
 
 const simpleHelplineDmMocks = vi.hoisted(() => ({
   sendHelplineDmMessage: vi.fn(),
-  subscribeHelplineDmMessages: vi.fn(() => () => undefined),
+  subscribeHelplineDmMessages: vi.fn<typeof import("./simpleHelplineDm").subscribeHelplineDmMessages>(() => () => undefined),
 }));
 
 vi.mock("./simpleHelplineDm", () => ({
