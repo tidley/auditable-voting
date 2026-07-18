@@ -5258,7 +5258,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     participantActionInFlightRef.current.add(key);
     setParticipantActionByNpub((current) => ({ ...current, [key]: label }));
-    await new Promise<void>((resolve) => scheduleAfterNextPaint(resolve));
+    // Let the disabled in-flight state paint before relay and worker work begins.
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
     try {
       await action();
     } finally {
@@ -6354,6 +6355,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 
   async function authorizePendingRequester(invitedNpub: string, options?: { statusTarget?: "known" | "admitted" }) {
     if (!optionACoordinatorRuntime) {
+      setInviteFeedbackStatus("Questionnaire is still loading. Try approving this voter again in a moment.", options?.statusTarget);
       return;
     }
     try {
@@ -6394,10 +6396,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         : normaliseQuestionnaireBallotGroup(roster[normalizedInvitedNpub]?.ballotGroup);
       optionACoordinatorRuntime.addWhitelistNpub(normalizedInvitedNpub, { credentialsPerVoter, ballotGroup });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      const initialWorkerConfigSync = syncActiveWorkerElectionConfig().catch(() => false);
+      const workerConfigRequired = Boolean(buildActiveWorkerElectionConfigSnapshot());
+      const initialWorkerConfigSync = workerConfigRequired
+        ? syncActiveWorkerElectionConfig().catch(() => false)
+        : Promise.resolve(true);
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
-      await initialWorkerConfigSync;
-      await syncActiveWorkerElectionConfig().catch(() => false);
+      const initialWorkerConfigSynced = await initialWorkerConfigSync;
+      const finalWorkerConfigSynced = workerConfigRequired
+        ? await syncActiveWorkerElectionConfig().catch(() => false)
+        : true;
       setPendingParticipantSettingsByNpub((current) => {
         if (!current[normalizedInvitedNpub]) {
           return current;
@@ -6408,7 +6415,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       });
       delete participantNoteDraftsRef.current[noteInputId];
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      setInviteFeedbackStatus(`Authorised and invited ${deriveActorDisplayId(invitedNpub)}. Sending invite...`, options?.statusTarget);
+      setInviteFeedbackStatus(
+        initialWorkerConfigSynced && finalWorkerConfigSynced
+          ? `Authorised and invited ${deriveActorDisplayId(invitedNpub)}. Sending invite...`
+          : `Authorised ${deriveActorDisplayId(invitedNpub)}, but the audit proxy configuration did not reach a relay. Keep the proxy online, then refresh and retry if the voter does not receive a ballot.`,
+        options?.statusTarget,
+      );
       await sendInviteToKnownVoter(invitedNpub, { statusTarget: options?.statusTarget });
     } catch (error) {
       setInviteFeedbackStatus(error instanceof Error ? error.message : "Authorisation failed.", options?.statusTarget);

@@ -1040,7 +1040,7 @@ describe("questionnaireOptionARuntime", () => {
       flowMode: "public_submission_v1",
       responseMode: "blind_token",
     });
-    coordinator.addWhitelistNpub(voterNpub, { credentialsPerVoter: 2 });
+    coordinator.addWhitelistNpub(voterNpub, { credentialsPerVoter: 2, ballotGroup: "group_north" });
     const blindSigningPublicKey = coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null;
     const now = Math.floor(Date.now() / 1000);
     const definition: QuestionnaireDefinition = {
@@ -1056,6 +1056,7 @@ describe("questionnaireOptionARuntime", () => {
           type: "yes_no",
           prompt: "Elect Alice?",
           required: true,
+          requiredScope: "group_north",
           ballotSlot: { slotId: "director-alice", slotIndex: 1, version: 1 },
         },
       ],
@@ -1088,7 +1089,11 @@ describe("questionnaireOptionARuntime", () => {
 
     const blindRequests = Object.entries(voter.getSnapshot()?.blindRequests ?? {});
     expect(blindRequests).toHaveLength(2);
-    expect(blindRequests.map(([key]) => key).sort()).toEqual(["slot:1:v1", "slot:1:v1:c2"]);
+    expect(blindRequests.map(([key]) => key).sort()).toEqual([
+      "scopes:group_north:slot:1:v1",
+      "scopes:group_north:slot:1:v1:c2",
+    ]);
+    expect(blindRequests.every(([, request]) => request.ballotScope?.allowedScopes?.join(",") === "0,group_north")).toBe(true);
 
     await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
@@ -1096,17 +1101,17 @@ describe("questionnaireOptionARuntime", () => {
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
 
     await voter.submitVote(["q1"], { questionId: "q1", credentialIndex: 1 });
-    const firstSubmission = voter.getSnapshot()?.submissions?.["slot:1:v1"];
+    const firstSubmission = voter.getSnapshot()?.submissions?.["scopes:group_north:slot:1:v1"];
     expect(firstSubmission?.payload.responses[0]?.answer).toBe("yes");
     expect(firstSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBeUndefined();
 
     await coordinator.processPendingSubmissions(["q1"]);
     voter.refreshIssuanceAndAcceptance();
-    expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1"]?.accepted).toBe(true);
+    expect(voter.getSnapshot()?.submissionDecisions?.["scopes:group_north:slot:1:v1"]?.accepted).toBe(true);
 
     voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "no" }]);
     await voter.submitVote(["q1"], { questionId: "q1", credentialIndex: 2 });
-    const secondSubmission = voter.getSnapshot()?.submissions?.["slot:1:v1:c2"];
+    const secondSubmission = voter.getSnapshot()?.submissions?.["scopes:group_north:slot:1:v1:c2"];
     expect(secondSubmission?.payload.responses[0]?.answer).toBe("no");
     expect(secondSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBe(2);
     expect(secondSubmission?.credentialBundle?.[0]?.nullifier).not.toBe(firstSubmission?.credentialBundle?.[0]?.nullifier);
@@ -1125,8 +1130,8 @@ describe("questionnaireOptionARuntime", () => {
         : "no"
     )).sort()).toEqual(["no", "yes"]);
     expect(new Set(publicResponses.map((response) => response.tokenNullifier)).size).toBe(2);
-    expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1"]?.accepted).toBe(true);
-    expect(voter.getSnapshot()?.submissionDecisions?.["slot:1:v1:c2"]?.accepted).toBe(true);
+    expect(voter.getSnapshot()?.submissionDecisions?.["scopes:group_north:slot:1:v1"]?.accepted).toBe(true);
+    expect(voter.getSnapshot()?.submissionDecisions?.["scopes:group_north:slot:1:v1:c2"]?.accepted).toBe(true);
     expect(coordinator.getAcceptedUniqueCount()).toBe(2);
   }, 15000);
 
@@ -1717,9 +1722,12 @@ describe("questionnaireOptionARuntime", () => {
     await voter.loginWithSigner(invite);
     await voter.requestBlindBallot({ forceResend: true });
     await coordinator.processPendingBlindRequests();
+    const onStateChange = vi.fn();
+    voter.subscribeStateChanges(onStateChange);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
     expect(voter.getSnapshot()?.blindIssuance?.ballotScope?.allowedScopes).toEqual(["0", "2"]);
+    expect(onStateChange).toHaveBeenCalledOnce();
   });
 
   it("redeems a private invite code into the first requester whitelist entry", async () => {

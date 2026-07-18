@@ -50,6 +50,7 @@ afterEach(() => {
   document.getElementById("simple-auditor-topbar-actions")?.remove();
   vi.clearAllMocks();
   vi.resetModules();
+  window.history.pushState(null, "", "/");
 });
 
 describe("SimpleAuditorApp", () => {
@@ -156,6 +157,33 @@ describe("SimpleAuditorApp", () => {
     expect(refreshButton.getAttribute("aria-disabled")).not.toBe("true");
 
     resolveDefinitions(definitions);
+  });
+
+  it("keeps an auditor URL questionnaire selection while discovery is loading", async () => {
+    window.history.pushState(null, "", "/?role=auditor&q=q_linked_auditor");
+    setupTransportMocks();
+    let resolveDefinitions: (entries: typeof definitions) => void = () => undefined;
+    transportMocks.fetchQuestionnaireDefinitions.mockImplementation((input?: { questionnaireId?: string }) => {
+      if (input?.questionnaireId === "q_linked_auditor") {
+        return Promise.resolve([makeDefinitionEntry("q_linked_auditor", "Linked questionnaire", 1_777_000_300)]);
+      }
+      return new Promise<typeof definitions>((resolve) => {
+        resolveDefinitions = resolve;
+      });
+    });
+    const { default: SimpleAuditorApp } = await import("./SimpleAuditorApp");
+
+    render(<SimpleAuditorApp />);
+
+    await waitFor(() => {
+      expect(transportMocks.fetchQuestionnaireDefinitions).toHaveBeenCalled();
+    });
+    expect(new URL(window.location.href).searchParams.get("q")).toBe("q_linked_auditor");
+
+    resolveDefinitions(definitions);
+    await waitFor(() => {
+      expect(new URL(window.location.href).searchParams.get("q")).toBe("q_linked_auditor");
+    });
   });
 
   it("renders discovered questionnaire rounds before slow metadata fetches finish", async () => {

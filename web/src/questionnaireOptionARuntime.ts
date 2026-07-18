@@ -638,6 +638,11 @@ function ballotGroupScope(ballotGroup?: string | null): BallotScope | null {
   return { allowedScopes: allowedScopesForRequiredScope(normalised) };
 }
 
+function withBallotGroupScope(scope: BallotScope | null, ballotGroup?: string | null): BallotScope | null {
+  const groupScope = ballotGroupScope(ballotGroup);
+  return groupScope ? { ...(scope ?? {}), ...groupScope } : scope;
+}
+
 function voterShouldWaitForDefinitionBeforeBlindRequest(input: {
   state: VoterElectionLocalState;
   summary: ElectionSummary | null;
@@ -680,7 +685,10 @@ function buildQuestionnaireCredentialScopes(
   const seen = new Set<string>();
   for (let credentialIndex = 1; credentialIndex <= credentialCount; credentialIndex += 1) {
     definition.questions.forEach((question, index) => {
-      const scope = questionBallotCredentialScope(question, index, credentialIndex);
+      const scope = withBallotGroupScope(
+        questionBallotCredentialScope(question, index, credentialIndex),
+        ballotGroup,
+      );
       const key = ballotScopeKey(scope);
       if (!seen.has(key)) {
         seen.add(key);
@@ -753,7 +761,10 @@ function scopeForQuestion(
     return ballotScopeKey(questionBallotCredentialScope(candidate, candidateIndex)) === targetKey;
   });
   const canonicalQuestion = canonicalIndex >= 0 ? definition.questions[canonicalIndex] : question;
-  return questionBallotCredentialScope(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index, credentialIndex);
+  return withBallotGroupScope(
+    questionBallotCredentialScope(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index, credentialIndex),
+    ballotGroup,
+  );
 }
 
 function submissionCredentialBundle(submission: BallotSubmission): BallotCredentialProof[] {
@@ -3067,6 +3078,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (next !== previousState) {
       this.state = next;
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      this.notifyStateChanged();
       void this.publishVoterStateSelfDm({ reason: "refresh_issuance_acceptance" });
     }
     return this.state;
@@ -3164,10 +3176,13 @@ export class QuestionnaireOptionAVoterRuntime {
       if (!issuance || !tokenSecret) {
         throw new OptionARuntimeError("issuance_failed", `No issued credential is available for ${answer.questionId}.`);
       }
+      // The issuer signed this exact scope when the token was blinded. It must not be
+      // rebuilt from a definition or group assignment that may have changed since then.
+      const ballotScope = tokenSecret.ballotScope ?? issuance.ballotScope ?? scope;
       const message = buildQuestionnaireBlindTokenSignedMessage({
         questionnaireId: this.state.electionId,
         tokenSecretCommitment: tokenSecret.tokenCommitment,
-        ballotScope: scope,
+        ballotScope,
       });
       const credential = await finalizeQuestionnaireBlindSignature({
         publicKey: tokenSecret.blindSigningPublicKey,
@@ -3185,16 +3200,16 @@ export class QuestionnaireOptionAVoterRuntime {
       }
       proofByScopeKey.add(scopeKey);
       proofs.push({
-        questionId: scope?.questionId ?? answer.questionId,
+        questionId: ballotScope?.questionId ?? answer.questionId,
         tokenCommitment: tokenSecret.tokenCommitment,
         blindSigningKeyId: issuance.blindSigningKeyId,
         credential,
         nullifier: deriveQuestionnaireTokenNullifier({
           questionnaireId: this.electionId,
           tokenSecret: tokenSecret.tokenSecret,
-          ballotScope: scope,
+          ballotScope,
         }),
-        ballotScope: scope,
+        ballotScope,
       });
     }
     return proofs;

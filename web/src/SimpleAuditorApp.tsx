@@ -844,6 +844,9 @@ export default function SimpleAuditorApp({
 
   useEffect(() => {
     if (filteredQuestionnaires.length === 0) {
+      if (initialQuestionnaireId && selectedQuestionnaireId === initialQuestionnaireId) {
+        return;
+      }
       if (selectedQuestionnaireId) {
         setSelectedQuestionnaireId("");
       }

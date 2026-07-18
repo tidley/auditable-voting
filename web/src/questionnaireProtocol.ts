@@ -397,7 +397,7 @@ export function normaliseQuestionBallotSlot(question: QuestionnaireQuestion, ind
 export function questionBallotScopeKey(question: QuestionnaireQuestion, index: number, credentialIndex = 1) {
   const slot = normaliseQuestionBallotSlot(question, index);
   const requiredScope = questionRequiredScope(question);
-  const scopePrefix = requiredScope ? `scope:${requiredScope}:` : "";
+  const scopePrefix = requiredScope ? `scopes:${requiredScope}:` : "";
   const credentialSuffix = Number.isFinite(credentialIndex) && Math.floor(credentialIndex) > 1
     ? `:c${Math.floor(credentialIndex)}`
     : "";
