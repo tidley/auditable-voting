@@ -5369,13 +5369,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       void (async () => {
         try {
-          if (proxyVoter) {
-            await sendInviteToKnownVoter(npub, {
-              silent: true,
-              syncWorkerConfig: false,
-              statusTarget: "admitted",
-            });
-          }
           await syncActiveWorkerElectionConfig().catch(() => false);
         } finally {
           setPendingParticipantSettingsByNpub((current) => {

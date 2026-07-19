@@ -8320,7 +8320,7 @@ code {
 
 .simple-questionnaire-proxy-vote-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: stretch;
 }
@@ -8358,12 +8358,6 @@ code {
 
 .simple-questionnaire-proxy-vote-heading .simple-questionnaire-voter-requirement {
   font-size: 0.68rem;
-}
-
-@media (max-width: 760px) {
-  .simple-questionnaire-proxy-vote-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .simple-questionnaire-voter-prompt {
