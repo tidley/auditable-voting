@@ -5343,6 +5343,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       return;
     }
+    setPendingParticipantSettingsByNpub((current) => ({
+      ...current,
+      [npub]: {
+        ...current[npub],
+        proxyVoter,
+      },
+    }));
     let next = admittedVoters;
     if (!next[npub]) {
       next = upsertAdmittedVoters({
@@ -5361,14 +5368,30 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       optionACoordinatorRuntime.setWhitelistCredentialsPerVoter(npub, proxyVoter ? 2 : 1);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       void (async () => {
-        if (proxyVoter) {
-          await sendInviteToKnownVoter(npub, {
-            silent: true,
-            syncWorkerConfig: false,
-            statusTarget: "admitted",
+        try {
+          if (proxyVoter) {
+            await sendInviteToKnownVoter(npub, {
+              silent: true,
+              syncWorkerConfig: false,
+              statusTarget: "admitted",
+            });
+          }
+          await syncActiveWorkerElectionConfig().catch(() => false);
+        } finally {
+          setPendingParticipantSettingsByNpub((current) => {
+            const pending = current[npub];
+            if (!pending || !Object.prototype.hasOwnProperty.call(pending, "proxyVoter")) {
+              return current;
+            }
+            const { proxyVoter: _proxyVoter, ...rest } = pending;
+            if (Object.keys(rest).length === 0) {
+              const next = { ...current };
+              delete next[npub];
+              return next;
+            }
+            return { ...current, [npub]: rest };
           });
         }
-        await syncActiveWorkerElectionConfig().catch(() => false);
       })();
     }
   }

@@ -1,7 +1,7 @@
 import { sha256HexRust } from "./wasm/auditableVotingCore";
 
 export const GENERAL_INVITE_POW_MAX_DIFFICULTY = 24;
-const GENERAL_INVITE_POW_YIELD_INTERVAL = 1_024;
+const GENERAL_INVITE_POW_YIELD_INTERVAL = 4_096;
 
 export type GeneralInvitePowProof = {
   nonce: string;
@@ -15,6 +15,16 @@ export type GeneralInvitePowRequest = {
   blindedMessage: string;
   clientNonce: string;
 };
+
+function yieldToBrowserFrame() {
+  return new Promise<void>((resolve) => {
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => resolve());
+      return;
+    }
+    globalThis.setTimeout(resolve, 0);
+  });
+}
 
 export function isGeneralInvitePowDifficulty(value: unknown): value is number {
   return typeof value === "number"
@@ -64,7 +74,7 @@ export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & {
   }
   // Let the UI paint the initial progress state before starting synchronous hashes.
   input.onProgress?.(0);
-  await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+  await yieldToBrowserFrame();
   for (let candidate = 0; ; candidate += 1) {
     const proof = { nonce: String(candidate) };
     if (verifyGeneralInvitePow({ ...input, proof })) {
@@ -74,7 +84,7 @@ export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & {
     // Yield periodically so a configured challenge does not make the UI unresponsive.
     if (candidate > 0 && candidate % GENERAL_INVITE_POW_YIELD_INTERVAL === 0) {
       input.onProgress?.(candidate + 1);
-      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+      await yieldToBrowserFrame();
     }
   }
 }
