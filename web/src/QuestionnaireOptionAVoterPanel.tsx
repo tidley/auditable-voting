@@ -4646,6 +4646,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   ? "Start proof of work"
                   : "Start"}
             </UiButton>
+            {proofOfWorkInFlight ? (
+              <div className='simple-questionnaire-pow-progress' role='progressbar' aria-label='Solving proof of work'>
+                <span />
+              </div>
+            ) : null}
           </div>
         </section>
       ) : null}

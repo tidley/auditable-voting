@@ -7279,6 +7279,8 @@ code {
 
 .simple-questionnaire-voter-landing-action {
   display: flex;
+  flex-direction: column;
+  gap: 10px;
   justify-content: stretch;
   margin-top: auto;
 }
@@ -7286,6 +7288,27 @@ code {
 .simple-questionnaire-voter-landing-action .simple-voter-primary {
   width: 100%;
   min-height: 56px;
+}
+
+.simple-questionnaire-pow-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.18);
+}
+
+.simple-questionnaire-pow-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--simple-accent, #2dd4bf);
+  animation: simple-questionnaire-pow-progress 1s ease-in-out infinite;
+}
+
+@keyframes simple-questionnaire-pow-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(270%); }
 }
 
 .simple-optiona-voter-controls {
