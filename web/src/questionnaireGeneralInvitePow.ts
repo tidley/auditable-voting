@@ -1,6 +1,7 @@
 import { sha256HexRust } from "./wasm/auditableVotingCore";
 
 export const GENERAL_INVITE_POW_MAX_DIFFICULTY = 24;
+const GENERAL_INVITE_POW_YIELD_INTERVAL = 1_024;
 
 export type GeneralInvitePowProof = {
   nonce: string;
@@ -61,6 +62,9 @@ export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & {
   if (!isGeneralInvitePowDifficulty(input.difficulty)) {
     throw new Error(`PoW difficulty must be an integer from 0 to ${GENERAL_INVITE_POW_MAX_DIFFICULTY}.`);
   }
+  // Let the UI paint the initial progress state before starting synchronous hashes.
+  input.onProgress?.(0);
+  await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
   for (let candidate = 0; ; candidate += 1) {
     const proof = { nonce: String(candidate) };
     if (verifyGeneralInvitePow({ ...input, proof })) {
@@ -68,7 +72,7 @@ export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & {
       return proof;
     }
     // Yield periodically so a configured challenge does not make the UI unresponsive.
-    if (candidate > 0 && candidate % 10_000 === 0) {
+    if (candidate > 0 && candidate % GENERAL_INVITE_POW_YIELD_INTERVAL === 0) {
       input.onProgress?.(candidate + 1);
       await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
     }
