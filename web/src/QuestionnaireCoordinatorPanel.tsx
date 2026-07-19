@@ -78,6 +78,7 @@ import {
 } from "./questionnaireWorkerDelegation";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
 import type { ElectionSummary } from "./questionnaireOptionA";
+import { GENERAL_INVITE_POW_MAX_DIFFICULTY } from "./questionnaireGeneralInvitePow";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
@@ -1416,6 +1417,22 @@ function buildDefinition(input: {
   };
 }
 
+function generalInvitePowDurationHint(difficulty: number) {
+  if (difficulty <= 0) {
+    return "Disabled";
+  }
+  if (difficulty <= 8) {
+    return "Usually instant";
+  }
+  if (difficulty <= 16) {
+    return "Usually under a second";
+  }
+  if (difficulty <= 20) {
+    return "Often a few seconds";
+  }
+  return "Can take up to about a minute on a slower phone";
+}
+
 function comparableDefinitionRelaySet(definition: QuestionnaireDefinition) {
   return questionnaireRelaysForMetadata(normalizeQuestionnaireRelays(definition.questionnaireRelays ?? [])) ?? [];
 }
@@ -1502,6 +1519,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [newVoterGroupLabel, setNewVoterGroupLabel] = useState("");
   const [generalInvitePowEnabled, setGeneralInvitePowEnabled] = useState(storedDraft.generalInvitePowEnabled ?? false);
   const [generalInvitePowDifficulty, setGeneralInvitePowDifficulty] = useState(storedDraft.generalInvitePowDifficulty ?? "8");
+  const generalInvitePowSliderValue = Math.min(
+    GENERAL_INVITE_POW_MAX_DIFFICULTY,
+    Math.max(0, Number.parseInt(generalInvitePowDifficulty, 10) || 0),
+  );
   const questionVoterGroupOptions = useMemo(() => {
     const byId = new Map(voterGroups.map((group) => [group.id, group.label]));
     for (const question of questions) {
@@ -5006,19 +5027,26 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             }
           }}
         />
-        <UiTextField
-          label='Proof-of-work difficulty (leading zero SHA-256 bits)'
-          inputClassName='simple-voter-input simple-questionnaire-close-timer-input'
-          isDisabled={!generalInvitePowEnabled}
-          inputProps={{
-            id: 'general-invite-pow-difficulty',
-            value: generalInvitePowDifficulty,
-            inputMode: 'numeric',
-            min: 0,
-            max: 24,
-            onChange: (event) => setGeneralInvitePowDifficulty(event.target.value),
-          }}
-        />
+        <div className={`simple-questionnaire-pow-slider${generalInvitePowEnabled ? "" : " is-disabled"}`}>
+          <div className='simple-questionnaire-pow-slider-heading'>
+            <label className='simple-voter-label' htmlFor='general-invite-pow-difficulty'>Proof-of-work difficulty</label>
+            <strong>{generalInvitePowSliderValue} bits</strong>
+          </div>
+          <input
+            id='general-invite-pow-difficulty'
+            type='range'
+            min={0}
+            max={GENERAL_INVITE_POW_MAX_DIFFICULTY}
+            step={1}
+            value={generalInvitePowSliderValue}
+            disabled={!generalInvitePowEnabled}
+            onChange={(event) => setGeneralInvitePowDifficulty(event.target.value)}
+          />
+          <div className='simple-questionnaire-pow-slider-scale' aria-hidden='true'>
+            <span>Off</span><span>Instant</span><span>~1 sec</span><span>~10 sec</span><span>~1 min</span>
+          </div>
+          <p className='simple-voter-note'>Expected work: <strong>{generalInvitePowDurationHint(generalInvitePowSliderValue)}</strong>. Times vary by browser and device; each extra bit doubles the average work.</p>
+        </div>
         <p className='simple-voter-note'>General-invite voters solve this in their browser before requesting a blind token. Private invite codes are exempt. Browser issuance is required because released audit proxies do not yet verify this proof.</p>
       </section>
       </section>

@@ -7306,6 +7306,42 @@ code {
   animation: simple-questionnaire-pow-progress 1s ease-in-out infinite;
 }
 
+.simple-questionnaire-pow-slider {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.simple-questionnaire-pow-slider.is-disabled {
+  opacity: 0.55;
+}
+
+.simple-questionnaire-pow-slider-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simple-questionnaire-pow-slider-heading strong {
+  color: var(--simple-accent, #2dd4bf);
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.simple-questionnaire-pow-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--simple-accent, #2dd4bf);
+}
+
+.simple-questionnaire-pow-slider-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--simple-muted);
+  font-size: 0.7rem;
+}
+
 @keyframes simple-questionnaire-pow-progress {
   from { transform: translateX(-110%); }
   to { transform: translateX(270%); }
