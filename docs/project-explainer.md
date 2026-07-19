@@ -4,7 +4,7 @@ Anonymous voting with public verification, using blind credentials and Nostr rel
 
 If you are demonstrating the project to a general audience, start with the [plain-English demo guide](./demo-guide.md). It uses everyday language, gives a short action-first walkthrough, and keeps the technical terms out of the first explanation.
 
-This is the short, public-facing explanation. For the protocol and implementation detail, see [`docs/technical-protocol-note.md`](./technical-protocol-note.md). For the questionnaire-specific protocol reference, see [`docs/questionnaire-blind-token-protocol.md`](./questionnaire-blind-token-protocol.md).
+This is the short, public-facing explanation. For the protocol and implementation detail, see [`docs/technical-protocol-note.md`](./technical-protocol-note.md). For the questionnaire-specific protocol reference, see [`docs/questionnaire-blind-token-protocol.md`](./questionnaire-blind-token-protocol.md). The broader [voting protocol specification](./voting-protocol-specification.md) defines the trust boundaries and documents configurable general-invite proof of work as a proposal, not a shipped feature.
 
 ## What this system is trying to do
 

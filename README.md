@@ -10,6 +10,8 @@ GitHub Pages mirror: [tidley.github.io/auditable-voting](https://tidley.github.i
 
 For a non-technical walkthrough, start with the [plain-English demo guide](docs/demo-guide.md). It avoids protocol terms and gives a short action-first flow for publishing a questionnaire, sharing an invite, submitting a response, and checking the result.
 
+For the protocol boundary, trust model, and a proposed (not implemented) configurable proof-of-work design for general invites, read the [voting protocol specification](docs/voting-protocol-specification.md).
+
 ## Status
 
 Experimental.

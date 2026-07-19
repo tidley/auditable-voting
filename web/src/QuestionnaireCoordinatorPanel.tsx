@@ -499,6 +499,8 @@ type StoredQuestionnaireDraft = {
   generatedWorkerNsec?: string;
   generatedWorkerNpub?: string;
   generatedWorkerCoordinatorNpub?: string;
+  generalInvitePowEnabled?: boolean;
+  generalInvitePowDifficulty?: string;
 };
 
 const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
@@ -734,6 +736,8 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       generatedWorkerCoordinatorNpub: normaliseWorkerNpub(
         typeof parsed.generatedWorkerCoordinatorNpub === "string" ? parsed.generatedWorkerCoordinatorNpub : "",
       ),
+      generalInvitePowEnabled: parsed.generalInvitePowEnabled === true,
+      generalInvitePowDifficulty: typeof parsed.generalInvitePowDifficulty === "string" ? parsed.generalInvitePowDifficulty : "8",
     };
   } catch {
     return {
@@ -1380,6 +1384,7 @@ function buildDefinition(input: {
   voterGroups?: QuestionnaireVoterGroup[];
   questions: QuestionnaireQuestionDraft[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  generalInvitePowDifficulty?: number;
 }): QuestionnaireDefinition {
   const createdAt = nowUnix();
   const closeAfterMinutes = Number.isFinite(input.closeAfterMinutes)
@@ -1401,6 +1406,7 @@ function buildDefinition(input: {
     coordinatorEncryptionPubkey: input.coordinatorPubkey,
     responseVisibility: "private",
     eligibilityMode: "open",
+    ...(input.generalInvitePowDifficulty ? { generalInvitePowDifficulty: input.generalInvitePowDifficulty } : {}),
     allowMultipleResponsesPerPubkey: false,
     ballotCredentialMode: "questionnaire",
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
@@ -1435,6 +1441,7 @@ function comparableDefinitionDraftShape(definition: QuestionnaireDefinition) {
     allowMultipleResponsesPerPubkey: definition.allowMultipleResponsesPerPubkey,
     ballotCredentialMode: definition.ballotCredentialMode ?? "questionnaire",
     credentialsPerVoter: questionnaireCredentialsPerVoter(definition),
+    generalInvitePowDifficulty: definition.generalInvitePowDifficulty ?? 0,
     blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
     closeDurationSeconds: definitionCloseDurationSeconds(definition),
     questionnaireRelays: comparableDefinitionRelaySet(definition),
@@ -1493,6 +1500,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
   const [voterGroups, setVoterGroups] = useState<QuestionnaireVoterGroup[]>(storedDraft.voterGroups ?? []);
   const [newVoterGroupLabel, setNewVoterGroupLabel] = useState("");
+  const [generalInvitePowEnabled, setGeneralInvitePowEnabled] = useState(storedDraft.generalInvitePowEnabled ?? false);
+  const [generalInvitePowDifficulty, setGeneralInvitePowDifficulty] = useState(storedDraft.generalInvitePowDifficulty ?? "8");
   const questionVoterGroupOptions = useMemo(() => {
     const byId = new Map(voterGroups.map((group) => [group.id, group.label]));
     for (const question of questions) {
@@ -2825,6 +2834,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       generatedWorkerNsec,
       generatedWorkerNpub,
       generatedWorkerCoordinatorNpub,
+      generalInvitePowEnabled,
+      generalInvitePowDifficulty,
       questionnaireRelays: questionnaireRelaysInput,
     };
     window.localStorage.setItem(
@@ -2845,6 +2856,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     generatedWorkerNpub,
     generatedWorkerNsec,
     generatedWorkerCoordinatorNpub,
+    generalInvitePowDifficulty,
+    generalInvitePowEnabled,
     questionnaireRelaysInput,
     questionnaireId,
     questions,
@@ -2873,6 +2886,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setCloseAfterMinutes(hasCloseTimer ? String(Math.max(1, Math.round(closeDurationSeconds / 60))) : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES);
     setCloseTimerUnit("minutes");
     setVoterGroups(normaliseStoredVoterGroups(activePublishedDefinition.voterGroups));
+    setGeneralInvitePowEnabled((activePublishedDefinition.generalInvitePowDifficulty ?? 0) > 0);
+    setGeneralInvitePowDifficulty(String(activePublishedDefinition.generalInvitePowDifficulty ?? 8));
     setQuestions(normaliseStoredQuestions(activePublishedDefinition.questions));
     const relayInput = formatQuestionnaireRelayInputFromDefinition(activePublishedDefinition);
     props.onQuestionnaireRelaysInputChange?.(relayInput);
@@ -3059,6 +3074,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       }
       closeMinutes = closeAmount * closeTimerUnitToMinutes(closeTimerUnit);
     }
+    const powDifficulty = Number.parseInt(generalInvitePowDifficulty, 10);
+    if (generalInvitePowEnabled && (!Number.isInteger(powDifficulty) || powDifficulty < 0 || powDifficulty > 24)) {
+      return null;
+    }
     return buildDefinition({
       questionnaireId: questionnaireId.trim(),
       coordinatorPubkey: coordinatorNpub,
@@ -3069,8 +3088,9 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       voterGroups,
       questions,
       blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
+      generalInvitePowDifficulty: generalInvitePowEnabled ? powDifficulty : 0,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, closeTimerUnit, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questionnaireRelayMetadata, questions, title, voterGroups]);
+  }, [closeAfterMinutes, closeTimerEnabled, closeTimerUnit, coordinatorNpub, description, effectiveBlindSigningPublicKey, generalInvitePowDifficulty, generalInvitePowEnabled, questionnaireId, questionnaireRelayMetadata, questions, title, voterGroups]);
 
   const selectedWorkerStatus = useMemo(() => {
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
@@ -4149,6 +4169,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       : null;
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub)
       || normaliseWorkerNpub(existingActiveDelegation?.workerNpub ?? "");
+    if ((options?.definitionOverride?.generalInvitePowDifficulty ?? builtDefinition?.generalInvitePowDifficulty ?? 0) > 0
+      && delegatedWorkerCapabilities.includes("issue_blind_tokens")) {
+      setStatus("Audit proxy blind-token issuance is unavailable while general-invite proof of work is enabled. Use browser issuance until a compatible worker is released.");
+      return;
+    }
     const expiryMinutes = delegatedWorkerExpiryEnabled
       ? Number.parseInt(delegatedWorkerExpiryMinutes, 10)
       : Number.NaN;
@@ -4969,6 +4994,33 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           </div>
         ) : null}
       </section>
+      <section className='simple-questionnaire-setup-subsection'>
+        <UiSwitch
+          className={`simple-questionnaire-close-timer-toggle${generalInvitePowEnabled ? " is-on" : ""}`}
+          label='Require proof of work for general invites'
+          isSelected={generalInvitePowEnabled}
+          onChange={(enabled) => {
+            setGeneralInvitePowEnabled(enabled);
+            if (enabled) {
+              setDelegatedWorkerCapabilities((current) => current.filter((capability) => capability !== "issue_blind_tokens"));
+            }
+          }}
+        />
+        <UiTextField
+          label='Proof-of-work difficulty (leading zero SHA-256 bits)'
+          inputClassName='simple-voter-input simple-questionnaire-close-timer-input'
+          isDisabled={!generalInvitePowEnabled}
+          inputProps={{
+            id: 'general-invite-pow-difficulty',
+            value: generalInvitePowDifficulty,
+            inputMode: 'numeric',
+            min: 0,
+            max: 24,
+            onChange: (event) => setGeneralInvitePowDifficulty(event.target.value),
+          }}
+        />
+        <p className='simple-voter-note'>General-invite voters solve this in their browser before requesting a blind token. Private invite codes are exempt. Browser issuance is required because released audit proxies do not yet verify this proof.</p>
+      </section>
       </section>
 
       <section className='simple-questionnaire-build-cardlet simple-questionnaire-voter-groups' aria-labelledby='questionnaire-voter-groups-heading'>
@@ -5630,8 +5682,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                             className='simple-delegate-capability-row'
                             label='Issue blind tokens'
                             isSelected={delegatedWorkerCapabilities.includes("issue_blind_tokens")}
+                            isDisabled={generalInvitePowEnabled}
                             onChange={() => toggleWorkerCapability("issue_blind_tokens")}
                           />
+                          {generalInvitePowEnabled ? <p className='simple-voter-note'>Unavailable while general-invite proof of work is enabled: the released audit proxy does not verify PoW.</p> : null}
                           <UiSwitch
                             className='simple-delegate-capability-row'
                             label='Verify public submissions'

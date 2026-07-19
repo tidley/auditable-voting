@@ -163,6 +163,7 @@ import {
   type QuestionnaireResponseAnswer,
   type QuestionnaireSubmissionDecision,
 } from "./questionnaireProtocol";
+import { mineGeneralInvitePow, verifyGeneralInvitePow } from "./questionnaireGeneralInvitePow";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import { DEFAULT_NOSTR_DM_RELAYS as SIMPLE_DM_RELAYS } from "./nostrRelayConfig";
@@ -2432,6 +2433,31 @@ export class QuestionnaireOptionAVoterRuntime {
         blindRequest: request,
       };
     }
+    const generalInvitePowDifficulty = cachedDefinition?.generalInvitePowDifficulty ?? 0;
+    if (request && !request.inviteCodeHash && generalInvitePowDifficulty > 0 && !verifyGeneralInvitePow({
+      electionId: request.electionId,
+      requestId: request.requestId,
+      invitedNpub: request.invitedNpub,
+      blindSigningKeyId: request.blindSigningKeyId,
+      blindedMessage: request.blindedMessage,
+      clientNonce: request.clientNonce,
+      difficulty: generalInvitePowDifficulty,
+      proof: request.generalInvitePow,
+    })) {
+      request = {
+        ...request,
+        generalInvitePow: await mineGeneralInvitePow({
+          electionId: request.electionId,
+          requestId: request.requestId,
+          invitedNpub: request.invitedNpub,
+          blindSigningKeyId: request.blindSigningKeyId,
+          blindedMessage: request.blindedMessage,
+          clientNonce: request.clientNonce,
+          difficulty: generalInvitePowDifficulty,
+        }),
+      };
+      next = { ...next, blindRequest: request };
+    }
 
     this.state = next;
     if (!this.state.coordinatorNpub?.trim()) {
@@ -2628,6 +2654,30 @@ export class QuestionnaireOptionAVoterRuntime {
         request = {
           ...request,
           inviteCodeHash: input.inviteCodeHash,
+        };
+      }
+      const generalInvitePowDifficulty = input.cachedDefinition.generalInvitePowDifficulty ?? 0;
+      if (!request.inviteCodeHash && generalInvitePowDifficulty > 0 && !verifyGeneralInvitePow({
+        electionId: request.electionId,
+        requestId: request.requestId,
+        invitedNpub: request.invitedNpub,
+        blindSigningKeyId: request.blindSigningKeyId,
+        blindedMessage: request.blindedMessage,
+        clientNonce: request.clientNonce,
+        difficulty: generalInvitePowDifficulty,
+        proof: request.generalInvitePow,
+      })) {
+        request = {
+          ...request,
+          generalInvitePow: await mineGeneralInvitePow({
+            electionId: request.electionId,
+            requestId: request.requestId,
+            invitedNpub: request.invitedNpub,
+            blindSigningKeyId: request.blindSigningKeyId,
+            blindedMessage: request.blindedMessage,
+            clientNonce: request.clientNonce,
+            difficulty: generalInvitePowDifficulty,
+          }),
         };
       }
 
@@ -3746,6 +3796,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
       electionId: this.electionId,
       relays,
       onRequest: (request) => {
+        if (!this.hasRequiredGeneralInvitePow(request)) {
+          optionAFlowLog("coordinator", "blind_request_discarded_invalid_pow", {
+            electionId: this.electionId,
+            requestId: request.requestId,
+          });
+          return;
+        }
         enqueueBlindRequest(request);
         void this.triggerBlindRequestProcessingFromLive().catch(() => undefined);
       },
@@ -4922,6 +4979,20 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return whitelistEntry ? normaliseQuestionnaireBallotGroup(whitelistEntry.ballotGroup) : undefined;
   }
 
+  private hasRequiredGeneralInvitePow(request: BlindBallotRequest) {
+    const difficulty = readCachedQuestionnaireDefinition(this.electionId)?.generalInvitePowDifficulty ?? 0;
+    return Boolean(request.inviteCodeHash) || difficulty === 0 || verifyGeneralInvitePow({
+      electionId: request.electionId,
+      requestId: request.requestId,
+      invitedNpub: request.invitedNpub,
+      blindSigningKeyId: request.blindSigningKeyId,
+      blindedMessage: request.blindedMessage,
+      clientNonce: request.clientNonce,
+      difficulty,
+      proof: request.generalInvitePow,
+    });
+  }
+
   async authorizeRequester(invitedNpub: string, options?: {
     credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
     ballotGroup?: string | null;
@@ -5103,6 +5174,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
       for (const request of requests) {
         if (this.shouldSkipBlindRequestAck(request)) {
           dequeueBlindRequest(request.requestId);
+          continue;
+        }
+        if (!this.hasRequiredGeneralInvitePow(request)) {
+          optionAFlowLog("coordinator", "blind_request_discarded_invalid_pow", {
+            electionId: this.electionId,
+            requestId: request.requestId,
+          });
           continue;
         }
         enqueueBlindRequest(request);
@@ -5537,6 +5615,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
     });
     let next = this.state;
     for (const request of queue) {
+      const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
+      if (!this.hasRequiredGeneralInvitePow(request)) {
+        optionAFlowLog("coordinator", "blind_request_rejected_invalid_pow_or_shape", {
+          electionId: this.electionId,
+          requestId: request.requestId,
+          invitedNpub: request.invitedNpub,
+        });
+        dequeueBlindRequest(request.requestId);
+        continue;
+      }
       const privateInviteBlockReason = this.getBearerInviteCodeRequestBlockReason(next, request);
       if (privateInviteBlockReason) {
         optionAFlowLog("coordinator", "blind_request_rejected_private_invite_unavailable", {
@@ -5637,7 +5725,6 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
       await this.publishBlindRequestAckDm(request);
-      const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
       const definitionHash = cachedDefinition ? questionnaireDefinitionHash(cachedDefinition) : null;
       const existingIssuance = findIssuedBlindResponse(next, request);
       if (existingIssuance) {

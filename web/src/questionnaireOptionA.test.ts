@@ -10,6 +10,7 @@ import {
   reduceVoterEvent,
   restoreCoordinatorElectionState,
   restoreVoterElectionLocalState,
+  sanitiseBlindBallotRequest,
   validateBallotSubmission,
   validateBlindBallotRequest,
   validateLoginProof,
@@ -828,5 +829,12 @@ describe("questionnaireOptionA", () => {
     });
     expect(validBlindRequest).toBe(true);
     expect(invalidBlindRequest).toBe(false);
+  });
+
+  it("preserves general-invite proof through request sanitisation", () => {
+    expect(sanitiseBlindBallotRequest({
+      ...makeBlindRequest(),
+      generalInvitePow: { nonce: "42" },
+    }).generalInvitePow).toEqual({ nonce: "42" });
   });
 });

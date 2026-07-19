@@ -9,6 +9,7 @@ import {
   type QuestionnaireDefinition,
   type QuestionnaireDefinitionReference,
 } from "./questionnaireProtocol";
+import { verifyGeneralInvitePow, type GeneralInvitePowProof } from "./questionnaireGeneralInvitePow";
 import type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import type { QuestionnaireFlowMode, QuestionnaireResponseMode } from "./questionnaireProtocolConstants";
 
@@ -168,6 +169,7 @@ export interface BlindBallotRequest {
   clientNonce: string;
   createdAt: IsoTime;
   inviteCodeHash?: Hex | null;
+  generalInvitePow?: GeneralInvitePowProof | null;
   ballotScope?: BallotScope | null;
   lastSentAt?: IsoTime | null;
 }
@@ -454,6 +456,11 @@ export function sanitiseBlindBallotRequest(request: BlindBallotRequest): BlindBa
   if (request.inviteCodeHash !== undefined) {
     next.inviteCodeHash = request.inviteCodeHash ?? null;
   }
+  if (request.generalInvitePow !== undefined) {
+    next.generalInvitePow = request.generalInvitePow && typeof request.generalInvitePow.nonce === "string"
+      ? { nonce: request.generalInvitePow.nonce }
+      : null;
+  }
   if (request.ballotScope !== undefined) {
     next.ballotScope = sanitiseBallotScope(request.ballotScope);
   }
@@ -612,6 +619,7 @@ function sameBlindBallotRequest(left: BlindBallotRequest, right: BlindBallotRequ
     && left.clientNonce === right.clientNonce
     && left.createdAt === right.createdAt
     && (left.inviteCodeHash ?? null) === (right.inviteCodeHash ?? null)
+    && (left.generalInvitePow?.nonce ?? null) === (right.generalInvitePow?.nonce ?? null)
     && sameBallotScope(left.ballotScope, right.ballotScope);
 }
 
@@ -1437,6 +1445,7 @@ export function validateBlindBallotRequest(input: {
   isWhitelisted: boolean;
   loginVerified: boolean;
   requestSeen: boolean;
+  definition?: QuestionnaireDefinition | null;
 }) {
   if (input.electionState !== "open") {
     return false;
@@ -1445,6 +1454,19 @@ export function validateBlindBallotRequest(input: {
     return false;
   }
   if (!input.requestSeen && !input.request.blindedMessage.trim()) {
+    return false;
+  }
+  const difficulty = input.definition?.generalInvitePowDifficulty ?? 0;
+  if (!input.request.inviteCodeHash && difficulty > 0 && !verifyGeneralInvitePow({
+    electionId: input.request.electionId,
+    requestId: input.request.requestId,
+    invitedNpub: input.request.invitedNpub,
+    blindSigningKeyId: input.request.blindSigningKeyId,
+    blindedMessage: input.request.blindedMessage,
+    clientNonce: input.request.clientNonce,
+    difficulty,
+    proof: input.request.generalInvitePow,
+  })) {
     return false;
   }
   return true;

@@ -143,6 +143,8 @@ export type QuestionnaireDefinition = {
   coordinatorEncryptionPubkey: string;
   responseVisibility: "public" | "private";
   eligibilityMode: "open" | "allowlist";
+  /** Leading zero SHA-256 bits required for general blind-ballot requests. */
+  generalInvitePowDifficulty?: number;
   allowMultipleResponsesPerPubkey: boolean;
   ballotCredentialMode?: QuestionnaireBallotCredentialMode;
   credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
@@ -478,6 +480,14 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
     && input.credentialsPerVoter !== 2
   ) {
     errors.push("credentials_per_voter_invalid");
+  }
+  if (
+    input.generalInvitePowDifficulty !== undefined
+    && (!Number.isInteger(input.generalInvitePowDifficulty)
+      || input.generalInvitePowDifficulty < 0
+      || input.generalInvitePowDifficulty > 24)
+  ) {
+    errors.push("general_invite_pow_difficulty_invalid");
   }
   if (
     input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN

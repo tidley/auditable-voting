@@ -67,6 +67,14 @@ describe("questionnaireProtocol", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it("accepts general-invite PoW difficulty only from zero through twenty-four", () => {
+    expect(validateQuestionnaireDefinition({ ...buildDefinition(), generalInvitePowDifficulty: 24 }).valid).toBe(true);
+    expect(validateQuestionnaireDefinition({ ...buildDefinition(), generalInvitePowDifficulty: 25 } as QuestionnaireDefinition).errors)
+      .toContain("general_invite_pow_difficulty_invalid");
+    expect(validateQuestionnaireDefinition({ ...buildDefinition(), generalInvitePowDifficulty: 1.5 } as QuestionnaireDefinition).errors)
+      .toContain("general_invite_pow_difficulty_invalid");
+  });
+
   it("supports questionnaire-defined voter groups while preserving legacy aliases", () => {
     expect(normaliseQuestionnaireScope("A")).toBe("1");
     expect(normaliseQuestionnaireScope("North_District")).toBe("north_district");
