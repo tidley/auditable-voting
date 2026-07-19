@@ -7291,7 +7291,8 @@ code {
 }
 
 .simple-questionnaire-pow-progress {
-  height: 4px;
+  position: relative;
+  height: 24px;
   overflow: hidden;
   border-radius: 999px;
   background: rgba(45, 212, 191, 0.18);
@@ -7299,11 +7300,21 @@ code {
 
 .simple-questionnaire-pow-progress span {
   display: block;
-  width: 42%;
+  width: 0;
   height: 100%;
   border-radius: inherit;
   background: var(--simple-accent, #2dd4bf);
-  animation: simple-questionnaire-pow-progress 1s ease-in-out infinite;
+  transition: width 160ms ease-out;
+}
+
+.simple-questionnaire-pow-progress small {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #07121d;
+  font-size: 0.7rem;
+  font-weight: 800;
 }
 
 .simple-questionnaire-pow-slider {
@@ -7340,11 +7351,6 @@ code {
   gap: 6px;
   color: var(--simple-muted);
   font-size: 0.7rem;
-}
-
-@keyframes simple-questionnaire-pow-progress {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(270%); }
 }
 
 .simple-optiona-voter-controls {

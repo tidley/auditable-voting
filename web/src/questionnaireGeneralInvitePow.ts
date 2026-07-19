@@ -54,17 +54,22 @@ export function verifyGeneralInvitePow(input: GeneralInvitePowRequest & { diffic
   return hasLeadingZeroBits(sha256HexRust(generalInvitePowPreimage({ ...input, nonce: input.proof.nonce })), input.difficulty);
 }
 
-export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & { difficulty: number }) {
+export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & {
+  difficulty: number;
+  onProgress?: (attempts: number) => void;
+}) {
   if (!isGeneralInvitePowDifficulty(input.difficulty)) {
     throw new Error(`PoW difficulty must be an integer from 0 to ${GENERAL_INVITE_POW_MAX_DIFFICULTY}.`);
   }
   for (let candidate = 0; ; candidate += 1) {
     const proof = { nonce: String(candidate) };
     if (verifyGeneralInvitePow({ ...input, proof })) {
+      input.onProgress?.(candidate + 1);
       return proof;
     }
     // Yield periodically so a configured challenge does not make the UI unresponsive.
     if (candidate > 0 && candidate % 10_000 === 0) {
+      input.onProgress?.(candidate + 1);
       await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
     }
   }

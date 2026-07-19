@@ -830,6 +830,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }>>([]);
   const [questionnaireStarted, setQuestionnaireStarted] = useState(false);
   const [proofOfWorkInFlight, setProofOfWorkInFlight] = useState(false);
+  const [proofOfWorkAttempts, setProofOfWorkAttempts] = useState(0);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [activeCredentialIndex, setActiveCredentialIndex] = useState(1);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -2674,7 +2675,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return { ok: false, claimedByThisDevice: false, statusKnown: true };
   }
 
-  async function requestBallot(): Promise<boolean> {
+  async function requestBallot(options?: { onProofOfWorkProgress?: (attempts: number) => void }): Promise<boolean> {
     if (!runtime) {
       return false;
     }
@@ -2697,7 +2698,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         claimedByThisDevice = inviteStatus.claimedByThisDevice;
       }
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
-      await runtime.requestBlindBallot({ forceResend: true });
+      await runtime.requestBlindBallot({ forceResend: true, onProofOfWorkProgress: options?.onProofOfWorkProgress });
       markSignerWaitRecoveryBaseline();
       scheduleSignerInitialPull();
       if (snapshot?.electionId && snapshot?.invitedNpub) {
@@ -2724,8 +2725,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const credentialReady = runtime?.getSnapshot()?.credentialReady ?? false;
     if (difficulty > 0 && !credentialReady) {
       setProofOfWorkInFlight(true);
+      setProofOfWorkAttempts(0);
       setStatus(`Solving proof of work (difficulty ${difficulty}) before requesting your ballot...`);
-      const requested = await requestBallot();
+      const requested = await requestBallot({ onProofOfWorkProgress: setProofOfWorkAttempts });
       setProofOfWorkInFlight(false);
       if (!requested) {
         return;
@@ -4397,7 +4399,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       <h4 className='simple-voter-section-title'>Ballot status</h4>
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
         {!waitingForCredential ? (
-          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!canRequestOrResendBallot} onPress={requestBallot}>
+          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!canRequestOrResendBallot} onPress={() => void requestBallot()}>
             Request ballot
           </UiButton>
         ) : null}
@@ -4509,7 +4511,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           icon='key'
           className='simple-account-menu-button simple-account-menu-action'
           role='menuitem'
-          onPress={requestBallot}
+          onPress={() => void requestBallot()}
         >
           <span>Resend request</span>
         </UiButton>
@@ -4647,9 +4649,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   : "Start"}
             </UiButton>
             {proofOfWorkInFlight ? (
-              <div className='simple-questionnaire-pow-progress' role='progressbar' aria-label='Solving proof of work'>
-                <span />
-              </div>
+              (() => {
+                const averageAttempts = 2 ** (questionnaireDefinition?.generalInvitePowDifficulty ?? 0);
+                const percent = Math.min(100, Math.round((proofOfWorkAttempts / averageAttempts) * 100));
+                return (
+                  <div className='simple-questionnaire-pow-progress' role='progressbar' aria-label='Solving proof of work' aria-valuemin={0} aria-valuemax={averageAttempts} aria-valuenow={proofOfWorkAttempts}>
+                    <span style={{ width: `${percent}%` }} />
+                    <small>{proofOfWorkAttempts.toLocaleString()} hashes tried, about {averageAttempts.toLocaleString()} expected</small>
+                  </div>
+                );
+              })()
             ) : null}
           </div>
         </section>

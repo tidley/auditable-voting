@@ -2226,7 +2226,11 @@ export class QuestionnaireOptionAVoterRuntime {
     return published;
   }
 
-  async requestBlindBallot(options?: { forceResend?: boolean; minRetryMs?: number }) {
+  async requestBlindBallot(options?: {
+    forceResend?: boolean;
+    minRetryMs?: number;
+    onProofOfWorkProgress?: (attempts: number) => void;
+  }) {
     if (this.requestBlindBallotInflight) {
       optionAFlowLog("voter", "blind_request_inflight_reused", { electionId: this.electionId });
       return this.requestBlindBallotInflight;
@@ -2266,7 +2270,11 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  private async requestBlindBallotInternal(options?: { forceResend?: boolean; minRetryMs?: number }) {
+  private async requestBlindBallotInternal(options?: {
+    forceResend?: boolean;
+    minRetryMs?: number;
+    onProofOfWorkProgress?: (attempts: number) => void;
+  }) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
@@ -2365,6 +2373,7 @@ export class QuestionnaireOptionAVoterRuntime {
         inviteCodeHash,
         forceResend: options?.forceResend,
         minRetryMs: options?.minRetryMs,
+        onProofOfWorkProgress: options?.onProofOfWorkProgress,
       });
     }
     if (!request) {
@@ -2454,6 +2463,7 @@ export class QuestionnaireOptionAVoterRuntime {
           blindedMessage: request.blindedMessage,
           clientNonce: request.clientNonce,
           difficulty: generalInvitePowDifficulty,
+          onProgress: options?.onProofOfWorkProgress,
         }),
       };
       next = { ...next, blindRequest: request };
@@ -2564,6 +2574,7 @@ export class QuestionnaireOptionAVoterRuntime {
     inviteCodeHash: string;
     forceResend?: boolean;
     minRetryMs?: number;
+    onProofOfWorkProgress?: (attempts: number) => void;
   }) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
@@ -2677,6 +2688,7 @@ export class QuestionnaireOptionAVoterRuntime {
             blindedMessage: request.blindedMessage,
             clientNonce: request.clientNonce,
             difficulty: generalInvitePowDifficulty,
+            onProgress: input.onProofOfWorkProgress,
           }),
         };
       }
