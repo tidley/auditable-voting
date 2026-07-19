@@ -829,6 +829,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     encryptResponses?: boolean;
   }>>([]);
   const [questionnaireStarted, setQuestionnaireStarted] = useState(false);
+  const [proofOfWorkInFlight, setProofOfWorkInFlight] = useState(false);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [activeCredentialIndex, setActiveCredentialIndex] = useState(1);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -2673,14 +2674,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return { ok: false, claimedByThisDevice: false, statusKnown: true };
   }
 
-  async function requestBallot() {
+  async function requestBallot(): Promise<boolean> {
     if (!runtime) {
-      return;
+      return false;
     }
     try {
       if (!autoRequestBlindSigningKeyReady) {
         setStatus("Loading questionnaire ballot key before requesting a ballot...");
-        return;
+        return false;
       }
       const requestSnapshot = ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true }) ?? runtime.getSnapshot();
       let claimedByThisDevice = false;
@@ -2691,7 +2692,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           coordinatorNpub: requestSnapshot.coordinatorNpub,
         });
         if (!inviteStatus.ok) {
-          return;
+          return false;
         }
         claimedByThisDevice = inviteStatus.claimedByThisDevice;
       }
@@ -2711,9 +2712,26 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           : formatBlindRequestStatus("sent")
       );
       setRefreshNonce((value) => value + 1);
+      return true;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Request failed.");
+      return false;
     }
+  }
+
+  async function startQuestionnaire() {
+    const difficulty = questionnaireDefinition?.generalInvitePowDifficulty ?? 0;
+    const credentialReady = runtime?.getSnapshot()?.credentialReady ?? false;
+    if (difficulty > 0 && !credentialReady) {
+      setProofOfWorkInFlight(true);
+      setStatus(`Solving proof of work (difficulty ${difficulty}) before requesting your ballot...`);
+      const requested = await requestBallot();
+      setProofOfWorkInFlight(false);
+      if (!requested) {
+        return;
+      }
+    }
+    setQuestionnaireStarted(true);
   }
 
   useEffect(() => {
@@ -4619,9 +4637,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               iconPosition='end'
               variant='primary'
               className='simple-voter-primary simple-questionnaire-answer-next'
-              onPress={() => setQuestionnaireStarted(true)}
+              isDisabled={proofOfWorkInFlight}
+              onPress={() => void startQuestionnaire()}
             >
-              Start
+              {proofOfWorkInFlight
+                ? "Solving proof of work..."
+                : (questionnaireDefinition?.generalInvitePowDifficulty ?? 0) > 0
+                  ? "Start proof of work"
+                  : "Start"}
             </UiButton>
           </div>
         </section>
