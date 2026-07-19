@@ -8,6 +8,7 @@ use crate::model::{
     BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotRequest,
     BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, BlindIssuanceAck,
     BlindIssuanceAckEnvelope, BlindTokenProof, CompressedBundleEnvelope, ElectionRuntimeState,
+    GeneralInvitePowProof,
     OptionAParticipantStatus, OptionAParticipantStatusEnvelope, OptionAParticipantStatusState,
     QuestionnaireBlindResponseEvent, QuestionnairePublishedResponseRef,
     QuestionnaireSubmissionDecisionEvent, WorkerCapability, WorkerDelegationCertificate,
@@ -72,6 +73,8 @@ const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
 const COMPRESSED_BUNDLE_MESSAGE_TYPE: &str = "optiona_compressed_bundle_dm";
 const COMPRESSED_BUNDLE_ENCODING: &str = "gzip+base64url";
 const BUNDLE_COMPRESSION_THRESHOLD_BYTES: usize = 8 * 1024;
+const GENERAL_INVITE_POW_DOMAIN: &str = "auditable-voting-general-invite-pow:v1";
+const GENERAL_INVITE_POW_MAX_DIFFICULTY: u8 = 24;
 const DISCOURAGED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://strfry.bitsbytom.com",
     "wss://nip17.tomdwyer.uk",
@@ -700,6 +703,81 @@ fn definition_value_blind_signing_key_id(definition: &serde_json::Value) -> Opti
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn definition_general_invite_pow_difficulty(definition: &serde_json::Value) -> Option<u8> {
+    match definition.get("generalInvitePowDifficulty") {
+        None => Some(0),
+        Some(value) => value
+            .as_f64()
+            .filter(|difficulty| {
+                difficulty.is_finite()
+                    && *difficulty >= 0.0
+                    && *difficulty <= f64::from(GENERAL_INVITE_POW_MAX_DIFFICULTY)
+                    && difficulty.fract() == 0.0
+            })
+            .map(|difficulty| difficulty as u8),
+    }
+}
+
+fn is_decimal_nonce(nonce: &str) -> bool {
+    nonce == "0"
+        || (nonce
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| *byte >= b'1' && *byte <= b'9')
+            && nonce.as_bytes().iter().all(u8::is_ascii_digit))
+}
+
+fn general_invite_pow_preimage(request: &BlindBallotRequest, nonce: &str) -> String {
+    serde_json::to_string(&[
+        GENERAL_INVITE_POW_DOMAIN,
+        request.election_id.as_str(),
+        request.request_id.as_str(),
+        request.invited_npub.as_str(),
+        request.blind_signing_key_id.as_str(),
+        request.blinded_message.as_str(),
+        request.client_nonce.as_str(),
+        nonce,
+    ])
+    .expect("fixed general-invite PoW array serializes")
+}
+
+fn has_leading_zero_bits(digest: &[u8], difficulty: u8) -> bool {
+    let full_bytes = (difficulty / 8) as usize;
+    if digest.iter().take(full_bytes).any(|byte| *byte != 0) {
+        return false;
+    }
+    let remaining_bits = difficulty % 8;
+    remaining_bits == 0
+        || digest
+            .get(full_bytes)
+            .is_some_and(|byte| *byte & (0xff << (8 - remaining_bits)) == 0)
+}
+
+fn verify_general_invite_pow(
+    definition: &serde_json::Value,
+    request: &BlindBallotRequest,
+) -> bool {
+    let Some(difficulty) = definition_general_invite_pow_difficulty(definition) else {
+        return false;
+    };
+    if difficulty == 0
+        || request
+            .invite_code_hash
+            .as_deref()
+            .is_some_and(|hash| !hash.trim().is_empty())
+    {
+        return true;
+    }
+    let Some(GeneralInvitePowProof { nonce }) = request.general_invite_pow.as_ref() else {
+        return false;
+    };
+    is_decimal_nonce(nonce)
+        && has_leading_zero_bits(
+            &Sha256::digest(general_invite_pow_preimage(request, nonce).as_bytes()),
+            difficulty,
+        )
 }
 
 fn definition_value_blind_signing_public_jwk(
@@ -3880,6 +3958,27 @@ impl WorkerRuntime {
             {
                 return Ok(PreparedBlindIssuance::Handled);
             }
+            if election.definition.is_none() {
+                remember_deferred_blind_request(election, &request);
+                self.store.save(&state)?;
+                warn!(
+                    "blind request deferred for election {} because public questionnaire definition is not loaded yet",
+                    request.election_id
+                );
+                return Ok(PreparedBlindIssuance::Deferred);
+            }
+            if !verify_general_invite_pow(
+                election.definition.as_ref().expect("checked above"),
+                &request,
+            ) {
+                forget_deferred_blind_request(election, &request.request_id);
+                self.store.save(&state)?;
+                warn!(
+                    "blind request rejected because general-invite proof of work is invalid: election_id={}, request_id={}, invited_npub={}",
+                    request.election_id, request.request_id, request.invited_npub
+                );
+                return Ok(PreparedBlindIssuance::Handled);
+            }
             if let Some(issuance) = election
                 .issued_issuances_by_request_id
                 .get(&request.request_id)
@@ -3917,15 +4016,6 @@ impl WorkerRuntime {
                 self.store.save(&state)?;
                 warn!(
                     "blind request deferred for election {} because no blind signing key is configured",
-                    request.election_id
-                );
-                return Ok(PreparedBlindIssuance::Deferred);
-            }
-            if election.definition.is_none() {
-                remember_deferred_blind_request(election, &request);
-                self.store.save(&state)?;
-                warn!(
-                    "blind request deferred for election {} because public questionnaire definition is not loaded yet",
                     request.election_id
                 );
                 return Ok(PreparedBlindIssuance::Deferred);
@@ -4596,8 +4686,108 @@ mod tests {
             client_nonce: "nonce_worker_definition".to_string(),
             created_at: now_iso(),
             invite_code_hash: None,
+            general_invite_pow: None,
             ballot_scope: None,
         }
+    }
+
+    fn mine_general_invite_pow(request: &BlindBallotRequest, difficulty: u8) -> String {
+        for candidate in 0_u64.. {
+            let nonce = candidate.to_string();
+            if has_leading_zero_bits(
+                &Sha256::digest(general_invite_pow_preimage(request, &nonce).as_bytes()),
+                difficulty,
+            ) {
+                return nonce;
+            }
+        }
+        unreachable!("unbounded nonce search always finds a SHA-256 preimage")
+    }
+
+    #[test]
+    fn general_invite_pow_accepts_canonical_valid_proof() {
+        let definition = json!({ "generalInvitePowDifficulty": 8 });
+        let mut request = sample_request();
+        request.general_invite_pow = Some(GeneralInvitePowProof {
+            nonce: mine_general_invite_pow(&request, 8),
+        });
+
+        assert!(verify_general_invite_pow(&definition, &request));
+    }
+
+    #[test]
+    fn general_invite_pow_rejects_missing_or_request_mismatched_proofs() {
+        let definition = json!({ "generalInvitePowDifficulty": 8 });
+        let request = sample_request();
+        assert!(!verify_general_invite_pow(&definition, &request));
+
+        let mut request_with_proof = request.clone();
+        loop {
+            request_with_proof.general_invite_pow = Some(GeneralInvitePowProof {
+                nonce: mine_general_invite_pow(&request_with_proof, 8),
+            });
+            let mut wrong_request = request_with_proof.clone();
+            wrong_request.request_id.push_str("-wrong");
+            if !verify_general_invite_pow(&definition, &wrong_request) {
+                break;
+            }
+            request_with_proof.client_nonce.push('x');
+        }
+        let mut wrong_request = request_with_proof.clone();
+        wrong_request.request_id.push_str("-wrong");
+        assert!(!verify_general_invite_pow(&definition, &wrong_request));
+    }
+
+    #[test]
+    fn general_invite_pow_exempts_private_invite_claims() {
+        let definition = json!({ "generalInvitePowDifficulty": 24 });
+        let mut request = sample_request();
+        request.invite_code_hash = Some("a private invite-code claim".to_string());
+
+        assert!(verify_general_invite_pow(&definition, &request));
+    }
+
+    #[tokio::test]
+    async fn invalid_general_invite_pow_is_rejected_before_eligibility_or_signing() {
+        let coordinator_keys = Keys::generate();
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator_keys, WorkerPersistentState::default());
+        let request = sample_request();
+        {
+            let mut state = runtime.state.lock().await;
+            state.elections.insert(
+                request.election_id.clone(),
+                ElectionRuntimeState {
+                    election_id: request.election_id.clone(),
+                    delegation_id: "delegation_pow".to_string(),
+                    capabilities: vec![WorkerCapability::IssueBlindTokens],
+                    eligibility_configured: true,
+                    eligibility_required: true,
+                    definition: Some(json!({
+                        "generalInvitePowDifficulty": 8,
+                        "blindSigningPublicKey": { "keyId": request.blind_signing_key_id }
+                    })),
+                    blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                        scheme: "rsabssa-sha384-pss-deterministic-v1".to_string(),
+                        key_id: request.blind_signing_key_id.clone(),
+                        jwk: json!({}),
+                        private_jwk: json!({}),
+                    }),
+                    ..ElectionRuntimeState::default()
+                },
+            );
+        }
+
+        assert!(matches!(
+            runtime.prepare_blind_issuance(request.clone()).await.expect("prepare request"),
+            PreparedBlindIssuance::Handled
+        ));
+        let state = runtime.state.lock().await;
+        let election = state.elections.get(&request.election_id).expect("configured election");
+        assert!(!election.whitelist_npubs.contains(&request.invited_npub));
+        assert!(election.issued_issuances_by_request_id.is_empty());
+        drop(state);
+        fs::remove_dir_all(state_dir).ok();
     }
 
     fn hex_bytes(bytes: &[u8]) -> String {

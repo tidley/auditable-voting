@@ -16,7 +16,7 @@ Usage (Linux x86_64):
    COORDINATOR_NPUB=npub1... \
    ./auditable-voting-worker-linux-x64
 
-   The first launch checks the binary version and exits if it is below 0.1.42. Download a newer release from
+    The first launch checks the binary version and exits if it is below 0.1.43. Download a newer release from
    https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz
 
    WORKER_RELAYS is optional. If not set, the audit proxy uses the default public/delegation relay set.
@@ -42,7 +42,7 @@ Other platforms:
 Audit proxy responsibilities:
 - announce audit proxy status to organiser
 - receive audit proxy election-config state including the blind-signing key and public questionnaire definition pointer
-- process delegated blind-token requests, including compressed bundle wrappers
+- process delegated blind-token requests, including compressed bundle wrappers and configured general-invite proof of work
 - issue blind-signature responses for delegated elections, including the public definition hash/event id when available, and compress large issuance bundles before encryption when useful
 - verify public submissions and publish delegated decisions
 - optionally auto-publish result summary when all expected invitees have responded

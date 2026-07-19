@@ -2167,9 +2167,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     } catch {
       // Keep cached worker routing when a fresh public delegation lookup fails.
     }
-    if ((definition?.generalInvitePowDifficulty ?? 0) > 0) {
-      issueBlindTokensWorker = null;
-    }
     if (!definition) {
       const coordinatorNpub = inviteContext.coordinatorNpub?.trim()
         || existingSummary?.coordinatorNpub?.trim()

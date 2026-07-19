@@ -964,7 +964,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.42";
+const WORKER_MINIMUM_VERSION = "0.1.43";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -4190,11 +4190,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       : null;
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub)
       || normaliseWorkerNpub(existingActiveDelegation?.workerNpub ?? "");
-    if ((options?.definitionOverride?.generalInvitePowDifficulty ?? builtDefinition?.generalInvitePowDifficulty ?? 0) > 0
-      && delegatedWorkerCapabilities.includes("issue_blind_tokens")) {
-      setStatus("Audit proxy blind-token issuance is unavailable while general-invite proof of work is enabled. Use browser issuance until a compatible worker is released.");
-      return;
-    }
     const expiryMinutes = delegatedWorkerExpiryEnabled
       ? Number.parseInt(delegatedWorkerExpiryMinutes, 10)
       : Number.NaN;
@@ -5710,10 +5705,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                             className='simple-delegate-capability-row'
                             label='Issue blind tokens'
                             isSelected={delegatedWorkerCapabilities.includes("issue_blind_tokens")}
-                            isDisabled={generalInvitePowEnabled}
                             onChange={() => toggleWorkerCapability("issue_blind_tokens")}
                           />
-                          {generalInvitePowEnabled ? <p className='simple-voter-note'>Unavailable while general-invite proof of work is enabled: the released audit proxy does not verify PoW.</p> : null}
                           <UiSwitch
                             className='simple-delegate-capability-row'
                             label='Verify public submissions'

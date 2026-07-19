@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.151] - 2026-07-19
+
+### Added
+- Added configurable general-invite proof of work to questionnaire definitions, voter request mining progress, and organiser difficulty guidance.
+- Added audit proxy worker `0.1.43` support for canonical proof verification before eligibility mutation or blind credential issuance.
+
+### Changed
+- Restored delegated proxy issuance for PoW questionnaires when the worker meets the new `0.1.43` minimum version.
+- Bumped the web app package to `0.1.151` and worker package to `0.1.43`.
+
 ## [0.1.105] - 2026-06-18
 
 ### Changed

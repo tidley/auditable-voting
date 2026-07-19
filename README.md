@@ -121,6 +121,8 @@ These use public relays and can fail because of relay availability, rate limits,
 
 The audit proxy is an optional Rust helper. It uses the delegated organiser role to keep a questionnaire moving when the browser organiser is offline.
 
+Questionnaires with general-invite proof of work require audit proxy version `0.1.43` or later for delegated credential issuance. The proxy verifies the request-bound proof before applying eligibility or issuing a blind credential.
+
 Voters resolve public proxy delegations within the organiser identity named by the invite or questionnaire definition. The delegation payload and its signed Nostr event author must both match that organiser, so another organiser reusing the same questionnaire ID cannot redirect ballot requests.
 
 When an issuer proxy is active, voters send blind ballot requests only to that proxy. The voter and proxy send separate authenticated, privacy-limited status messages to the organiser for live, requested, issued, received, and submitted progress; the blinded request itself is not copied to the organiser. Voter receipt acknowledgements return to the issuing proxy, which retains the exact issuance for reliable replay. Signed public delegations include the proxy's private-DM relay set so fresh voters use relays the proxy actually reads.

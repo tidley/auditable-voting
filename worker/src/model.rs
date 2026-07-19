@@ -199,7 +199,15 @@ pub struct BlindBallotRequest {
     #[serde(default)]
     pub invite_code_hash: Option<String>,
     #[serde(default)]
+    pub general_invite_pow: Option<GeneralInvitePowProof>,
+    #[serde(default)]
     pub ballot_scope: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneralInvitePowProof {
+    pub nonce: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

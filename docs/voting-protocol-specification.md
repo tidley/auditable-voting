@@ -102,7 +102,7 @@ This is experimental software and requires independent cryptographic and impleme
 
 ### 5.1 Current status
 
-**Partially implemented, browser-only.** A questionnaire definition can set `generalInvitePowDifficulty` from 0 to 24 leading zero SHA-256 bits. The browser mines a request-bound proof for non-private-code blind-ballot requests and the browser organiser verifies it before recording or signing the request. Private one-use invite-code requests are exempt. A relay may independently require Nostr event PoW; that remains relay policy rather than this admission rule.
+**Implemented in the browser and audit proxy worker 0.1.43 or later.** A questionnaire definition can set `generalInvitePowDifficulty` from 0 to 24 leading zero SHA-256 bits. The browser mines a request-bound proof for non-private-code blind-ballot requests; browser organisers and compatible delegated workers verify it before recording an eligible general request or signing it. Private one-use invite-code requests are exempt. A relay may independently require Nostr event PoW; that remains relay policy rather than this admission rule.
 
 ### 5.2 Objective
 
@@ -133,7 +133,7 @@ The voter derives the challenge from immutable public and request-bound data:
 
 The voter searches for a decimal `nonce` whose SHA-256 digest meets the configured difficulty, then includes it as `generalInvitePow.nonce` in the private blind-credential request.
 
-The browser organiser verifies that:
+The browser organiser or compatible delegated worker verifies that:
 
 1. the request has no private invite-code claim;
 2. the canonical fields and nonce reproduce the claimed digest; and
@@ -152,11 +152,11 @@ The current request format cannot cryptographically prove that a voter arrived t
 - Difficulty should be conservative and measured on mobile devices. Excessive difficulty excludes low-power devices and is not a substitute for an eligibility policy.
 - The verifier must use a fixed canonical byte encoding. String concatenation shown above is explanatory, not a final wire encoding.
 - There is currently no expiry window, so a proof remains valid for its exact request. A future expiry design requires a protocol revision and test vectors.
-- Delegated `issue_blind_tokens` workers cannot be used when this setting is non-zero because the released worker source does not verify this proof. The setup UI disables that capability until a compatible worker is released.
+- Delegated `issue_blind_tokens` workers must be version 0.1.43 or later when this setting is non-zero. Older workers do not verify this proof and must not be delegated for those questionnaires.
 
 ## 6. Compatibility and evolution
 
-Protocol additions must be versioned, optional where practical, and ignored safely by older clients when they do not affect verification. A definition requiring PoW is an exception: an old issuer that does not enforce it must not be used for that questionnaire. The current client therefore permits browser issuance only and prevents delegated blind-token issuance until worker support is released.
+Protocol additions must be versioned, optional where practical, and ignored safely by older clients when they do not affect verification. A definition requiring PoW is an exception: an old issuer that does not enforce it must not be used for that questionnaire. The current client permits delegated blind-token issuance for it only with worker 0.1.43 or later.
 
 Changes to signature payloads, scope canonicalisation, nullifier derivation, or event kinds require a version bump, test vectors, migration policy, and public documentation update.
 
