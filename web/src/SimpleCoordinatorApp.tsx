@@ -6397,14 +6397,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       optionACoordinatorRuntime.addWhitelistNpub(normalizedInvitedNpub, { credentialsPerVoter, ballotGroup });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       const workerConfigRequired = Boolean(buildActiveWorkerElectionConfigSnapshot());
-      const initialWorkerConfigSync = workerConfigRequired
-        ? syncActiveWorkerElectionConfig().catch(() => false)
-        : Promise.resolve(true);
-      await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
-      const initialWorkerConfigSynced = await initialWorkerConfigSync;
-      const finalWorkerConfigSynced = workerConfigRequired
-        ? await syncActiveWorkerElectionConfig().catch(() => false)
-        : true;
       setPendingParticipantSettingsByNpub((current) => {
         if (!current[normalizedInvitedNpub]) {
           return current;
@@ -6416,12 +6408,31 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       delete participantNoteDraftsRef.current[noteInputId];
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       setInviteFeedbackStatus(
-        initialWorkerConfigSynced && finalWorkerConfigSynced
-          ? `Authorised and invited ${deriveActorDisplayId(invitedNpub)}. Sending invite...`
-          : `Authorised ${deriveActorDisplayId(invitedNpub)}, but the audit proxy configuration did not reach a relay. Keep the proxy online, then refresh and retry if the voter does not receive a ballot.`,
+        workerConfigRequired
+          ? `Authorised ${deriveActorDisplayId(invitedNpub)}. Syncing audit proxy configuration; it can issue once that arrives.`
+          : `Authorised ${deriveActorDisplayId(invitedNpub)}. Processing their pending ballot request...`,
         options?.statusTarget,
       );
-      await sendInviteToKnownVoter(invitedNpub, { statusTarget: options?.statusTarget });
+      if (workerConfigRequired) {
+        const reportWorkerConfigFailure = () => {
+          setInviteFeedbackStatus(
+            `Authorised ${deriveActorDisplayId(invitedNpub)}, but the audit proxy configuration did not reach a relay. Keep the proxy online, then refresh and retry if the voter does not receive a ballot.`,
+            options?.statusTarget,
+          );
+        };
+        void syncActiveWorkerElectionConfig().then((synced) => {
+          if (!synced) {
+            reportWorkerConfigFailure();
+          }
+        }).catch(reportWorkerConfigFailure);
+      }
+      // This preserves local browser issuance while a delegated proxy waits for the config above.
+      void optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup }).catch((error) => {
+        setInviteFeedbackStatus(
+          error instanceof Error ? error.message : "Could not process the authorised voter's pending ballot request.",
+          options?.statusTarget,
+        );
+      });
     } catch (error) {
       setInviteFeedbackStatus(error instanceof Error ? error.message : "Authorisation failed.", options?.statusTarget);
     }

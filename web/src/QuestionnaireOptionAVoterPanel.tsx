@@ -4384,6 +4384,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ? questionnaireTitleText
     : currentQuestionnaireId || questionnaireDescription.trim() || "Questionnaire";
   const questionnaireDescriptionText = questionnaireDescription.trim();
+  const savedProofOfWork = Boolean(
+    runtime?.getSnapshot()?.blindRequest?.generalInvitePow
+    || Object.values(runtime?.getSnapshot()?.blindRequests ?? {}).some((request) => request.generalInvitePow),
+  );
   const showQuestionnaireDescription = Boolean(
     questionnaireDescriptionText && questionnaireDescriptionText !== questionnaireHeadingText,
   );
@@ -4642,7 +4646,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               {proofOfWorkInFlight
                 ? "Solving proof of work..."
                 : (questionnaireDefinition?.generalInvitePowDifficulty ?? 0) > 0
-                  ? "Start proof of work"
+                  ? savedProofOfWork
+                    ? "Resume ballot request"
+                    : "Start proof of work"
                   : "Start"}
             </UiButton>
             {proofOfWorkInFlight ? (

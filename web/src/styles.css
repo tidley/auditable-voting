@@ -6053,7 +6053,6 @@ code {
 
 .simple-admitted-voter-status.simple-status-indicator.is-voter-accepted,
 .simple-admitted-voter-status.simple-status-indicator.is-voter-used,
-.simple-admitted-voter-status.simple-status-indicator.is-voter-claimed,
 .simple-admitted-voter-status.simple-status-indicator.is-voter-invited {
   color: var(--simple-green);
   background: transparent;
@@ -6068,8 +6067,9 @@ code {
 
 .simple-admitted-voter-status.simple-status-indicator.is-voter-requested,
 .simple-admitted-voter-status.simple-status-indicator.is-voter-pending,
-.simple-admitted-voter-status.simple-status-indicator.is-voter-received {
-  color: var(--simple-amber);
+.simple-admitted-voter-status.simple-status-indicator.is-voter-received,
+.simple-admitted-voter-status.simple-status-indicator.is-voter-issued {
+  color: #facc15;
   background: transparent;
   border-color: transparent;
 }
@@ -6080,7 +6080,6 @@ code {
   border-color: transparent;
 }
 
-.simple-admitted-voter-status.simple-status-indicator.is-voter-issued,
 .simple-admitted-voter-status.simple-status-indicator.is-voter-whitelisted {
   color: var(--simple-teal);
   background: transparent;
@@ -10796,29 +10795,20 @@ code {
 }
 
 .simple-status-indicator.is-voter-claimed {
-  color: #06201c;
-  background: var(--simple-teal);
-  border-color: var(--simple-teal);
+  color: #431407;
+  background: #fb923c;
+  border-color: #fb923c;
 }
 
 .simple-status-indicator.is-voter-requested,
-.simple-status-indicator.is-voter-pending {
-  color: #451a03;
-  background: var(--simple-amber);
-  border-color: var(--simple-amber);
-}
-
-.simple-status-indicator.is-voter-issued {
-  color: #ffffff;
-  background: var(--simple-blue);
-  border-color: var(--simple-blue);
-}
-
+.simple-status-indicator.is-voter-pending,
+.simple-status-indicator.is-voter-issued,
 .simple-status-indicator.is-voter-received {
-  color: #431407;
-  background: var(--simple-amber);
-  border-color: var(--simple-amber);
+  color: #422006;
+  background: #facc15;
+  border-color: #facc15;
 }
+
 
 .simple-status-indicator.is-ballot-received {
   color: #052e16;
