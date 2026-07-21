@@ -19,6 +19,7 @@ import {
   calculateRankQuestionScores,
   normaliseRankedOptionIds,
   type QuestionnaireQuestion,
+  type QuestionnaireDefinition,
   type QuestionnairePublishedResponseRef,
   type QuestionnaireResponseAnswer,
   type QuestionnaireResultQuestionSummary,
@@ -84,6 +85,7 @@ type AuditorQuestionnaireResponseDetail = ReturnType<typeof evaluateQuestionnair
 type AuditorMemoryCache = {
   questionnaires: AuditorQuestionnaireEntry[];
   selectedQuestionnaireId: string;
+  selectedDefinitionEventId: string;
   selectedResponseDetails: AuditorQuestionnaireResponseDetail[];
   selectedProvisionalResponseDetails: QuestionnaireResultsDashboardResponseDetail[];
   selectedLatestPublishAt: number | null;
@@ -105,6 +107,7 @@ let auditorSessionAutoRefreshDone = false;
 let auditorMemoryCache: AuditorMemoryCache = {
   questionnaires: [],
   selectedQuestionnaireId: "",
+  selectedDefinitionEventId: "",
   selectedResponseDetails: [],
   selectedProvisionalResponseDetails: [],
   selectedLatestPublishAt: null,
@@ -124,17 +127,42 @@ function readInitialQuestionnaireIdFromUrl() {
   return (params.get("questionnaire") ?? params.get("q") ?? params.get("election_id") ?? "").trim();
 }
 
-function writeSelectedQuestionnaireIdToUrl(questionnaireId: string) {
+function readInitialCoordinatorNpubFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("coordinator") ?? params.get("organiser") ?? "").trim();
+}
+
+function readInitialDefinitionEventIdFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return new URLSearchParams(window.location.search).get("definition")?.trim() ?? "";
+}
+
+function writeSelectedQuestionnaireToUrl(input: {
+  questionnaireId: string;
+  coordinatorNpub: string;
+  definitionEventId: string;
+}) {
   if (typeof window === "undefined") {
     return;
   }
   const url = new URL(window.location.href);
-  if (questionnaireId.trim()) {
-    url.searchParams.set("q", questionnaireId.trim());
+  if (input.questionnaireId.trim()) {
+    url.searchParams.set("q", input.questionnaireId.trim());
   } else {
     url.searchParams.delete("q");
     url.searchParams.delete("questionnaire");
     url.searchParams.delete("election_id");
+  }
+  if (input.coordinatorNpub.trim()) {
+    url.searchParams.set("coordinator", input.coordinatorNpub.trim());
+  }
+  if (input.definitionEventId.trim()) {
+    url.searchParams.set("definition", input.definitionEventId.trim());
   }
   window.history.replaceState({}, "", url.toString());
 }
@@ -176,10 +204,13 @@ export default function SimpleAuditorApp({
   onFiltersMenuClose,
 }: SimpleAuditorAppProps = {}) {
   const urlPinnedQuestionnaireId = useMemo(() => readInitialQuestionnaireIdFromUrl(), []);
+  const urlPinnedCoordinatorNpub = useMemo(() => readInitialCoordinatorNpubFromUrl(), []);
+  const urlPinnedDefinitionEventId = useMemo(() => readInitialDefinitionEventIdFromUrl(), []);
   const initialQuestionnaireId = useMemo(() => urlPinnedQuestionnaireId || auditorMemoryCache.selectedQuestionnaireId, [urlPinnedQuestionnaireId]);
   const canUseCachedSelection = initialQuestionnaireId === auditorMemoryCache.selectedQuestionnaireId;
   const [questionnaires, setQuestionnaires] = useState<AuditorQuestionnaireEntry[]>(() => auditorMemoryCache.questionnaires);
   const [selectedQuestionnaireId, setSelectedQuestionnaireId] = useState(initialQuestionnaireId);
+  const [selectedDefinitionEventId, setSelectedDefinitionEventId] = useState(urlPinnedDefinitionEventId || auditorMemoryCache.selectedDefinitionEventId);
   const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>(() => (
     canUseCachedSelection ? auditorMemoryCache.selectedResponseDetails : []
   ));
@@ -214,6 +245,8 @@ export default function SimpleAuditorApp({
   const initialListLoadDoneRef = useRef(auditorMemoryCache.questionnaires.length > 0);
   const initialSelectedLoadDoneRef = useRef(canUseCachedSelection && auditorMemoryCache.selectedResponseDetails.length >= 0);
   const selectedQuestionnaireIdRef = useRef(initialQuestionnaireId);
+  const selectedDefinitionEventIdRef = useRef(urlPinnedDefinitionEventId || auditorMemoryCache.selectedDefinitionEventId);
+  const selectedDefinitionIsPinnedRef = useRef(Boolean(urlPinnedDefinitionEventId));
   const selectedResponseDetailsRef = useRef<AuditorQuestionnaireResponseDetail[]>([]);
   const selectedResultSummaryRef = useRef<QuestionnaireResultSummary | null>(null);
   const selectedRefreshEffectHasRunRef = useRef(false);
@@ -232,6 +265,9 @@ export default function SimpleAuditorApp({
   useEffect(() => {
     selectedQuestionnaireIdRef.current = selectedQuestionnaireId;
   }, [selectedQuestionnaireId]);
+  useEffect(() => {
+    selectedDefinitionEventIdRef.current = selectedDefinitionEventId;
+  }, [selectedDefinitionEventId]);
   useEffect(() => {
     selectedResponseDetailsRef.current = selectedResponseDetails;
   }, [selectedResponseDetails]);
@@ -260,6 +296,7 @@ export default function SimpleAuditorApp({
     auditorMemoryCache = {
       questionnaires,
       selectedQuestionnaireId,
+      selectedDefinitionEventId,
       selectedResponseDetails,
       selectedProvisionalResponseDetails,
       selectedLatestPublishAt,
@@ -278,6 +315,7 @@ export default function SimpleAuditorApp({
     selectedLiveState,
     selectedLiveStateEvent,
     selectedQuestionnaireId,
+    selectedDefinitionEventId,
     selectedResponseDetails,
     selectedProvisionalResponseDetails,
     selectedResultSummary,
@@ -291,23 +329,19 @@ export default function SimpleAuditorApp({
       readRelayLimit: 2,
       preferKindOnly: true,
     });
-      const latestDefinitionById = new Map<string, Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]>();
-      for (const entry of definitions) {
-        const id = entry.definition.questionnaireId.trim();
-        if (!id) {
-          continue;
-        }
-        const previous = latestDefinitionById.get(id);
-        const createdAt = Number(entry.event.created_at ?? entry.definition.createdAt ?? 0);
-        const previousCreatedAt = previous
-          ? Number(previous.event.created_at ?? previous.definition.createdAt ?? 0)
-          : 0;
-        if (!previous || createdAt >= previousCreatedAt) {
-          latestDefinitionById.set(id, entry);
-        }
-      }
+       const candidatesByEventId = new Map<string, Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]>();
+       for (const entry of definitions) {
+         const id = entry.definition.questionnaireId.trim();
+         if (!id) {
+           continue;
+         }
+         if (urlPinnedCoordinatorNpub && !definitionMatchesCoordinator(entry, urlPinnedCoordinatorNpub)) {
+           continue;
+         }
+         candidatesByEventId.set(entry.event.id, entry);
+       }
 
-      const latestDefinitions = [...latestDefinitionById.values()]
+       const latestDefinitions = [...candidatesByEventId.values()]
         .sort((left, right) => (
           Number(right.event.created_at ?? right.definition.createdAt ?? 0)
           - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
@@ -317,32 +351,30 @@ export default function SimpleAuditorApp({
         ? latestDefinitions
         : latestDefinitions.slice(0, AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT);
       const selectedIdForList = selectedQuestionnaireIdRef.current.trim();
-      if (selectedIdForList && !candidates.some((entry) => entry.definition.questionnaireId === selectedIdForList)) {
+       if (selectedIdForList && !candidates.some((entry) => entry.definition.questionnaireId === selectedIdForList)) {
         const selectedDefinitions = await fetchQuestionnaireDefinitions({
           questionnaireId: selectedIdForList,
           limit: 50,
           readRelayLimit: 8,
           preferKindOnly: true,
         }).catch(() => []);
-        const selectedDefinition = selectedDefinitions
-          .sort((left, right) => (
-            Number(right.event.created_at ?? right.definition.createdAt ?? 0)
-            - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
-          ))[0];
-        if (selectedDefinition) {
-          candidates = [
-            selectedDefinition,
-            ...candidates.filter((entry) => entry.definition.questionnaireId !== selectedIdForList),
-          ];
+         const selectedDefinitionsForCoordinator = selectedDefinitions.filter((entry) => (
+           !urlPinnedCoordinatorNpub || definitionMatchesCoordinator(entry, urlPinnedCoordinatorNpub)
+         ));
+         if (selectedDefinitionsForCoordinator.length > 0) {
+           candidates = [
+             ...selectedDefinitionsForCoordinator,
+             ...candidates.filter((entry) => entry.definition.questionnaireId !== selectedIdForList),
+           ];
         }
       }
-      const previousEntriesById = new Map(questionnairesRef.current.map((entry) => [entry.questionnaireId, entry]));
+       const previousEntriesById = new Map(questionnairesRef.current.map((entry) => [entry.eventId, entry]));
       const entries: AuditorQuestionnaireEntry[] = [];
       for (const entry of candidates) {
         const id = entry.definition.questionnaireId;
         const questionnaireRelays = entry.definition.questionnaireRelays;
         const coordinatorNpub = normalizeToNpub(entry.definition.coordinatorPubkey);
-        const previousEntry = previousEntriesById.get(id);
+         const previousEntry = previousEntriesById.get(entry.event.id);
         entries.push({
           questionnaireId: id,
           title: entry.definition.title || "Untitled questionnaire",
@@ -364,7 +396,7 @@ export default function SimpleAuditorApp({
         });
       }
       return entries;
-  }, []);
+  }, [urlPinnedCoordinatorNpub]);
 
   const refreshQuestionnaires = useCallback(async () => {
     try {
@@ -376,14 +408,23 @@ export default function SimpleAuditorApp({
       ));
       const selectedId = selectedQuestionnaireIdRef.current.trim();
       const selectedIsUrlPinned = Boolean(initialQuestionnaireId && selectedId === initialQuestionnaireId);
-      const nextSelectedId = (!selectedId || (!selectedIsUrlPinned && !entries.some((entry) => entry.questionnaireId === selectedId)))
+      const selectedDefinitionEventId = selectedDefinitionEventIdRef.current;
+      const selectedEntry = entries.find((entry) => entry.eventId === selectedDefinitionEventId)
+        ?? entries.find((entry) => entry.questionnaireId === selectedId);
+      const nextSelectedId = (!selectedId || (!selectedIsUrlPinned && !selectedEntry))
         ? (entries[0]?.questionnaireId ?? "")
         : selectedId;
+      const nextDefinitionEventId = selectedEntry?.eventId ?? entries.find((entry) => entry.questionnaireId === nextSelectedId)?.eventId ?? "";
       selectedQuestionnaireIdRef.current = nextSelectedId;
+      if (nextDefinitionEventId !== selectedDefinitionEventIdRef.current) {
+        selectedDefinitionIsPinnedRef.current = false;
+      }
+      selectedDefinitionEventIdRef.current = nextDefinitionEventId;
       if (selectedId !== nextSelectedId) {
         selectedChangeFromRefreshRef.current = true;
       }
       setSelectedQuestionnaireId((previous) => (previous === nextSelectedId ? previous : nextSelectedId));
+      setSelectedDefinitionEventId((previous) => (previous === nextDefinitionEventId ? previous : nextDefinitionEventId));
       const nextStatus = (
         entries.length > 0
           ? "Questionnaires refreshed from Nostr."
@@ -411,7 +452,8 @@ export default function SimpleAuditorApp({
       return;
     }
     try {
-      const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
+      const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.eventId === selectedDefinitionEventIdRef.current)
+        ?? questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
       const questionnaireRelays = selectedQuestionnaire?.questionnaireRelays;
       const [
         definitionEntries,
@@ -456,10 +498,7 @@ export default function SimpleAuditorApp({
           relays: questionnaireRelays,
         }).catch(() => []),
       ]);
-      const latestDefinition = [...definitionEntries]
-        .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]
-        ?.definition ?? null;
-      const latestResult = [...resultEntries]
+       const latestResult = [...resultEntries]
         .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0];
       const latestParticipantCount = selectedQuestionnaire
         ? selectLatestParticipantCount(participantCountEntries, selectedId, selectedQuestionnaire.coordinatorNpub)
@@ -473,7 +512,7 @@ export default function SimpleAuditorApp({
         latestParticipantCount?.expectedInviteeCount,
         selectedQuestionnaire?.expectedInviteeCount,
       );
-      const [responseEntries, decisionEntries, provisionalEntries] = await Promise.all([
+       const [responseEntries, decisionEntries, provisionalEntries] = await Promise.all([
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: responseFetchLimit,
@@ -500,11 +539,29 @@ export default function SimpleAuditorApp({
           maxPages: AUDITOR_QUESTIONNAIRE_RESPONSE_MAX_PAGES,
           timeBudgetMs: AUDITOR_QUESTIONNAIRE_RESPONSE_TIME_BUDGET_MS,
           relays: questionnaireRelays,
-        }).catch(() => []),
-      ]);
-      const verifiedResponseIds = await verifyQuestionnaireBlindResponseProofs({
-        entries: responseEntries,
-        publicKey: latestDefinition?.blindSigningPublicKey ?? selectedQuestionnaire?.blindSigningPublicKey ?? null,
+         }).catch(() => []),
+       ]);
+       const resolvedDefinitionEntry = selectAuditorDefinition({
+         questionnaireId: selectedId,
+         definitions: definitionEntries,
+          responseEvents: responseEntries.map((entry) => entry.event),
+          coordinatorNpub: urlPinnedCoordinatorNpub,
+          definitionEventId: selectedDefinitionIsPinnedRef.current
+            ? (selectedQuestionnaire?.eventId ?? selectedDefinitionEventIdRef.current)
+            : "",
+       });
+       // Do not let a previously discovered, same-ID definition override an ambiguous public stream.
+        const resolvedDefinition = resolvedDefinitionEntry?.definition
+          ?? (definitionEntries.length === 0 ? selectedQuestionnaire : null);
+        if (resolvedDefinitionEntry && !selectedDefinitionIsPinnedRef.current) {
+          selectedDefinitionEventIdRef.current = resolvedDefinitionEntry.event.id;
+          setSelectedDefinitionEventId((previous) => (
+            previous === resolvedDefinitionEntry.event.id ? previous : resolvedDefinitionEntry.event.id
+          ));
+        }
+        const verifiedResponseIds = await verifyQuestionnaireBlindResponseProofs({
+         entries: responseEntries,
+         publicKey: resolvedDefinition?.blindSigningPublicKey ?? null,
       });
       const admissions = evaluateQuestionnaireBlindAdmissions({
         entries: responseEntries,
@@ -592,12 +649,25 @@ export default function SimpleAuditorApp({
           ? previous
           : delegationStatus
       ));
-      setQuestionnaires((previous) => previous.map((entry) => {
-        if (entry.questionnaireId !== selectedId) {
-          return entry;
-        }
-        return {
-          ...entry,
+       setQuestionnaires((previous) => previous.map((entry) => {
+          if (entry.eventId !== (resolvedDefinitionEntry?.event.id ?? selectedQuestionnaire?.eventId)) {
+           return entry;
+         }
+         const definition = resolvedDefinitionEntry?.definition;
+         return {
+           ...entry,
+           ...(definition ? {
+             title: definition.title || "Untitled questionnaire",
+             description: definition.description || "",
+             coordinatorNpub: normalizeToNpub(definition.coordinatorPubkey),
+             createdAt: Number(resolvedDefinitionEntry.event.created_at ?? definition.createdAt ?? 0),
+             openAt: Number.isFinite(definition.openAt) ? definition.openAt : null,
+             closeAt: Number.isFinite(definition.closeAt) ? definition.closeAt : null,
+             questions: definition.questions ?? [],
+             questionnaireRelays: definition.questionnaireRelays,
+             blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
+             eventId: resolvedDefinitionEntry.event.id,
+           } : {}),
           state: nextLiveState,
           publishedAcceptedResponseCount: nextResultSummary?.acceptedResponseCount ?? entry.publishedAcceptedResponseCount,
           publishedRejectedResponseCount: nextResultSummary?.rejectedResponseCount ?? entry.publishedRejectedResponseCount,
@@ -620,7 +690,7 @@ export default function SimpleAuditorApp({
       const nextStatus = "Failed to refresh questionnaire responses.";
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     }
-  }, []);
+  }, [urlPinnedCoordinatorNpub]);
 
   const drainRefreshQueue = useCallback(async (forceWhenHidden = false) => {
     if (refreshQueueRef.current.inFlightPromise) {
@@ -726,7 +796,8 @@ export default function SimpleAuditorApp({
     if (!selectedId) {
       return;
     }
-    const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
+    const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.eventId === selectedDefinitionEventIdRef.current)
+      ?? questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
     const unsubscribe = subscribeQuestionnaireEventKinds({
       questionnaireId: selectedId,
       kinds: [
@@ -780,7 +851,7 @@ export default function SimpleAuditorApp({
       onError: () => undefined,
     });
     return unsubscribe;
-  }, [enqueueRefresh, questionnaires, selectedQuestionnaireId]);
+  }, [enqueueRefresh, questionnaires, selectedDefinitionEventId, selectedQuestionnaireId]);
 
   useEffect(() => {
     if (!selectedQuestionnaireId.trim()) {
@@ -811,7 +882,7 @@ export default function SimpleAuditorApp({
     setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
     setResponseRefreshStatus((previous) => (previous === null ? previous : null));
     void enqueueRefresh({ list: false, selected: true, forceWhenHidden: true });
-  }, [enqueueRefresh, selectedQuestionnaireId]);
+  }, [enqueueRefresh, selectedDefinitionEventId, selectedQuestionnaireId]);
 
   const coordinatorOptions = useMemo(
     () => [...new Set(
@@ -822,7 +893,7 @@ export default function SimpleAuditorApp({
     [questionnaires],
   );
 
-  const [selectedCoordinatorNpub, setSelectedCoordinatorNpub] = useState("");
+  const [selectedCoordinatorNpub, setSelectedCoordinatorNpub] = useState(() => normalizeToNpub(urlPinnedCoordinatorNpub));
   const coordinatorSelectOptions = useMemo(() => {
     if (!selectedCoordinatorNpub || coordinatorOptions.includes(selectedCoordinatorNpub)) {
       return coordinatorOptions;
@@ -857,22 +928,30 @@ export default function SimpleAuditorApp({
       }
       return;
     }
-    if (!selectedQuestionnaireId || !filteredQuestionnaires.some((entry) => entry.questionnaireId === selectedQuestionnaireId)) {
+    if (!selectedQuestionnaireId || !filteredQuestionnaires.some((entry) => entry.eventId === selectedDefinitionEventId)) {
       if (initialQuestionnaireId && selectedQuestionnaireId === initialQuestionnaireId) {
         return;
       }
       setSelectedQuestionnaireId(filteredQuestionnaires[0].questionnaireId);
+      setSelectedDefinitionEventId(filteredQuestionnaires[0].eventId);
     }
-  }, [filteredQuestionnaires, initialQuestionnaireId, selectedQuestionnaireId, urlPinnedQuestionnaireId]);
+  }, [filteredQuestionnaires, initialQuestionnaireId, selectedDefinitionEventId, selectedQuestionnaireId, urlPinnedQuestionnaireId]);
 
   useEffect(() => {
-    writeSelectedQuestionnaireIdToUrl(selectedQuestionnaireId);
-  }, [selectedQuestionnaireId]);
+    const selected = questionnaires.find((entry) => entry.eventId === selectedDefinitionEventId)
+      ?? questionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId);
+    writeSelectedQuestionnaireToUrl({
+      questionnaireId: selectedQuestionnaireId,
+      coordinatorNpub: selected?.coordinatorNpub ?? selectedCoordinatorNpub,
+      definitionEventId: selected?.eventId ?? selectedDefinitionEventId,
+    });
+  }, [questionnaires, selectedCoordinatorNpub, selectedDefinitionEventId, selectedQuestionnaireId]);
 
   const selectedQuestionnaire = useMemo(
-    () => filteredQuestionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId)
+    () => filteredQuestionnaires.find((entry) => entry.eventId === selectedDefinitionEventId)
+      ?? filteredQuestionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId)
       ?? null,
-    [filteredQuestionnaires, selectedQuestionnaireId],
+    [filteredQuestionnaires, selectedDefinitionEventId, selectedQuestionnaireId],
   );
 
   const decryptedResponseResult = useMemo(
@@ -947,7 +1026,7 @@ export default function SimpleAuditorApp({
   }
 
   function formatRoundOptionLabel(entry: AuditorQuestionnaireEntry) {
-    return `${entry.title} · ${formatQuestionnaireDisplayId(entry.questionnaireId)}`;
+    return `${entry.title} · ${formatQuestionnaireDisplayId(entry.questionnaireId)} · organiser ${deriveActorDisplayId(entry.coordinatorNpub)} · ${formatQuestionnaireTime(entry.createdAt)} · ${entry.eventId.slice(0, 12)}`;
   }
 
   function exportResults() {
@@ -1017,14 +1096,17 @@ export default function SimpleAuditorApp({
           label='Round'
           id='simple-auditor-round'
           fieldClassName='simple-auditor-round-field'
-          value={selectedQuestionnaire?.questionnaireId ?? ''}
+          value={selectedQuestionnaire?.eventId ?? ''}
           onChange={(event) => {
-            setSelectedQuestionnaireId(event.target.value);
+            const selected = filteredQuestionnaires.find((entry) => entry.eventId === event.target.value);
+            setSelectedQuestionnaireId(selected?.questionnaireId ?? "");
+            setSelectedDefinitionEventId(event.target.value);
+            selectedDefinitionIsPinnedRef.current = true;
             onFiltersMenuClose?.();
           }}
         >
           {filteredQuestionnaires.map((entry) => (
-            <option key={entry.eventId} value={entry.questionnaireId}>
+            <option key={entry.eventId} value={entry.eventId}>
               {formatRoundOptionLabel(entry)}
             </option>
           ))}
@@ -1415,6 +1497,56 @@ export function collectAuditorSubmissionSearchValues(entries: Array<{
     }
   }
   return [...values];
+}
+
+function definitionMatchesCoordinator(
+  entry: { event: NostrEvent; definition: QuestionnaireDefinition },
+  coordinatorNpub: string,
+) {
+  const expected = normalizeToNpub(coordinatorNpub);
+  return Boolean(expected)
+    && normalizeToNpub(entry.event.pubkey) === expected
+    && normalizeToNpub(entry.definition.coordinatorPubkey) === expected;
+}
+
+function selectAuditorDefinition(input: {
+  questionnaireId: string;
+  definitions: Array<{ event: NostrEvent; definition: QuestionnaireDefinition }>;
+  responseEvents: NostrEvent[];
+  coordinatorNpub: string;
+  definitionEventId: string;
+}) {
+  const candidates = input.definitions.filter((entry) => entry.definition.questionnaireId === input.questionnaireId);
+  const explicitlySelected = candidates.find((entry) => entry.event.id === input.definitionEventId);
+  if (explicitlySelected) {
+    return explicitlySelected;
+  }
+  const referenceCounts = new Map<string, number>();
+  for (const event of input.responseEvents) {
+    for (const tag of event.tags) {
+      if (tag[0] === "e" && tag[1]) {
+        referenceCounts.set(tag[1], (referenceCounts.get(tag[1]) ?? 0) + 1);
+      }
+    }
+  }
+  const referenced = candidates.filter((entry) => referenceCounts.has(entry.event.id));
+  if (referenced.length > 0) {
+    return referenced.sort((left, right) => (
+      (referenceCounts.get(right.event.id) ?? 0) - (referenceCounts.get(left.event.id) ?? 0)
+      || Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
+      || left.event.id.localeCompare(right.event.id)
+    ))[0];
+  }
+  if (input.coordinatorNpub) {
+    const coordinatorDefinitions = candidates.filter((entry) => definitionMatchesCoordinator(entry, input.coordinatorNpub));
+    if (coordinatorDefinitions.length > 0) {
+      return coordinatorDefinitions.sort((left, right) => (
+        Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
+        || left.event.id.localeCompare(right.event.id)
+      ))[0];
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function normalizeToNpub(value: string) {

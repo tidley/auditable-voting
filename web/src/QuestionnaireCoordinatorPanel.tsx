@@ -67,6 +67,7 @@ import {
   createWorkerDelegationCertificate,
   createWorkerDelegationRevocation,
   loadStoredWorkerDelegation,
+  nextWorkerElectionConfigVersion,
   normaliseWorkerNpub,
   publishWorkerDelegationCertificate,
   publishWorkerDelegationRevocation,
@@ -92,6 +93,7 @@ const QUESTIONNAIRE_TIMER_FALLBACK_MINUTES = "60";
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES = 5_256_000; // 10 years
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS = QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES * 60;
 const BLIND_SIGNING_KEY_RELOAD_STATUS = "Blind-signing key is still initialising in this tab. Please wait a moment, then try publishing again.";
+const QUESTIONNAIRE_DEFINITION_COLLISION_CHECK_TIMEOUT_MS = 2_000;
 
 type CloseTimerUnit = "minutes" | "hours" | "days" | "weeks";
 
@@ -433,6 +435,47 @@ function questionnaireDefinitionEventIsSignedByCoordinator(
     return false;
   }
   return !expectedCoordinatorNpub || authorNpub === expectedCoordinatorNpub;
+}
+
+export async function checkQuestionnaireDefinitionCollision(input: {
+  definition: QuestionnaireDefinition;
+  coordinatorNpub: string;
+  relays?: string[];
+}) {
+  const relays = getQuestionnaireReadRelays(input.relays, 3);
+  if (relays.length === 0) {
+    return { kind: "unavailable" as const };
+  }
+  const events = await Promise.race([
+    queryQuestionnaireEvents(relays, {
+      kinds: [QUESTIONNAIRE_DEFINITION_KIND],
+      "#q": [input.definition.questionnaireId],
+      limit: 100,
+    }, { timeoutMs: QUESTIONNAIRE_DEFINITION_COLLISION_CHECK_TIMEOUT_MS }),
+    new Promise<null>((resolve) => {
+      globalThis.setTimeout(() => resolve(null), QUESTIONNAIRE_DEFINITION_COLLISION_CHECK_TIMEOUT_MS);
+    }),
+  ]).catch(() => null);
+  if (!events) {
+    return { kind: "unavailable" as const };
+  }
+  const expectedHash = questionnaireDefinitionEventHash(JSON.stringify(input.definition));
+  const matchingDefinitions = events
+    .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
+    .filter((entry): entry is { event: NostrEvent; definition: QuestionnaireDefinition } => (
+      entry.definition?.questionnaireId === input.definition.questionnaireId
+    ));
+  if (matchingDefinitions.length === 0) {
+    return { kind: "none" as const };
+  }
+  const ownIdentical = matchingDefinitions.find((entry) => (
+    questionnaireDefinitionEventIsSignedByCoordinator(entry.event, entry.definition, input.coordinatorNpub)
+    && questionnaireDefinitionEventHash(entry.event.content) === expectedHash
+  ));
+  if (ownIdentical) {
+    return { kind: "own_identical" as const, entry: ownIdentical };
+  }
+  return { kind: "collision" as const, entry: matchingDefinitions[0] };
 }
 
 function generateQuestionnaireId() {
@@ -964,7 +1007,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.43";
+const WORKER_MINIMUM_VERSION = "0.1.44";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -3669,6 +3712,22 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       return;
     }
 
+    setStatus("Checking public relays for this questionnaire ID...");
+    const collisionCheck = await checkQuestionnaireDefinitionCollision({
+      definition: definitionToPublish,
+      coordinatorNpub,
+      relays: questionnaireRelayPublishHints,
+    });
+    if (collisionCheck.kind === "collision") {
+      setStatus("Questionnaire ID is already used by a different public definition. Generate a new ID before publishing.");
+      return;
+    }
+    if (collisionCheck.kind === "own_identical") {
+      storeCachedQuestionnaireDefinition(definitionToPublish);
+      setStatus("This exact questionnaire definition is already published by this organiser.");
+      return;
+    }
+
     setStatus("Publishing vote...");
     setDefinitionPublishStartedAt(new Date().toISOString());
     setDefinitionPublishSucceededAt(null);
@@ -4365,6 +4424,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         schemaVersion: 1,
         electionId,
         delegationId: delegation.delegationId,
+        configVersion: 0,
         coordinatorNpub: coordinatorNpubTrimmed,
         workerNpub,
         expectedInviteeCount,
@@ -4397,6 +4457,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       });
       let configResultSummary = "";
       if (workerElectionConfigSnapshot) {
+        const configVersion = nextWorkerElectionConfigVersion({
+          electionId,
+          delegationId: delegation.delegationId,
+        });
+        workerElectionConfigSnapshot.configVersion = configVersion ?? 1;
         const configDmResult = await publishOptionAWorkerElectionConfigDm({
           signer: createSignerService(),
           recipientNpub: workerNpub,
@@ -4415,6 +4480,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         activeDelegation: delegation,
         lastRevocation: null,
         lastUpdatedAt: new Date().toISOString(),
+        lastConfigVersion: workerElectionConfigSnapshot?.configVersion,
       })?.activeDelegation ?? delegation;
       setActiveWorkerDelegation(storedDelegation);
       setLastWorkerRevocationState("pending_activation");

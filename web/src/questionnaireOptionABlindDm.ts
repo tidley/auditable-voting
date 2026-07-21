@@ -9,6 +9,8 @@ import {
   type BallotSubmission,
   type BearerInviteCodeEntry,
   type BlindBallotIssuance,
+  type BlindBallotPlan,
+  sanitiseBlindBallotPlan,
   type BlindBallotRequest,
   type CoordinatorElectionState,
   type VoterElectionLocalState,
@@ -112,6 +114,13 @@ type BlindIssuanceBundleDmEnvelope = {
   /** Legacy bundle-level definition. New bundles carry definitionHash / definitionEventId instead. */
   definition?: QuestionnaireDefinition | null;
   issuances: BlindBallotIssuance[];
+  sentAt: string;
+};
+
+type BlindBallotPlanDmEnvelope = {
+  type: "optiona_blind_ballot_plan_dm";
+  schemaVersion: 1;
+  plan: BlindBallotPlan;
   sentAt: string;
 };
 
@@ -280,6 +289,7 @@ export type WorkerElectionConfigSnapshot = {
   schemaVersion: 1;
   electionId: string;
   delegationId: string;
+  configVersion: number;
   coordinatorNpub: string;
   workerNpub: string;
   expectedInviteeCount?: number;
@@ -318,6 +328,7 @@ type OptionABlindDmEnvelope =
   | BlindRequestBundleDmEnvelope
   | BlindIssuanceDmEnvelope
   | BlindIssuanceBundleDmEnvelope
+  | BlindBallotPlanDmEnvelope
   | BlindRequestAckDmEnvelope
   | BlindIssuanceAckDmEnvelope
   | BallotSubmissionDmEnvelope
@@ -1089,6 +1100,18 @@ function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance[] | n
   }
 }
 
+export function parseBlindBallotPlanDmContent(content: string): BlindBallotPlan | null {
+  try {
+    const parsed = parseOptionADmEnvelopeContent(content) as Partial<BlindBallotPlanDmEnvelope> | BlindBallotPlan;
+    const plan = (parsed as BlindBallotPlanDmEnvelope).type === "optiona_blind_ballot_plan_dm"
+      ? (parsed as BlindBallotPlanDmEnvelope).plan
+      : parsed as BlindBallotPlan;
+    return sanitiseBlindBallotPlan(plan);
+  } catch {
+    return null;
+  }
+}
+
 function parseBlindRequestAckDmContent(content: string): BlindRequestAck | null {
   try {
     const parsed = JSON.parse(content) as Partial<BlindRequestAckDmEnvelope> | BlindRequestAck;
@@ -1433,6 +1456,8 @@ function optionABlindDmSubject(
       return "Auditable Voting blind issuance";
     case "optiona_blind_issuance_bundle_dm":
       return "Auditable Voting blind issuance bundle";
+    case "optiona_blind_ballot_plan_dm":
+      return "Auditable Voting ballot plan";
     case "optiona_blind_request_ack_dm":
       return "Auditable Voting blind request ack";
     case "optiona_blind_issuance_ack_dm":
@@ -2394,6 +2419,23 @@ export async function publishOptionAWorkerElectionConfigDm(input: {
       snapshot: input.snapshot,
       sentAt: new Date().toISOString(),
     },
+  });
+}
+
+export async function publishOptionABlindBallotPlanDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  plan: BlindBallotPlan;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-blind-ballot-plan:${input.plan.electionId}:${input.plan.initialRequestId}`,
+    envelope: { type: "optiona_blind_ballot_plan_dm", schemaVersion: 1, plan: input.plan, sentAt: new Date().toISOString() },
   });
 }
 
@@ -3947,6 +3989,41 @@ export function subscribeOptionABlindIssuanceDmsWithNsec(input: {
     keyOf: (value) => `${value.electionId}:${value.requestId}:${value.issuanceId}`,
     onValue: input.onIssuance,
     onError: input.onError,
+  });
+}
+
+export function subscribeOptionABlindBallotPlanDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  issuerNpub: string;
+  relays?: string[];
+  since?: number;
+  onPlan: (plan: BlindBallotPlan) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BlindBallotPlan>({
+    signer: input.signer, electionId: input.electionId, relays: input.relays, since: input.since,
+    stage: "subscribe_blind_ballot_plans", parse: parseBlindBallotPlanDmContent,
+    keyOf: (plan) => `${plan.electionId}:${plan.planId}`,
+    validate: (plan, decoded) => toNpub(decoded.sealPubkey) === toNpub(input.issuerNpub) && plan.issuerNpub === toNpub(input.issuerNpub),
+    onValue: input.onPlan, onError: input.onError,
+  });
+}
+
+export function subscribeOptionABlindBallotPlanDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  issuerNpub: string;
+  relays?: string[];
+  onPlan: (plan: BlindBallotPlan) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSecretKeyGiftWrapSubscription<BlindBallotPlan>({
+    nsec: input.nsec, electionId: input.electionId, relays: input.relays,
+    stage: "subscribe_blind_ballot_plans_nsec", parse: parseBlindBallotPlanDmContent,
+    keyOf: (plan) => `${plan.electionId}:${plan.planId}`,
+    validate: (plan, decoded) => toNpub(decoded.sealPubkey) === toNpub(input.issuerNpub) && plan.issuerNpub === toNpub(input.issuerNpub),
+    onValue: input.onPlan, onError: input.onError,
   });
 }
 

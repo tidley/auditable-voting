@@ -10789,9 +10789,9 @@ code {
 }
 
 .simple-status-indicator.is-voter-claimed {
-  color: #431407;
-  background: #fb923c;
-  border-color: #fb923c;
+  color: #fb923c;
+  background: transparent;
+  border-color: transparent;
 }
 
 .simple-status-indicator.is-voter-requested,

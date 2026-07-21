@@ -12,6 +12,7 @@ import {
   fetchOptionAParticipantStatusDms,
   fetchOptionAParticipantStatusDmsWithNsec,
   parseOptionADmEnvelopeContent,
+  parseBlindBallotPlanDmContent,
   parseOptionAParticipantStatusDmContent,
   publishOptionABlindRequestDm,
   publishOptionAParticipantStatusDm,
@@ -153,6 +154,21 @@ function wrapParticipantStatus(input: {
 }
 
 describe("questionnaireOptionABlindDm", () => {
+  it("parses only a complete two-credential issuer ballot plan", () => {
+    const plan = parseBlindBallotPlanDmContent(JSON.stringify({
+      type: "optiona_blind_ballot_plan_dm",
+      schemaVersion: 1,
+      sentAt: "2026-07-19T00:00:00.000Z",
+      plan: {
+        type: "blind_ballot_plan", schemaVersion: 1, planId: "plan_1",
+        electionId: "election_1", invitedNpub: "npub1voter", issuerNpub: "npub1issuer",
+        initialRequestId: "request_1", blindSigningKeyId: "key_1", credentialCount: 2,
+        ballotScopes: [{ credentialIndex: 1 }, { credentialIndex: 2 }], issuedAt: "2026-07-19T00:00:00.000Z",
+      },
+    }));
+    expect(plan?.credentialCount).toBe(2);
+    expect(parseBlindBallotPlanDmContent(JSON.stringify({ type: "blind_ballot_plan", schemaVersion: 1, credentialCount: 3 }))).toBeNull();
+  });
   beforeEach(() => {
     querySync.mockReset();
     publish.mockReset();

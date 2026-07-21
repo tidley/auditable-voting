@@ -76,6 +76,7 @@ export type StoredWorkerDelegation = {
   activeDelegation: WorkerDelegationCertificate | null;
   lastRevocation: WorkerDelegationRevocation | null;
   lastUpdatedAt: string;
+  lastConfigVersion?: number;
 };
 
 type WorkerDelegationStore = Record<string, StoredWorkerDelegation>;
@@ -142,6 +143,23 @@ export function upsertStoredWorkerDelegation(input: StoredWorkerDelegation) {
   store[electionId] = next;
   writeStore(store);
   return next;
+}
+
+export function nextWorkerElectionConfigVersion(input: { electionId: string; delegationId: string }) {
+  const electionId = input.electionId.trim();
+  const delegationId = input.delegationId.trim();
+  if (!electionId || !delegationId) {
+    return null;
+  }
+  const store = readStore();
+  const current = store[electionId];
+  if (current?.activeDelegation?.delegationId !== delegationId) {
+    return null;
+  }
+  const nextVersion = Math.max(0, current.lastConfigVersion ?? 0) + 1;
+  store[electionId] = { ...current, lastConfigVersion: nextVersion };
+  writeStore(store);
+  return nextVersion;
 }
 
 export function isDelegatedWorkerCapabilityEnabled(input: {

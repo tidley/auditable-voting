@@ -48,7 +48,7 @@ Shape (camelCase in the shipped client):
 - `ballotCredentialMode?: "questionnaire" | "per_question"`
 - `questions[]` (`yes_no`, `multiple_choice`, `rank`, `free_text`; free text may set `encryptResponses: true`)
 - each question may carry `ballotSlot: { slotId, slotIndex, version }` when `ballotCredentialMode` is `per_question`; questions with the same `slotIndex` and `version` share one ballot credential
-- `credentialsPerVoter` may be present in legacy definitions, but current proxy voting is per voter: the organiser stores the allowance in the whitelist/invite metadata, sends `credentialsPerVoter: 2` only to that voter, and includes the proxy-voter npub list in worker config so other voters cannot receive a second credential
+- `credentialsPerVoter` may be present in legacy definitions, but current proxy voting is per voter: the organiser stores the allowance in the whitelist and sends only the proxy-voter configuration to the delegated worker. The coordinator does not disclose the allowance in the voter invite. After the first credential request, the authenticated delegated issuer privately sends a ballot plan bound to the election, voter, definition, key id, allowed scope, and two-credential count; the voter creates the remaining blinded request and receives both signatures in one issuance bundle.
 
 Tags:
 

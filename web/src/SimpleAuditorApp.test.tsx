@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { NostrEvent } from "nostr-tools";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 
 const transportMocks = vi.hoisted(() => ({
   fetchQuestionnaireDefinitions: vi.fn(),
@@ -67,7 +69,7 @@ describe("SimpleAuditorApp", () => {
       );
     });
 
-    await user.selectOptions(screen.getByLabelText("Round"), "q_second");
+    await user.selectOptions(screen.getByLabelText("Round"), "definition_q_second");
 
     await waitFor(() => {
       expect(transportMocks.fetchQuestionnaireBlindResponses).toHaveBeenCalledWith(
@@ -186,6 +188,69 @@ describe("SimpleAuditorApp", () => {
     });
   });
 
+  it("uses public ballot definition references instead of a newer colliding questionnaire definition", async () => {
+    window.history.pushState(null, "", "/?role=auditor&q=q_70201bbedaf5");
+    setupTransportMocks();
+    const original = makeDefinitionEntry("q_70201bbedaf5", "Original 20-question questionnaire", 1_777_000_100);
+    original.event.id = "definition_original";
+    original.definition.questions = Array.from({ length: 20 }, (_, index) => ({
+      questionId: `original_${index + 1}`,
+      prompt: `Original question ${index + 1}`,
+      required: true,
+      type: "yes_no" as const,
+    }));
+    const conflicting = makeDefinitionEntry("q_70201bbedaf5", "Conflicting 3-question questionnaire", 1_777_000_200);
+    conflicting.event.id = "definition_conflicting";
+    conflicting.definition.questions = Array.from({ length: 3 }, (_, index) => ({
+      questionId: `conflicting_${index + 1}`,
+      prompt: `Conflicting question ${index + 1}`,
+      required: true,
+      type: "yes_no" as const,
+    }));
+    transportMocks.fetchQuestionnaireDefinitions.mockImplementation(async (input?: { questionnaireId?: string }) => (
+      input?.questionnaireId ? [original, conflicting] : [original, conflicting]
+    ));
+    const response = makeResponseEntry("q_70201bbedaf5");
+    response.event.tags = [["e", "definition_original"]] as unknown as never[];
+    transportMocks.fetchQuestionnaireBlindResponses.mockResolvedValue([response]);
+    const { default: SimpleAuditorApp } = await import("./SimpleAuditorApp");
+
+    render(<SimpleAuditorApp />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Original 20-question questionnaire")).toBeTruthy();
+    });
+    expect(screen.queryByText("Conflicting 3-question questionnaire")).toBeNull();
+  });
+
+  it("lists same-ID definitions separately and pins verification to the selected organiser variant", async () => {
+    const user = userEvent.setup();
+    setupTransportMocks();
+    const first = makeDefinitionEntry("q_shared", "First organiser definition", 1_777_000_100);
+    first.event.id = "definition_first";
+    first.event.pubkey = "npub1first";
+    first.definition.coordinatorPubkey = "npub1first";
+    const second = makeDefinitionEntry("q_shared", "Second organiser definition", 1_777_000_200);
+    second.event.id = "definition_second";
+    second.event.pubkey = "npub1second";
+    second.definition.coordinatorPubkey = "npub1second";
+    transportMocks.fetchQuestionnaireDefinitions.mockResolvedValue([first, second]);
+    const { default: SimpleAuditorApp } = await import("./SimpleAuditorApp");
+
+    render(<SimpleAuditorApp />);
+
+    const roundSelect = await screen.findByLabelText("Round");
+    expect(screen.getByRole("option", { name: /First organiser definition.*definition_f/i })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Second organiser definition.*definition_s/i })).toBeTruthy();
+    await user.selectOptions(roundSelect, "definition_first");
+
+    await waitFor(() => {
+      expect(screen.getByText("First organiser definition")).toBeTruthy();
+    });
+    expect(new URL(window.location.href).searchParams.get("coordinator")).toBe("npub1first");
+    expect(new URL(window.location.href).searchParams.get("definition")).toBe("definition_first");
+  });
+
   it("renders discovered questionnaire rounds before slow metadata fetches finish", async () => {
     setupTransportMocks();
     transportMocks.fetchQuestionnaireState.mockImplementation(() => new Promise(() => undefined));
@@ -198,8 +263,8 @@ describe("SimpleAuditorApp", () => {
     render(<SimpleAuditorApp />);
 
     expect(await screen.findByRole("combobox", { name: "Round" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "First questionnaire · Q_FIRST" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Second questionnaire · Q_SECOND" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /First questionnaire · Q_FIRST · organiser/i })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Second questionnaire · Q_SECOND · organiser/i })).toBeTruthy();
   });
 
   it("does not show background response refresh as a top-level status", async () => {
@@ -225,7 +290,7 @@ describe("SimpleAuditorApp", () => {
       return [makeResponseEntry(input.questionnaireId)];
     });
 
-    await user.selectOptions(screen.getByLabelText("Round"), "q_second");
+    await user.selectOptions(screen.getByLabelText("Round"), "definition_q_second");
 
     await waitFor(() => {
       expect(transportMocks.fetchQuestionnaireBlindResponses).toHaveBeenCalledWith(
@@ -274,7 +339,7 @@ describe("SimpleAuditorApp", () => {
     render(<SimpleAuditorApp filtersInMenu filtersMenuOpen onFiltersMenuClose={closeMenu} />);
 
     const roundSelect = await within(menuSlot).findByLabelText("Round");
-    await user.selectOptions(roundSelect, "q_second");
+    await user.selectOptions(roundSelect, "definition_q_second");
 
     expect(closeMenu).toHaveBeenCalledTimes(1);
   });
@@ -308,7 +373,10 @@ function setupTransportMocks() {
   transportMocks.verifyQuestionnaireBlindResponseProofs.mockResolvedValue(new Set<string>());
 }
 
-function makeDefinitionEntry(questionnaireId: string, title: string, createdAt: number) {
+function makeDefinitionEntry(questionnaireId: string, title: string, createdAt: number): {
+  event: NostrEvent;
+  definition: QuestionnaireDefinition;
+} {
   return {
     event: {
       id: `definition_${questionnaireId}`,
@@ -333,7 +401,7 @@ function makeDefinitionEntry(questionnaireId: string, title: string, createdAt: 
       questionnaireRelays: ["wss://relay.example.test"],
       blindSigningPublicKey: null,
     },
-  };
+  } as unknown as { event: NostrEvent; definition: QuestionnaireDefinition };
 }
 
 function makeResponseEntry(questionnaireId: string, suffix = "") {

@@ -69,7 +69,7 @@ vi.mock("./questionnaireOptionABlindDm", async () => {
   };
 });
 
-import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
+import QuestionnaireCoordinatorPanel, { checkQuestionnaireDefinitionCollision } from "./QuestionnaireCoordinatorPanel";
 import { loadCoordinatorState, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import { readCachedQuestionnaireDefinitionReference, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
@@ -178,6 +178,39 @@ afterEach(() => {
 });
 
 describe("QuestionnaireCoordinatorPanel option_a mode", () => {
+  it("detects a public definition collision but accepts an identical organiser retry", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorHex = getPublicKey(coordinatorSecret);
+    const coordinatorNpub = nip19.npubEncode(coordinatorHex);
+    const definition = makeDefinition({
+      questionnaireId: "q_collision",
+      title: "Collision check",
+      coordinatorNpub,
+    });
+    sharedNostrPoolMocks.querySync.mockResolvedValue([makeDefinitionEvent({
+      id: "same-definition",
+      pubkey: coordinatorHex,
+      questionnaireId: definition.questionnaireId,
+      title: definition.title,
+      coordinatorNpub,
+    })]);
+
+    await expect(checkQuestionnaireDefinitionCollision({ definition, coordinatorNpub })).resolves.toMatchObject({
+      kind: "own_identical",
+    });
+
+    sharedNostrPoolMocks.querySync.mockResolvedValue([makeDefinitionEvent({
+      id: "other-definition",
+      pubkey: "b".repeat(64),
+      questionnaireId: definition.questionnaireId,
+      title: "Other definition",
+      coordinatorNpub: nip19.npubEncode("b".repeat(64)),
+    })]);
+    await expect(checkQuestionnaireDefinitionCollision({ definition, coordinatorNpub })).resolves.toMatchObject({
+      kind: "collision",
+    });
+  });
+
   it("uses the standard coordinator questionnaire form even when option_a is requested", () => {
     render(<QuestionnaireCoordinatorPanel />);
     expect(screen.getByText("Draft")).toBeTruthy();

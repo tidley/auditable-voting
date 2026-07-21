@@ -191,6 +191,23 @@ export interface BlindBallotIssuance {
   issuedAt: IsoTime;
 }
 
+/** A delegated issuer's authenticated instruction for the remaining credential requests. */
+export interface BlindBallotPlan {
+  type: "blind_ballot_plan";
+  schemaVersion: 1;
+  planId: string;
+  electionId: ElectionId;
+  invitedNpub: Npub;
+  issuerNpub: Npub;
+  initialRequestId: RequestId;
+  blindSigningKeyId: string;
+  definitionHash?: string | null;
+  definitionEventId?: string | null;
+  credentialCount: 2;
+  ballotScopes: Array<BallotScope | null>;
+  issuedAt: IsoTime;
+}
+
 export type QuestionnaireAnswer =
   | { questionId: string; type: "yes_no"; answer: "yes" | "no" }
   | { questionId: string; type: "multiple_choice"; answer: string[] }
@@ -246,6 +263,7 @@ export interface VoterElectionLocalState {
   inviteMessage?: ElectionInviteMessage | null;
   privateInviteCredentialsPerVoter?: QuestionnaireCredentialsPerVoter | null;
   privateInviteBallotGroup?: string | null;
+  blindBallotPlan?: BlindBallotPlan | null;
   blindRequest?: BlindBallotRequest | null;
   blindRequestSent: boolean;
   blindRequestSentAt?: IsoTime | null;
@@ -311,6 +329,7 @@ export type VoterEvent =
   | { type: "LOGIN_VERIFIED"; electionId: ElectionId; npub: Npub; verifiedAt?: IsoTime }
   | { type: "BLIND_REQUEST_CREATED"; request: BlindBallotRequest }
   | { type: "BLIND_REQUEST_SENT"; electionId: ElectionId; requestId: RequestId; sentAt: IsoTime }
+  | { type: "BLIND_BALLOT_PLAN_RECEIVED"; plan: BlindBallotPlan }
   | { type: "BLIND_ISSUANCE_RECEIVED"; issuance: BlindBallotIssuance }
   | { type: "DRAFT_RESPONSES_UPDATED"; electionId: ElectionId; responses: QuestionnaireAnswer[] }
   | { type: "BALLOT_SUBMISSION_CREATED"; submission: BallotSubmission }
@@ -377,6 +396,7 @@ function cloneCoordinatorState(state: CoordinatorElectionState): CoordinatorElec
 function cloneVoterState(state: VoterElectionLocalState): VoterElectionLocalState {
   return {
     ...state,
+    blindBallotPlan: sanitiseBlindBallotPlan(state.blindBallotPlan),
     blindTokenSecret: state.blindTokenSecret ? { ...state.blindTokenSecret } : null,
     blindRequest: state.blindRequest ? sanitiseBlindBallotRequest(state.blindRequest) : null,
     blindIssuance: state.blindIssuance ? sanitiseBlindBallotIssuance(state.blindIssuance) : null,
@@ -495,6 +515,49 @@ export function sanitiseBlindBallotIssuance(issuance: BlindBallotIssuance): Blin
     next.definition = issuance.definition ?? null;
   }
   return next;
+}
+
+export function sanitiseBlindBallotPlan(plan: unknown): BlindBallotPlan | null {
+  if (!plan || typeof plan !== "object") {
+    return null;
+  }
+  const candidate = plan as Partial<BlindBallotPlan>;
+  if (
+    candidate.type !== "blind_ballot_plan"
+    || candidate.schemaVersion !== 1
+    || typeof candidate.planId !== "string"
+    || typeof candidate.electionId !== "string"
+    || typeof candidate.invitedNpub !== "string"
+    || typeof candidate.issuerNpub !== "string"
+    || typeof candidate.initialRequestId !== "string"
+    || typeof candidate.blindSigningKeyId !== "string"
+    || candidate.credentialCount !== 2
+    || !Array.isArray(candidate.ballotScopes)
+    || candidate.ballotScopes.length !== 2
+    || candidate.ballotScopes.some((scope) => scope !== null && typeof scope !== "object")
+    || typeof candidate.issuedAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    type: "blind_ballot_plan",
+    schemaVersion: 1,
+    planId: candidate.planId,
+    electionId: candidate.electionId,
+    invitedNpub: candidate.invitedNpub,
+    issuerNpub: candidate.issuerNpub,
+    initialRequestId: candidate.initialRequestId,
+    blindSigningKeyId: candidate.blindSigningKeyId,
+    ...(typeof candidate.definitionHash === "string" || candidate.definitionHash === null
+      ? { definitionHash: candidate.definitionHash }
+      : {}),
+    ...(typeof candidate.definitionEventId === "string" || candidate.definitionEventId === null
+      ? { definitionEventId: candidate.definitionEventId }
+      : {}),
+    credentialCount: 2,
+    ballotScopes: candidate.ballotScopes.map((scope) => sanitiseBallotScope(scope)),
+    issuedAt: candidate.issuedAt,
+  };
 }
 
 function sanitiseBlindBallotRequestRecord(
@@ -902,6 +965,24 @@ export function reduceVoterEvent(
     next.blindRequestSent = true;
     next.blindRequestSentAt = event.sentAt;
     next.lastUpdatedAt = event.sentAt;
+    return { state: next, ok: true };
+  }
+
+  if (event.type === "BLIND_BALLOT_PLAN_RECEIVED") {
+    const plan = event.plan;
+    if (
+      plan.electionId !== next.electionId
+      || plan.invitedNpub !== next.invitedNpub
+      || plan.credentialCount !== 2
+      || plan.ballotScopes.length !== 2
+      || !next.blindRequest
+      || plan.initialRequestId !== next.blindRequest.requestId
+      || plan.blindSigningKeyId !== next.blindRequest.blindSigningKeyId
+    ) {
+      return reduceVoterError(state, "issuance_conflict");
+    }
+    next.blindBallotPlan = plan;
+    next.lastUpdatedAt = plan.issuedAt;
     return { state: next, ok: true };
   }
 

@@ -2,6 +2,7 @@ import {
   buildCoordinatorStorageKeys,
   buildVoterStorageKeys,
   sanitiseBlindBallotIssuance,
+  sanitiseBlindBallotPlan,
   sanitiseBlindBallotRequest,
   type BallotAcceptanceResult,
   type BallotSubmission,
@@ -468,6 +469,7 @@ export function saveVoterState(input: {
     privateInviteBallotGroup: input.state.privateInviteBallotGroup ?? null,
   });
   writeJson(keys.blindRequest, {
+    blindBallotPlan: sanitiseBlindBallotPlan(input.state.blindBallotPlan),
     blindRequest: input.state.blindRequest ? sanitiseBlindBallotRequest(input.state.blindRequest) : null,
     blindRequests: sanitiseBlindBallotRequestRecordPreservingKeys(input.state.blindRequests ?? {}),
     blindRequestSent: input.state.blindRequestSent,
@@ -517,6 +519,7 @@ export function loadVoterState(input: {
     privateInviteBallotGroup: null,
   });
   const requestPart = readJson<{
+    blindBallotPlan?: VoterElectionLocalState["blindBallotPlan"];
     blindRequest: BlindBallotRequest | null;
     blindRequests?: Record<string, BlindBallotRequest>;
     blindRequestSent: boolean;
@@ -525,6 +528,7 @@ export function loadVoterState(input: {
     blindTokenSecrets?: VoterElectionLocalState["blindTokenSecrets"];
   }>(keys.blindRequest, {
     blindRequest: null,
+    blindBallotPlan: null,
     blindRequests: {},
     blindRequestSent: false,
     blindRequestSentAt: null,
@@ -573,6 +577,7 @@ export function loadVoterState(input: {
   const anyState = Boolean(
     inviteMessage
     || login.loginVerified
+    || Boolean(sanitiseBlindBallotPlan(requestPart.blindBallotPlan))
     || requestPart.blindRequest
     || Object.keys(requestPart.blindRequests ?? {}).length > 0
     || blindIssuance
@@ -594,6 +599,7 @@ export function loadVoterState(input: {
     inviteMessage,
     privateInviteCredentialsPerVoter: login.privateInviteCredentialsPerVoter ?? null,
     privateInviteBallotGroup: normaliseBallotGroup(login.privateInviteBallotGroup),
+    blindBallotPlan: sanitiseBlindBallotPlan(requestPart.blindBallotPlan),
     blindRequest: requestPart.blindRequest ? sanitiseBlindBallotRequest(requestPart.blindRequest) : null,
     blindRequests: sanitiseBlindBallotRequestRecordPreservingKeys(
       requestPart.blindRequests ?? (requestPart.blindRequest ? { __questionnaire__: requestPart.blindRequest } : {}),

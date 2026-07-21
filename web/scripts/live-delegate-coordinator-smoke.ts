@@ -408,6 +408,7 @@ async function main() {
     schemaVersion: 1,
     electionId: questionnaireId,
     delegationId: delegation.delegationId,
+    configVersion: 1,
     coordinatorNpub: coordinator.npub,
     workerNpub: worker.npub,
     expectedInviteeCount: 1,

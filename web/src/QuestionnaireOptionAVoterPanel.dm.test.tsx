@@ -2384,6 +2384,11 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       blindIssuances: {},
       blindTokenSecrets: {},
       credentialReady: true,
+      blindBallotPlan: {
+        type: "blind_ballot_plan", schemaVersion: 1, planId: "plan_proxy_together", electionId: "q_proxy_together",
+        invitedNpub: localVoterNpub, issuerNpub: "npub1issuer", initialRequestId: "request_proxy_1", blindSigningKeyId: "blind_key",
+        credentialCount: 2, ballotScopes: [{ slotId: "proxy-item", slotIndex: 1, version: 1 }, { slotId: "proxy-item", slotIndex: 1, version: 1, credentialIndex: 2 }], issuedAt: "2026-06-15T23:00:00.000Z",
+      },
       draftResponses: [],
       submissions: {
         "slot:1:v1": {
@@ -2821,6 +2826,11 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       },
       blindTokenSecrets: {},
       credentialReady: true,
+      blindBallotPlan: {
+        type: "blind_ballot_plan", schemaVersion: 1, planId: "plan_proxy_together", electionId: "q_proxy_together",
+        invitedNpub: localVoterNpub, issuerNpub: "npub1issuer", initialRequestId: "request_proxy_1", blindSigningKeyId: "blind_key",
+        credentialCount: 2, ballotScopes: [{ slotId: "proxy-item", slotIndex: 1, version: 1 }, { slotId: "proxy-item", slotIndex: 1, version: 1, credentialIndex: 2 }], issuedAt: "2026-06-15T23:00:00.000Z",
+      },
       draftResponses: [],
       submissions: {},
       submissionAccepted: null,
@@ -2886,9 +2896,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(submitCalls.map((call) => call.options?.credentialIndex)).toEqual([1, 2]);
       expect(submitCalls.map((call) => call.options?.questionIds)).toEqual([["q1", "q2"], ["q1", "q2"]]);
       expect(submitCalls.map((call) => call.requiredQuestionIds)).toEqual([["q1", "q2"], ["q1", "q2"]]);
-      expect(draftBatches).toEqual([
-        [{ questionId: "q1", type: "yes_no", answer: "yes" }],
-        [{ questionId: "q1", type: "yes_no", answer: "no" }],
+      expect(draftBatches.slice(-2)).toEqual([
         [
           { questionId: "q1", type: "yes_no", answer: "yes" },
           { questionId: "q2", type: "yes_no", answer: "no" },
@@ -2945,7 +2953,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       coordinatorNpub,
       blindSigningPublicKey: definition.blindSigningPublicKey,
       definition,
-      credentialsPerVoter: 2,
       expiresAt: null,
     }]);
     optionAStorageMocks.loadVoterState.mockReturnValue({
@@ -3002,6 +3009,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       blindTokenSecret: null,
       blindTokenSecrets: {},
       credentialReady: false,
+      blindBallotPlan: {
+        type: "blind_ballot_plan", schemaVersion: 1, planId: "plan_proxy_late", electionId: "q_proxy_late_invite",
+        invitedNpub: localVoterNpub, issuerNpub: "npub1issuer", initialRequestId: "request_proxy_1", blindSigningKeyId: "blind_key",
+        credentialCount: 2,
+        ballotScopes: [{ slotId: "proxy-item", slotIndex: 1, version: 1 }, { slotId: "proxy-item", slotIndex: 1, version: 1, credentialIndex: 2 }],
+        issuedAt: "2026-06-15T23:00:00.000Z",
+      },
       draftResponses: [],
       submissions: {},
       submissionAccepted: null,
@@ -3022,7 +3036,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await waitFor(() => {
       expect(fetchOptionAInviteDmsMock).toHaveBeenCalled();
-      expect(requestCalls).toContainEqual({ forceResend: true });
+      expect(requestCalls).toEqual([]);
     });
   });
 

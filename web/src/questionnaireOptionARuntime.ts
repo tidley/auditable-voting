@@ -16,6 +16,7 @@ import {
   type BallotSubmission,
   type BearerInviteCodeEntry,
   type BlindBallotIssuance,
+  type BlindBallotPlan,
   type BlindBallotRequest,
   type CoordinatorElectionState,
   type ElectionInviteMessage,
@@ -105,6 +106,8 @@ import {
   subscribeOptionABlindIssuanceAckDms,
   subscribeOptionABlindIssuanceDms,
   subscribeOptionABlindIssuanceDmsWithNsec,
+  subscribeOptionABlindBallotPlanDms,
+  subscribeOptionABlindBallotPlanDmsWithNsec,
   subscribeOptionABlindRequestAckDms,
   subscribeOptionABlindRequestAckDmsWithNsec,
   subscribeOptionABlindRequestDms,
@@ -606,10 +609,8 @@ function voterCredentialsPerVoter(input: {
   privateInviteCredentialsPerVoter?: QuestionnaireCredentialsPerVoter | null;
   definition?: Pick<QuestionnaireDefinition, "credentialsPerVoter"> | null;
 }): QuestionnaireCredentialsPerVoter {
-  return input.invite?.credentialsPerVoter === 2
-    || input.privateInviteCredentialsPerVoter === 2
-    ? 2
-    : questionnaireCredentialsPerVoter(input.definition);
+  // Per-voter proxy allowance is issuer-private. Only a validated ballot plan may raise this.
+  return questionnaireCredentialsPerVoter(input.definition);
 }
 
 function voterUsesScopedBlindCredentials(input: {
@@ -706,7 +707,7 @@ function reconcileVoterCredentialReadyForDefinition(
   state: VoterElectionLocalState,
   definition: QuestionnaireDefinition | null | undefined,
 ): VoterElectionLocalState {
-  if (!voterUsesScopedBlindCredentials({
+  if (!state.blindBallotPlan && !voterUsesScopedBlindCredentials({
     invite: state.inviteMessage ?? null,
     privateInviteCredentialsPerVoter: state.privateInviteCredentialsPerVoter,
     privateInviteBallotGroup: state.privateInviteBallotGroup,
@@ -715,7 +716,7 @@ function reconcileVoterCredentialReadyForDefinition(
     const credentialReady = Boolean(state.blindIssuance && state.blindTokenSecret);
     return state.credentialReady === credentialReady ? state : { ...state, credentialReady };
   }
-  const scopes = buildQuestionnaireCredentialScopes(
+  const scopes = state.blindBallotPlan?.ballotScopes ?? buildQuestionnaireCredentialScopes(
     definition,
     voterCredentialsPerVoter({
       invite: state.inviteMessage ?? null,
@@ -1030,6 +1031,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private blindIssuanceAckInflightByRequestId = new Map<string, Promise<void>>();
   private stopBlindRequestAckSubscription: (() => void) | null = null;
   private stopBlindIssuanceSubscription: (() => void) | null = null;
+  private stopBlindBallotPlanSubscription: (() => void) | null = null;
   private stopSubmissionAckSubscription: (() => void) | null = null;
   private stopAcceptanceSubscription: (() => void) | null = null;
   private bearerInviteCode: string | null = null;
@@ -1109,6 +1111,8 @@ export class QuestionnaireOptionAVoterRuntime {
     this.stopBlindRequestAckSubscription = null;
     this.stopBlindIssuanceSubscription?.();
     this.stopBlindIssuanceSubscription = null;
+    this.stopBlindBallotPlanSubscription?.();
+    this.stopBlindBallotPlanSubscription = null;
     this.stopSubmissionAckSubscription?.();
     this.stopSubmissionAckSubscription = null;
     this.stopAcceptanceSubscription?.();
@@ -1290,6 +1294,7 @@ export class QuestionnaireOptionAVoterRuntime {
       ...input.state,
       privateInviteCredentialsPerVoter: input.state.privateInviteCredentialsPerVoter ?? persistedForKey.privateInviteCredentialsPerVoter ?? null,
       privateInviteBallotGroup: input.state.privateInviteBallotGroup ?? persistedForKey.privateInviteBallotGroup ?? null,
+      blindBallotPlan: input.state.blindBallotPlan ?? persistedForKey.blindBallotPlan ?? null,
       blindRequest: input.state.blindRequest ?? persistedBlindRequest,
       blindRequests,
       blindRequestSent: input.state.blindRequestSent || persistedForKey.blindRequestSent,
@@ -1321,7 +1326,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  private async resolveIssueBlindTokensWorkerRouting() {
+  private async resolveIssueBlindTokensWorkerRouting(fallbackToHint = true) {
     const hinted = selectIssueBlindTokensWorkerRouting({
       invite: this.state?.inviteMessage ?? null,
       summary: loadElectionSummary(this.electionId),
@@ -1347,7 +1352,7 @@ export class QuestionnaireOptionAVoterRuntime {
     } catch {
       // Fall back to cached invite/summary routing.
     }
-    return hinted;
+    return fallbackToHint ? hinted : null;
   }
 
   private rememberPrivateRelaySuccesses(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
@@ -1668,6 +1673,38 @@ export class QuestionnaireOptionAVoterRuntime {
     return true;
   }
 
+  private applyBlindBallotPlan(plan: BlindBallotPlan) {
+    if (!this.state || plan.electionId !== this.state.electionId || plan.invitedNpub !== this.state.invitedNpub) {
+      return false;
+    }
+    const definition = readCachedQuestionnaireDefinition(plan.electionId);
+    const definitionHash = definition ? questionnaireDefinitionHash(definition) : null;
+    const definitionEventId = (definition as (QuestionnaireDefinition & { eventId?: string }) | null)?.eventId ?? null;
+    const initial = this.state.blindRequest;
+    const planScopeKeys = new Set(plan.ballotScopes.map(ballotScopeKey));
+    if (
+      !initial
+      || plan.initialRequestId !== initial.requestId
+      || plan.blindSigningKeyId !== initial.blindSigningKeyId
+      || (plan.definitionHash && definitionHash && plan.definitionHash !== definitionHash)
+      || (plan.definitionEventId && definitionEventId && plan.definitionEventId !== definitionEventId)
+      || !planScopeKeys.has(ballotScopeKey(initial.ballotScope))
+      || plan.ballotScopes.some((scope) => ballotScopeCredentialIndex(scope) > 2)
+    ) {
+      return false;
+    }
+    const received = reduceVoterEvent(this.state, { type: "BLIND_BALLOT_PLAN_RECEIVED", plan });
+    if (!received.ok) {
+      return false;
+    }
+    this.state = received.state;
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "blind_ballot_plan_received" });
+    this.notifyStateChanged();
+    void this.requestBlindBallot({ forceResend: true }).catch(() => undefined);
+    return true;
+  }
+
   private applyAcceptanceToState(acceptance: BallotAcceptanceResult, reason: string) {
     storeAcceptance(acceptance);
     if (!this.state?.submission || this.state.submission.submissionId !== acceptance.submissionId) {
@@ -1766,6 +1803,22 @@ export class QuestionnaireOptionAVoterRuntime {
           since: issuanceSince,
           onIssuance,
         });
+    }
+    if (shouldSubscribeBlindIssuance && !this.stopBlindBallotPlanSubscription) {
+      void this.resolveIssueBlindTokensWorkerRouting().then((routing) => {
+        if (!routing?.workerNpub || this.stopBlindBallotPlanSubscription || !this.state?.loginVerified) {
+          return;
+        }
+        const planInput = {
+          electionId: this.electionId,
+          issuerNpub: routing.workerNpub,
+          relays: mergeBlindRequestRoutingRelays(relays, routing),
+          onPlan: (plan: BlindBallotPlan) => this.applyBlindBallotPlan(plan),
+        };
+        this.stopBlindBallotPlanSubscription = voterNsec
+          ? subscribeOptionABlindBallotPlanDmsWithNsec({ ...planInput, nsec: voterNsec })
+          : subscribeOptionABlindBallotPlanDms({ ...planInput, signer: this.signer, since: issuanceSince });
+      }).catch(() => undefined);
     }
 
     if (!shouldSubscribeAcceptance && this.stopSubmissionAckSubscription) {
@@ -2311,7 +2364,16 @@ export class QuestionnaireOptionAVoterRuntime {
       blindSigningPublicKey,
     });
     this.state = next;
-    const usesScopedBlindCredentials = voterUsesScopedBlindCredentials({
+    if (this.state.blindBallotPlan) {
+      const routing = await this.resolveIssueBlindTokensWorkerRouting(false);
+      // A plan is meaningful only while its issuing worker remains the request recipient.
+      // Falling back to the browser coordinator must resend only the original request.
+      if (routing?.workerNpub && routing.workerNpub !== this.state.blindBallotPlan.issuerNpub) {
+        this.state = { ...this.state, blindBallotPlan: null };
+        next = this.state;
+      }
+    }
+    const usesScopedBlindCredentials = Boolean(this.state.blindBallotPlan) || voterUsesScopedBlindCredentials({
       invite: this.state.inviteMessage ?? null,
       privateInviteCredentialsPerVoter: this.state.privateInviteCredentialsPerVoter,
       privateInviteBallotGroup: this.state.privateInviteBallotGroup,
@@ -2328,7 +2390,7 @@ export class QuestionnaireOptionAVoterRuntime {
       return this.state;
     }
     if (usesScopedBlindCredentials) {
-      const scopes = buildQuestionnaireCredentialScopes(
+      const scopes = this.state.blindBallotPlan?.ballotScopes ?? buildQuestionnaireCredentialScopes(
         cachedDefinition,
         voterCredentialsPerVoter({
           invite: this.state.inviteMessage ?? null,
@@ -2338,8 +2400,7 @@ export class QuestionnaireOptionAVoterRuntime {
         voterBallotGroup({
           invite: this.state.inviteMessage ?? null,
           privateInviteBallotGroup: this.state.privateInviteBallotGroup,
-        }),
-      );
+        }));
       const allIssued = scopes.every((scope) => {
         const scopeKey = ballotScopeKey(scope);
         return Boolean(this.state?.blindIssuances?.[scopeKey] && this.state.blindTokenSecrets?.[scopeKey]);
@@ -2374,6 +2435,7 @@ export class QuestionnaireOptionAVoterRuntime {
         forceResend: options?.forceResend,
         minRetryMs: options?.minRetryMs,
         onProofOfWorkProgress: options?.onProofOfWorkProgress,
+        scopes: this.state.blindBallotPlan?.ballotScopes,
       });
     }
     if (!request) {
@@ -2575,6 +2637,7 @@ export class QuestionnaireOptionAVoterRuntime {
     forceResend?: boolean;
     minRetryMs?: number;
     onProofOfWorkProgress?: (attempts: number) => void;
+    scopes?: Array<BallotScope | null>;
   }) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
@@ -2588,7 +2651,7 @@ export class QuestionnaireOptionAVoterRuntime {
       throw new OptionARuntimeError("issuance_failed", "Organiser blind-signing key is not available yet.");
     }
 
-    const scopes = buildQuestionnaireCredentialScopes(
+    const scopes = input.scopes ?? buildQuestionnaireCredentialScopes(
       input.cachedDefinition,
       voterCredentialsPerVoter({
         invite: this.state.inviteMessage ?? null,
@@ -2629,6 +2692,12 @@ export class QuestionnaireOptionAVoterRuntime {
       }
       let request = next.blindRequests?.[scopeKey] ?? null;
       let tokenSecretEntry = next.blindTokenSecrets?.[scopeKey] ?? null;
+      // The issuer plan can upgrade a previously unscoped first request into a
+      // two-request bundle. Preserve its original blind secret and request id.
+      if (scopeKey === "__questionnaire__") {
+        request ??= next.blindRequest ?? null;
+        tokenSecretEntry ??= next.blindTokenSecret ?? null;
+      }
       if (!request || !tokenSecretEntry) {
         const tokenSecret = makeTokenSecret();
         const tokenCommitment = await sha256Hex(tokenSecret);
@@ -5049,7 +5118,6 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state.whitelist[normalizedInvitedNpub]) {
       throw new OptionARuntimeError("not_whitelisted", "Invite target is not whitelisted.");
     }
-    const credentialsPerVoter = normaliseQuestionnaireCredentialsPerVoter(this.state.whitelist[normalizedInvitedNpub]?.credentialsPerVoter);
     const ballotGroup = normaliseQuestionnaireBallotGroup(this.state.whitelist[normalizedInvitedNpub]?.ballotGroup);
     const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
     const publishedDefinitionEntry = await fetchLatestQuestionnaireDefinitionByCoordinator({
@@ -5103,7 +5171,6 @@ export class QuestionnaireOptionACoordinatorRuntime {
       voteUrl: meta.voteUrl,
       invitedNpub: normalizedInvitedNpub,
       coordinatorNpub: this.coordinatorNpub,
-      ...(credentialsPerVoter === 2 ? { credentialsPerVoter } : {}),
       ...(ballotGroup ? { ballotGroup } : {}),
       definitionReference,
       issueBlindTokensWorker,

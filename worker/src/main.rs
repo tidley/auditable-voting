@@ -3,24 +3,23 @@ mod model;
 mod store;
 
 use crate::config::WorkerConfig;
+#[cfg(test)]
+use crate::model::IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION;
 use crate::model::{
     is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance,
-    BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotRequest,
-    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, BlindIssuanceAck,
-    BlindIssuanceAckEnvelope, BlindTokenProof, CompressedBundleEnvelope, ElectionRuntimeState,
-    GeneralInvitePowProof,
+    BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotPlan,
+    BlindBallotPlanEnvelope, BlindBallotRequest, BlindBallotRequestBundleEnvelope,
+    BlindBallotRequestEnvelope, BlindIssuanceAck, BlindIssuanceAckEnvelope, BlindTokenProof,
+    CompressedBundleEnvelope, ElectionRuntimeState, GeneralInvitePowProof,
     OptionAParticipantStatus, OptionAParticipantStatusEnvelope, OptionAParticipantStatusState,
     QuestionnaireBlindResponseEvent, QuestionnairePublishedResponseRef,
     QuestionnaireSubmissionDecisionEvent, WorkerCapability, WorkerDelegationCertificate,
     WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
     WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
-    WorkerStatusEnvelope, WorkerStatusSnapshot,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    WorkerStatusEnvelope, WorkerStatusSnapshot, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
 };
-#[cfg(test)]
-use crate::model::IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION;
 use crate::store::WorkerStore;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -613,6 +612,7 @@ fn apply_worker_election_config(
     let previous_expected_invitee_count = election.expected_invitee_count;
     election.expected_invitee_count = snapshot.expected_invitee_count;
     election.last_election_config_sent_at = Some(snapshot.sent_at.clone());
+    election.last_election_config_version = snapshot.config_version;
     if snapshot.whitelist_npubs.is_some()
         || snapshot.bearer_invite_codes.is_some()
         || snapshot.eligibility_required.is_some()
@@ -755,10 +755,7 @@ fn has_leading_zero_bits(digest: &[u8], difficulty: u8) -> bool {
             .is_some_and(|byte| *byte & (0xff << (8 - remaining_bits)) == 0)
 }
 
-fn verify_general_invite_pow(
-    definition: &serde_json::Value,
-    request: &BlindBallotRequest,
-) -> bool {
+fn verify_general_invite_pow(definition: &serde_json::Value, request: &BlindBallotRequest) -> bool {
     let Some(difficulty) = definition_general_invite_pow_difficulty(definition) else {
         return false;
     };
@@ -1280,16 +1277,7 @@ fn is_stale_worker_election_config(
     election: &ElectionRuntimeState,
     snapshot: &WorkerElectionConfigSnapshot,
 ) -> bool {
-    let Some(current_sent_at) = election.last_election_config_sent_at.as_deref() else {
-        return false;
-    };
-    match (
-        parsed_rfc3339_millis(current_sent_at),
-        parsed_rfc3339_millis(&snapshot.sent_at),
-    ) {
-        (Some(current_sent_at), Some(incoming_sent_at)) => incoming_sent_at < current_sent_at,
-        _ => false,
-    }
+    snapshot.config_version <= election.last_election_config_version
 }
 
 fn is_empty_worker_election_config_without_eligibility(
@@ -1348,6 +1336,9 @@ enum BlindRequestAuthorization {
 enum PreparedBlindIssuance {
     Deferred,
     Handled,
+    Plan {
+        plan: BlindBallotPlan,
+    },
     Issuance {
         request: BlindBallotRequest,
         issuance: BlindBallotIssuance,
@@ -1619,6 +1610,53 @@ fn blind_request_proxy_authorized(
 ) -> bool {
     ballot_scope_credential_index(&request.ballot_scope) <= 1
         || election.proxy_voter_npubs.contains(&request.invited_npub)
+}
+
+fn ballot_scope_with_credential_index(
+    scope: &Option<serde_json::Value>,
+    credential_index: u64,
+) -> serde_json::Value {
+    if scope.is_none() && credential_index == 1 {
+        return serde_json::Value::Null;
+    }
+    let mut value = scope.clone().unwrap_or_else(|| serde_json::json!({}));
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "credentialIndex".to_string(),
+            serde_json::json!(credential_index),
+        );
+    }
+    value
+}
+
+fn build_blind_ballot_plan(
+    request: &BlindBallotRequest,
+    election: &ElectionRuntimeState,
+    issuer_npub: &str,
+) -> BlindBallotPlan {
+    BlindBallotPlan {
+        message_type: "blind_ballot_plan".to_string(),
+        schema_version: 1,
+        plan_id: format!("plan_{}", random_suffix()),
+        election_id: request.election_id.clone(),
+        invited_npub: request.invited_npub.clone(),
+        issuer_npub: issuer_npub.to_string(),
+        initial_request_id: request.request_id.clone(),
+        blind_signing_key_id: request.blind_signing_key_id.clone(),
+        definition_hash: election.definition_hash.clone().or_else(|| {
+            election
+                .definition
+                .as_ref()
+                .map(questionnaire_definition_hash)
+        }),
+        definition_event_id: election.definition_event_id.clone(),
+        credential_count: 2,
+        ballot_scopes: vec![
+            ballot_scope_with_credential_index(&request.ballot_scope, 1),
+            ballot_scope_with_credential_index(&request.ballot_scope, 2),
+        ],
+        issued_at: now_iso(),
+    }
 }
 
 fn record_issuance_for_request(election: &mut ElectionRuntimeState, request: &BlindBallotRequest) {
@@ -2424,7 +2462,46 @@ impl WorkerRuntime {
 
         for (job_index, job) in jobs.iter().enumerate() {
             let mut seen_bundle_scope_keys = HashSet::new();
-            for request in job.requests.iter().cloned() {
+            let mut released_initial_requests = Vec::new();
+            {
+                let state = self.state.lock().await;
+                for request in &job.requests {
+                    if ballot_scope_credential_index(&request.ballot_scope) != 2 {
+                        continue;
+                    }
+                    if let Some(initial) = state
+                        .elections
+                        .get(&request.election_id)
+                        .and_then(|election| {
+                            election.planned_blind_requests.get(&request.invited_npub)
+                        })
+                        .filter(|initial| {
+                            initial.blind_signing_key_id == request.blind_signing_key_id
+                        })
+                        .cloned()
+                    {
+                        released_initial_requests.push(initial);
+                    }
+                }
+            }
+            let released_request_ids = released_initial_requests
+                .iter()
+                .map(|request| request.request_id.clone())
+                .collect::<HashSet<_>>();
+            // A plan is fulfilled only when the held initial request and the returned
+            // scoped request are issued together. Mark the held request as released.
+            let requests = released_initial_requests
+                .into_iter()
+                .map(|request| (request, true))
+                .chain(
+                    job.requests
+                        .iter()
+                        .filter(|request| !released_request_ids.contains(&request.request_id))
+                        .cloned()
+                        .map(|request| (request, false)),
+                )
+                .collect::<Vec<_>>();
+            for (request, released_from_plan) in requests {
                 if job.emit_requested_status {
                     if let Err(error) = self
                         .send_participant_status(
@@ -2454,9 +2531,21 @@ impl WorkerRuntime {
                     handled_by_job[job_index] = true;
                     continue;
                 }
-                match self.prepare_blind_issuance(request).await? {
+                match self
+                    .prepare_blind_issuance(request, released_from_plan)
+                    .await?
+                {
                     PreparedBlindIssuance::Deferred => {}
                     PreparedBlindIssuance::Handled => handled_by_job[job_index] = true,
+                    PreparedBlindIssuance::Plan { plan } => {
+                        match self.publish_blind_ballot_plan(&plan).await {
+                            Ok(_) => handled_by_job[job_index] = true,
+                            Err(error) => warn!(
+                                "blind ballot plan publish failed and remains replayable: election_id={}, request_id={}, error={error}",
+                                plan.election_id, plan.initial_request_id,
+                            ),
+                        }
+                    }
                     PreparedBlindIssuance::Issuance { request, issuance } => {
                         handled_by_job[job_index] = true;
                         prepared_by_recipient
@@ -3891,16 +3980,13 @@ impl WorkerRuntime {
         }
         if !apply_worker_election_config(election, &snapshot) {
             info!(
-                "worker election config ignored as stale replay or empty no-eligibility config: election_id={}, delegation_id={}, incoming_expected_invitee_count={:?}, incoming_sent_at={}, current_expected_invitee_count={:?}, current_sent_at={}",
+                "worker election config ignored as stale replay or empty no-eligibility config: election_id={}, delegation_id={}, incoming_config_version={}, current_config_version={}, incoming_expected_invitee_count={:?}, current_expected_invitee_count={:?}",
                 snapshot.election_id,
                 snapshot.delegation_id,
+                snapshot.config_version,
+                election.last_election_config_version,
                 snapshot.expected_invitee_count,
-                snapshot.sent_at,
                 election.expected_invitee_count,
-                election
-                    .last_election_config_sent_at
-                    .as_deref()
-                    .unwrap_or("unknown"),
             );
             return Ok(());
         }
@@ -3930,6 +4016,7 @@ impl WorkerRuntime {
     async fn prepare_blind_issuance(
         &self,
         request: BlindBallotRequest,
+        released_from_plan: bool,
     ) -> Result<PreparedBlindIssuance> {
         let election = {
             let mut state = self.state.lock().await;
@@ -4092,6 +4179,29 @@ impl WorkerRuntime {
                 );
                 return Ok(PreparedBlindIssuance::Handled);
             }
+            // A proxy voter starts with one ordinary request. Hold it until the authenticated
+            // issuer plan has caused the voter to return the second scoped request.
+            if election.proxy_voter_npubs.contains(&request.invited_npub)
+                && ballot_scope_credential_index(&request.ballot_scope) == 1
+                && !released_from_plan
+            {
+                let plan = election
+                    .blind_ballot_plans_by_voter
+                    .get(&request.invited_npub)
+                    .filter(|plan| plan.initial_request_id == request.request_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        build_blind_ballot_plan(&request, election, &self.worker_npub)
+                    });
+                election
+                    .planned_blind_requests
+                    .insert(request.invited_npub.clone(), request);
+                election
+                    .blind_ballot_plans_by_voter
+                    .insert(plan.invited_npub.clone(), plan.clone());
+                self.store.save(&state)?;
+                return Ok(PreparedBlindIssuance::Plan { plan });
+            }
             let cloned = election.clone();
             if state_changed_by_authorization {
                 self.store.save(&state)?;
@@ -4156,6 +4266,14 @@ impl WorkerRuntime {
                     .issued_issuances_by_request_id
                     .insert(request.request_id.clone(), issuance.clone());
             }
+            if ballot_scope_credential_index(&request.ballot_scope) == 2 {
+                election
+                    .planned_blind_requests
+                    .remove(&request.invited_npub);
+                election
+                    .blind_ballot_plans_by_voter
+                    .remove(&request.invited_npub);
+            }
             election.last_blind_issuance_at = Some(now_iso());
         }
         self.store.save(&state)?;
@@ -4188,6 +4306,19 @@ impl WorkerRuntime {
             )?
         };
         self.send_private_msg_best_effort(recipient, content, "blind issuance")
+            .await
+    }
+
+    async fn publish_blind_ballot_plan(&self, plan: &BlindBallotPlan) -> Result<usize> {
+        let recipient = PublicKey::from_bech32(&plan.invited_npub)
+            .context("invalid invited npub on blind ballot plan")?;
+        let content = serde_json::to_string(&BlindBallotPlanEnvelope {
+            message_type: "optiona_blind_ballot_plan_dm".to_string(),
+            schema_version: 1,
+            plan: plan.clone(),
+            sent_at: now_iso(),
+        })?;
+        self.send_private_msg_best_effort(recipient, content, "blind ballot plan")
             .await
     }
 
@@ -4779,11 +4910,17 @@ mod tests {
         }
 
         assert!(matches!(
-            runtime.prepare_blind_issuance(request.clone()).await.expect("prepare request"),
+            runtime
+                .prepare_blind_issuance(request.clone(), false)
+                .await
+                .expect("prepare request"),
             PreparedBlindIssuance::Handled
         ));
         let state = runtime.state.lock().await;
-        let election = state.elections.get(&request.election_id).expect("configured election");
+        let election = state
+            .elections
+            .get(&request.election_id)
+            .expect("configured election");
         assert!(!election.whitelist_npubs.contains(&request.invited_npub));
         assert!(election.issued_issuances_by_request_id.is_empty());
         drop(state);
@@ -4974,7 +5111,7 @@ mod tests {
         let request = sample_request();
 
         let result = runtime
-            .prepare_blind_issuance(request.clone())
+            .prepare_blind_issuance(request.clone(), false)
             .await
             .expect("prepare blind issuance");
 
@@ -5029,7 +5166,7 @@ mod tests {
 
         assert!(matches!(
             runtime
-                .prepare_blind_issuance(request.clone())
+                .prepare_blind_issuance(request.clone(), false)
                 .await
                 .expect("defer request"),
             PreparedBlindIssuance::Deferred
@@ -5068,7 +5205,7 @@ mod tests {
                 .clone()
         };
         let PreparedBlindIssuance::Issuance { request, issuance } = runtime
-            .prepare_blind_issuance(stored_request)
+            .prepare_blind_issuance(stored_request, false)
             .await
             .expect("issue deferred request")
         else {
@@ -5107,7 +5244,7 @@ mod tests {
         let PreparedBlindIssuance::Issuance {
             issuance: replayed, ..
         } = runtime
-            .prepare_blind_issuance(request)
+            .prepare_blind_issuance(request, false)
             .await
             .expect("prepare replayed issuance")
         else {
@@ -5247,6 +5384,7 @@ mod tests {
         let snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
@@ -5301,6 +5439,7 @@ mod tests {
         let snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
@@ -5597,11 +5736,12 @@ mod tests {
     }
 
     #[test]
-    fn stale_worker_election_config_does_not_clear_complete_config() {
+    fn out_of_order_worker_election_config_is_rejected_by_version() {
         let mut election = ElectionRuntimeState::default();
         let newer_snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 2,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
@@ -5619,10 +5759,16 @@ mod tests {
             sent_at: "2026-06-15T12:41:49.000Z".to_string(),
         };
         let stale_snapshot = WorkerElectionConfigSnapshot {
+            config_version: 1,
             expected_invitee_count: Some(0),
             whitelist_npubs: Some(vec![]),
             proxy_voter_npubs: None,
             sent_at: "2026-06-15T12:41:48.000Z".to_string(),
+            ..newer_snapshot.clone()
+        };
+        let replayed_snapshot = WorkerElectionConfigSnapshot {
+            expected_invitee_count: Some(0),
+            whitelist_npubs: Some(vec![]),
             ..newer_snapshot.clone()
         };
 
@@ -5631,8 +5777,13 @@ mod tests {
             &mut election,
             &stale_snapshot
         ));
+        assert!(!apply_worker_election_config(
+            &mut election,
+            &replayed_snapshot
+        ));
 
         assert_eq!(election.expected_invitee_count, Some(3));
+        assert_eq!(election.last_election_config_version, 2);
         assert_eq!(
             election.last_election_config_sent_at.as_deref(),
             Some(newer_snapshot.sent_at.as_str())
@@ -5647,6 +5798,7 @@ mod tests {
         let complete_snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
@@ -5704,6 +5856,7 @@ mod tests {
         let snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
@@ -5736,6 +5889,7 @@ mod tests {
         let complete_snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
@@ -5786,6 +5940,7 @@ mod tests {
         let snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
@@ -5819,6 +5974,7 @@ mod tests {
         let snapshot = WorkerElectionConfigSnapshot {
             message_type: "worker_election_config".to_string(),
             schema_version: 1,
+            config_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
             coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.152] - 2026-07-19
+
+### Changed
+- Delegated proxy voters now receive an authenticated issuer-to-voter ballot plan after their first request. The coordinator no longer discloses the proxy allowance in voter invites; the worker holds the first request, validates the planned second request, and returns both signatures in one issuance bundle.
+- Bumped the web app package to `0.1.152` and worker package to `0.1.44`.
+
 ## [0.1.151] - 2026-07-19
 
 ### Added

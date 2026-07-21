@@ -26,6 +26,7 @@ The practical target is small-organisation and controlled-pilot voting, not high
 - Nostr-first transport using public events and NIP-17 private control traffic.
 - Per-questionnaire relay hints published in questionnaire metadata when the organiser uses a non-default relay set.
 - Public questionnaire reads are tag-filtered by questionnaire ID, paginated, and serialised; organiser, voter, and observer live questionnaire subscriptions are consolidated to reduce relay-side concurrent `REQ` pressure.
+- Before publishing a definition, the organiser makes a bounded public-relay collision check for its questionnaire ID. A different definition blocks publication and requires a new ID; an exact matching definition signed by the same organiser is treated as an already-published retry. Observer lists same-ID definitions separately with organiser, event ID, and publication time, and pins verification to the selected or response-referenced definition. Observer URLs can pin a variant with `q`, `coordinator` (or `organiser`), and `definition`.
 - Browser Nostr reads and writes share a relay health circuit breaker: repeated timeouts, rate limits, policy failures, or browser WebSocket resource errors cool a relay down before the next read, publish, or subscription tries it again.
 - NIP-17 mailbox recovery pages backwards until the active request, credential, or submission decision is found, or until a short time budget is reached; local-key voter sessions also subscribe to request-ack and credential DMs through the raw local `nsec` path used by recovery, with foreground browser read fanout capped to avoid WebSocket exhaustion.
 - Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions, including organiser-required encryption for free-text responses.
@@ -121,7 +122,7 @@ These use public relays and can fail because of relay availability, rate limits,
 
 The audit proxy is an optional Rust helper. It uses the delegated organiser role to keep a questionnaire moving when the browser organiser is offline.
 
-Questionnaires with general-invite proof of work require audit proxy version `0.1.43` or later for delegated credential issuance. The proxy verifies the request-bound proof before applying eligibility or issuing a blind credential.
+Questionnaires with delegated issuance require audit proxy version `0.1.44` or later. The proxy verifies the request-bound proof before applying eligibility or issuing a blind credential, and privately sends an authenticated ballot plan to approved proxy voters before issuing their two-credential bundle.
 
 Voters resolve public proxy delegations within the organiser identity named by the invite or questionnaire definition. The delegation payload and its signed Nostr event author must both match that organiser, so another organiser reusing the same questionnaire ID cannot redirect ballot requests.
 
@@ -160,7 +161,7 @@ cargo run
 
 Useful optional environment variables:
 
-- `WORKER_STATE_DIR`; keep it unique to one worker/organiser identity pair. Generated quick-start commands namespace state automatically and the worker resets persisted election state if either identity changes. Ordinary restarts preserve issuance and accepted-vote records; historical public definitions replayed by relays are ignored unless that election is delegated to the worker. Invites and worker configuration reference the latest organiser-signed public definition event and hash its exact published JSON rather than a newer browser-local draft.
+- `WORKER_STATE_DIR`; keep it unique to one worker/organiser identity pair. Generated quick-start commands namespace state automatically and the worker resets persisted election state if either identity changes. Ordinary restarts preserve issuance and accepted-vote records; historical public definitions replayed by relays are ignored unless that election is delegated to the worker. Invites and worker configuration reference the latest organiser-signed public definition event and hash its exact published JSON rather than a newer browser-local draft. Configurations are versioned per election delegation; the worker persists its latest version and ignores duplicate or delayed updates.
 - `WORKER_HEARTBEAT_SECONDS`
 - `WORKER_POLL_SECONDS` (generated launchers set this to `5`)
 - `WORKER_RELAYS` for public anonymous-submission relay reads. Worker delegation and questionnaire configuration arrive only through authenticated private DMs.

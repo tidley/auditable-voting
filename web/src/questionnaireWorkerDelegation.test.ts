@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   loadStoredWorkerDelegation,
+  nextWorkerElectionConfigVersion,
   upsertStoredWorkerDelegation,
   type WorkerDelegationCertificate,
 } from "./questionnaireWorkerDelegation";
@@ -46,5 +47,29 @@ describe("worker delegation storage", () => {
 
     expect(stored?.activeDelegation?.delegationId).toBe(newer.delegationId);
     expect(loadStoredWorkerDelegation(newer.electionId)?.activeDelegation?.delegationId).toBe(newer.delegationId);
+  });
+
+  it("monotonically versions rapid proxy and ballot-group config updates", () => {
+    const active = delegation("delegation_active", "2026-07-13T11:47:50.000Z");
+    upsertStoredWorkerDelegation({
+      electionId: active.electionId,
+      mode: "delegated_worker",
+      activeDelegation: active,
+      lastRevocation: null,
+      lastUpdatedAt: active.issuedAt,
+    });
+
+    const proxyUpdateVersion = nextWorkerElectionConfigVersion({
+      electionId: active.electionId,
+      delegationId: active.delegationId,
+    });
+    const ballotGroupUpdateVersion = nextWorkerElectionConfigVersion({
+      electionId: active.electionId,
+      delegationId: active.delegationId,
+    });
+
+    expect(proxyUpdateVersion).toBe(1);
+    expect(ballotGroupUpdateVersion).toBe(2);
+    expect(loadStoredWorkerDelegation(active.electionId)?.lastConfigVersion).toBe(2);
   });
 });

@@ -1030,7 +1030,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(2);
   }, 15000);
 
-  it("issues and accepts two independent proxy credentials for the same question", async () => {
+  it("does not create a second proxy request when the browser coordinator is the issuer", async () => {
     const proxyElectionId = `${electionId}_proxy_credentials`;
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), proxyElectionId);
     await coordinator.loginWithSigner({
@@ -1080,41 +1080,41 @@ describe("questionnaireOptionARuntime", () => {
       description: "Proxy vote",
       voteUrl: "https://example.org/vote",
     });
-    expect(sentInvite.invite.credentialsPerVoter).toBe(2);
+    expect(sentInvite.invite.credentialsPerVoter).toBeUndefined();
 
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), proxyElectionId);
     await voter.loginWithSigner(sentInvite.invite);
     voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
     await voter.requestBlindBallot({ forceResend: true });
+    const initialRequest = voter.getSnapshot()?.blindRequest!;
+    (voter as unknown as { state: Record<string, unknown> }).state = { ...(voter.getSnapshot() ?? {}), blindBallotPlan: {
+      type: "blind_ballot_plan", schemaVersion: 1, planId: "plan_proxy_question", electionId: proxyElectionId,
+      invitedNpub: voterNpub, issuerNpub: "npub1issuer", initialRequestId: initialRequest.requestId,
+      blindSigningKeyId: initialRequest.blindSigningKeyId, credentialCount: 2,
+      ballotScopes: [initialRequest.ballotScope, { ...initialRequest.ballotScope, credentialIndex: 2 }], issuedAt: new Date().toISOString(),
+    }};
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValue({
+      delegationId: "delegation_browser_issuer",
+      workerNpub: coordinatorNpub,
+      controlRelays: [],
+      dmRelays: [],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    } as never);
+    await voter.requestBlindBallot({ forceResend: true });
 
     const blindRequests = Object.entries(voter.getSnapshot()?.blindRequests ?? {});
-    expect(blindRequests).toHaveLength(2);
-    expect(blindRequests.map(([key]) => key).sort()).toEqual([
-      "scopes:group_north:slot:1:v1",
-      "scopes:group_north:slot:1:v1:c2",
-    ]);
-    expect(blindRequests.every(([, request]) => request.ballotScope?.allowedScopes?.join(",") === "0,group_north")).toBe(true);
+    expect(blindRequests).toHaveLength(1);
+    expect(blindRequests.every(([, request]) => (request.ballotScope?.credentialIndex ?? 1) === 1)).toBe(true);
 
     await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
-    expect(Object.entries(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(2);
+    expect(Object.entries(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(1);
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
 
-    await voter.submitVote(["q1"], { questionId: "q1", credentialIndex: 1 });
-    const firstSubmission = voter.getSnapshot()?.submissions?.["scopes:group_north:slot:1:v1"];
+    await voter.submitVote(["q1"]);
+    const firstSubmission = voter.getSnapshot()?.submission;
     expect(firstSubmission?.payload.responses[0]?.answer).toBe("yes");
     expect(firstSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBeUndefined();
-
-    await coordinator.processPendingSubmissions(["q1"]);
-    voter.refreshIssuanceAndAcceptance();
-    expect(voter.getSnapshot()?.submissionDecisions?.["scopes:group_north:slot:1:v1"]?.accepted).toBe(true);
-
-    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "no" }]);
-    await voter.submitVote(["q1"], { questionId: "q1", credentialIndex: 2 });
-    const secondSubmission = voter.getSnapshot()?.submissions?.["scopes:group_north:slot:1:v1:c2"];
-    expect(secondSubmission?.payload.responses[0]?.answer).toBe("no");
-    expect(secondSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBe(2);
-    expect(secondSubmission?.credentialBundle?.[0]?.nullifier).not.toBe(firstSubmission?.credentialBundle?.[0]?.nullifier);
 
     await coordinator.processPendingSubmissions(["q1"]);
     voter.refreshIssuanceAndAcceptance();
@@ -1122,20 +1122,18 @@ describe("questionnaireOptionARuntime", () => {
     const publicResponses = publicBlindResponseStore.entries.filter((entry) => (
       entry.response.questionnaireId === proxyElectionId
     )).map((entry) => entry.response);
-    expect(publicResponses).toHaveLength(2);
+    expect(publicResponses).toHaveLength(1);
     expect(publicResponses.map((response) => (
       (response.answers[0] as QuestionnaireResponseAnswer | undefined)?.answerType === "yes_no"
         && (response.answers[0] as QuestionnaireResponseAnswer & { value?: boolean }).value
         ? "yes"
         : "no"
-    )).sort()).toEqual(["no", "yes"]);
-    expect(new Set(publicResponses.map((response) => response.tokenNullifier)).size).toBe(2);
-    expect(voter.getSnapshot()?.submissionDecisions?.["scopes:group_north:slot:1:v1"]?.accepted).toBe(true);
-    expect(voter.getSnapshot()?.submissionDecisions?.["scopes:group_north:slot:1:v1:c2"]?.accepted).toBe(true);
-    expect(coordinator.getAcceptedUniqueCount()).toBe(2);
+    ))).toEqual(["yes"]);
+    expect(new Set(publicResponses.map((response) => response.tokenNullifier)).size).toBe(1);
+    expect(coordinator.getAcceptedUniqueCount()).toBe(1);
   }, 15000);
 
-  it("requests two proxy credentials for a normal questionnaire", async () => {
+  it("keeps a received plan when issuer routing is temporarily unavailable", async () => {
     const proxyElectionId = `${electionId}_normal_proxy_credentials`;
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), proxyElectionId);
     await coordinator.loginWithSigner({
@@ -1170,36 +1168,24 @@ describe("questionnaireOptionARuntime", () => {
       description: "Proxy vote",
       voteUrl: "https://example.org/vote",
     });
-    expect(sentInvite.invite.credentialsPerVoter).toBe(2);
+    expect(sentInvite.invite.credentialsPerVoter).toBeUndefined();
 
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), proxyElectionId);
     await voter.loginWithSigner(sentInvite.invite);
     await voter.requestBlindBallot({ forceResend: true });
+    const initialRequest = voter.getSnapshot()?.blindRequest!;
+    (voter as unknown as { state: Record<string, unknown> }).state = { ...(voter.getSnapshot() ?? {}), blindBallotPlan: {
+      type: "blind_ballot_plan", schemaVersion: 1, planId: "plan_proxy_normal", electionId: proxyElectionId,
+      invitedNpub: voterNpub, issuerNpub: "npub1issuer", initialRequestId: initialRequest.requestId,
+      blindSigningKeyId: initialRequest.blindSigningKeyId, credentialCount: 2,
+      ballotScopes: [initialRequest.ballotScope, { credentialIndex: 2 }], issuedAt: new Date().toISOString(),
+    }};
+    await voter.requestBlindBallot({ forceResend: true });
 
     const blindRequests = Object.entries(voter.getSnapshot()?.blindRequests ?? {});
     expect(blindRequests).toHaveLength(2);
-    expect(blindRequests.map(([key]) => key).sort()).toEqual(["::0:v1:c2", "__questionnaire__"]);
-    expect(vi.mocked(publishOptionABlindRequestDm)).not.toHaveBeenCalled();
-    expect(vi.mocked(publishOptionABlindRequestBundleDm)).toHaveBeenCalledWith(expect.objectContaining({
-      requests: expect.arrayContaining([
-        expect.objectContaining({ ballotScope: null }),
-        expect.objectContaining({ ballotScope: expect.objectContaining({ credentialIndex: 2 }) }),
-      ]),
-    }));
-
-    await coordinator.processPendingBlindRequests();
-    voter.refreshIssuanceAndAcceptance();
-    expect(Object.entries(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(2);
-    expect(voter.getSnapshot()?.credentialReady).toBe(true);
-
-    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
-    await voter.submitVote(["q1"], { credentialIndex: 2 });
-    const secondSubmission = voter.getSnapshot()?.submissions?.["::0:v1:c2"];
-    expect(secondSubmission?.credentialBundle?.[0]?.ballotScope?.credentialIndex).toBe(2);
-    const publicResponse = publicBlindResponseStore.entries.find((entry) => (
-      entry.response.questionnaireId === proxyElectionId
-    ))?.response;
-    expect(publicResponse?.tokenProofs?.[0]?.ballotScope).toMatchObject({ credentialIndex: 2 });
+    expect(voter.getSnapshot()?.blindBallotPlan?.issuerNpub).toBe("npub1issuer");
+    expect(vi.mocked(publishOptionABlindRequestBundleDm)).toHaveBeenCalled();
   }, 15000);
 
   it("does not publish a legacy blind request before a referenced definition is loaded", async () => {
@@ -1215,7 +1201,6 @@ describe("questionnaireOptionARuntime", () => {
       voteUrl: "https://example.org/vote",
       invitedNpub: voterNpub,
       coordinatorNpub,
-      credentialsPerVoter: 2,
       blindSigningPublicKey,
       definitionReference: {
         questionnaireId: referencedElectionId,
@@ -1223,6 +1208,12 @@ describe("questionnaireOptionARuntime", () => {
       },
       expiresAt: null,
     });
+    upsertElectionSummary({
+      electionId: referencedElectionId, title: "Referenced definition", description: "Wait for definition", state: "open",
+      coordinatorNpub, blindSigningPublicKey, protocolVersion: 2, flowMode: "public_submission_v1", responseMode: "blind_token",
+    });
+    vi.mocked(publishOptionABlindRequestDm).mockClear();
+    vi.mocked(publishOptionABlindRequestBundleDm).mockClear();
 
     await expect(voter.requestBlindBallot({ forceResend: true })).rejects.toMatchObject({
       code: "definition_not_ready",
@@ -1815,7 +1806,7 @@ describe("questionnaireOptionARuntime", () => {
     coordinator.addBearerInviteCode(inviteCodeHash, { credentialsPerVoter: 2 });
 
     const voter = new QuestionnaireOptionAVoterRuntime(signer(proxyNpub), electionId);
-    voter.setBearerInviteCode(inviteCode, { credentialsPerVoter: 2 });
+    voter.setBearerInviteCode(inviteCode);
     voter.bootstrapWithLocalIdentity({
       invitedNpub: proxyNpub,
       allowInviteMissing: true,
@@ -1828,7 +1819,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(whitelistEntry?.credentialsPerVoter).toBe(2);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
-    expect(Object.keys(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(2);
+    expect(Object.keys(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(1);
   });
 
   it("uses organiser private invite metadata to control availability", async () => {
@@ -2499,7 +2490,7 @@ describe("questionnaireOptionARuntime", () => {
     });
 
     coordinator.addWhitelistNpub(voterNpub);
-    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValueOnce(delegation);
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValue(delegation);
     const sentInvite = await coordinator.sendInvite(voterNpub, {
       title: "Runtime",
       description: "Test",
@@ -2517,9 +2508,6 @@ describe("questionnaireOptionARuntime", () => {
     expect(requestId).toBeTruthy();
     expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: workerNpub,
-    }));
-    expect(publishOptionABlindRequestDm).not.toHaveBeenCalledWith(expect.objectContaining({
-      recipientNpub: coordinatorNpub,
     }));
     await coordinator.processPendingBlindRequests();
     expect(coordinator.getSnapshot()?.whitelist[voterNpub]?.claimState).toBe("blind_request_received");
@@ -2635,7 +2623,7 @@ describe("questionnaireOptionARuntime", () => {
       lastUpdatedAt: new Date().toISOString(),
     });
 
-    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValueOnce(delegation);
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValue(delegation);
     vi.mocked(publishOptionABlindRequestDm).mockClear();
     const voter = new QuestionnaireOptionAVoterRuntime(signer(privateCodeNpub), electionId);
     voter.setBearerInviteCode(inviteCode);

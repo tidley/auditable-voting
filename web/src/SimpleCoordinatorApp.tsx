@@ -162,7 +162,7 @@ import {
   type WorkerElectionConfigSnapshot,
 } from "./questionnaireOptionABlindDm";
 import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
-import { loadStoredWorkerDelegation, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
+import { loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
 import { tryWriteClipboard } from "./clipboard";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -2344,7 +2344,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             ? privateInviteStatusIndicator
             : null;
       const statusLabel = pendingAuthorization
-        ? `Wants access (${pendingAuthorization.requestCount})`
+        ? `Requested (${pendingAuthorization.requestCount})`
         : statusIndicator?.label ?? null;
       const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim() || privateInviteEntry);
       const isResultOnlyParticipant = Boolean(
@@ -2901,6 +2901,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const lastSavedStateSignatureRef = useRef<string>("");
   const optionAQueueProcessingInFlightRef = useRef(false);
   const optionAQueueLifecycleRefreshAtRef = useRef(0);
+  const buildWorkerConfigRef = useRef<(questionnaireId: string) => { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] } | null>(() => null);
+  const workerConfigSyncRef = useRef({
+    inFlight: false,
+    scheduled: false,
+    pendingElectionIds: new Set<string>(),
+    waiters: new Map<string, Array<(synced: boolean) => void>>(),
+  });
 
   useEffect(() => {
     latestCoordinatorHexRosterRef.current = coordinatorHexRoster;
@@ -5708,6 +5715,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         schemaVersion: 1,
         electionId,
         delegationId: delegation.delegationId,
+        configVersion: 0,
         coordinatorNpub,
         workerNpub: delegation.workerNpub,
         expectedInviteeCount,
@@ -5733,11 +5741,72 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     };
   }
 
+  buildWorkerConfigRef.current = buildActiveWorkerElectionConfigSnapshot;
+
   async function syncActiveWorkerElectionConfig(questionnaireId = optionAElectionId) {
-    const config = buildActiveWorkerElectionConfigSnapshot(questionnaireId);
-    if (!config) {
+    const electionId = questionnaireId.trim();
+    if (!electionId) {
       return false;
     }
+    return new Promise<boolean>((resolve) => {
+      const queue = workerConfigSyncRef.current;
+      queue.pendingElectionIds.add(electionId);
+      const waiters = queue.waiters.get(electionId) ?? [];
+      waiters.push(resolve);
+      queue.waiters.set(electionId, waiters);
+      if (queue.inFlight || queue.scheduled) {
+        return;
+      }
+      queue.scheduled = true;
+      globalThis.setTimeout(() => {
+        void flushWorkerConfigSyncQueue();
+      }, 0);
+    });
+  }
+
+  async function flushWorkerConfigSyncQueue() {
+    const queue = workerConfigSyncRef.current;
+    queue.scheduled = false;
+    if (queue.inFlight) {
+      return;
+    }
+    queue.inFlight = true;
+    try {
+      while (queue.pendingElectionIds.size > 0) {
+        const electionIds = [...queue.pendingElectionIds];
+        queue.pendingElectionIds.clear();
+        for (const electionId of electionIds) {
+          const waiters = queue.waiters.get(electionId) ?? [];
+          queue.waiters.delete(electionId);
+          const config = buildWorkerConfigRef.current(electionId);
+          let synced = false;
+          if (config) {
+            const configVersion = nextWorkerElectionConfigVersion({
+              electionId: config.snapshot.electionId,
+              delegationId: config.snapshot.delegationId,
+            });
+            if (configVersion !== null) {
+              config.snapshot.configVersion = configVersion;
+              synced = await publishWorkerElectionConfig(config);
+            }
+          }
+          for (const resolve of waiters) {
+            resolve(synced);
+          }
+        }
+      }
+    } finally {
+      queue.inFlight = false;
+      if (queue.pendingElectionIds.size > 0 && !queue.scheduled) {
+        queue.scheduled = true;
+        globalThis.setTimeout(() => {
+          void flushWorkerConfigSyncQueue();
+        }, 0);
+      }
+    }
+  }
+
+  async function publishWorkerElectionConfig(config: { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] }) {
     if (config.snapshot.definitionReference && !config.snapshot.definitionReference.definitionEventId) {
       const publishedDefinition = await fetchLatestQuestionnaireDefinitionByCoordinator({
         questionnaireId: config.snapshot.electionId,
@@ -5843,7 +5912,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           ?? null,
         login: false,
         autoRequestBallot: true,
-        credentialsPerVoter: credentialsPerVoter === 2 ? 2 : undefined,
         ballotGroup,
       });
       setPrivateInviteLinksByHash((current) => ({

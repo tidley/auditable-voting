@@ -108,6 +108,7 @@ pub struct WorkerElectionConfigSnapshot {
     pub schema_version: u8,
     pub election_id: String,
     pub delegation_id: String,
+    pub config_version: u64,
     pub coordinator_npub: String,
     pub worker_npub: String,
     pub expected_invitee_count: Option<u64>,
@@ -293,6 +294,35 @@ pub struct BlindBallotIssuanceBundleEnvelope {
     pub sent_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindBallotPlan {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub plan_id: String,
+    pub election_id: String,
+    pub invited_npub: String,
+    pub issuer_npub: String,
+    pub initial_request_id: String,
+    pub blind_signing_key_id: String,
+    pub definition_hash: Option<String>,
+    pub definition_event_id: Option<String>,
+    pub credential_count: u8,
+    pub ballot_scopes: Vec<serde_json::Value>,
+    pub issued_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindBallotPlanEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub plan: BlindBallotPlan,
+    pub sent_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OptionAParticipantStatusState {
@@ -450,6 +480,11 @@ pub struct ElectionRuntimeState {
     pub deferred_blind_request_ids: HashSet<String>,
     #[serde(default)]
     pub deferred_blind_requests: HashMap<String, BlindBallotRequest>,
+    /// First proxy requests held until the voter returns the plan's additional request.
+    #[serde(default)]
+    pub planned_blind_requests: HashMap<String, BlindBallotRequest>,
+    #[serde(default)]
+    pub blind_ballot_plans_by_voter: HashMap<String, BlindBallotPlan>,
     #[serde(default)]
     pub issued_invited_npubs: HashSet<String>,
     #[serde(default)]
@@ -478,6 +513,8 @@ pub struct ElectionRuntimeState {
     pub expected_invitee_count: Option<u64>,
     #[serde(default)]
     pub last_election_config_sent_at: Option<String>,
+    #[serde(default)]
+    pub last_election_config_version: u64,
     #[serde(default)]
     pub summary_published: bool,
     #[serde(default)]

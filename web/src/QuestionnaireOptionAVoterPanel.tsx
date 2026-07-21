@@ -952,63 +952,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ?? normaliseQuestionnaireBallotGroup(inviteContext.ballotGroup)
       ?? normaliseQuestionnaireBallotGroup(snapshot?.privateInviteBallotGroup);
   const perQuestionMode = questionnaireUsesPerQuestionCredentials(currentDefinition);
-  const proxyCredentialInvite = [
-    snapshot?.inviteMessage,
-    activeInvite,
-    ...contextPendingInvites,
-    inviteContext.invite,
-  ].find((invite) => inviteGrantsProxyCredential(invite, currentQuestionnaireId)) ?? null;
-  const recoveredProxyCredential = [...Object.values(snapshot?.blindRequests ?? {}), ...Object.values(snapshot?.blindIssuances ?? {})]
-    .some((entry) => credentialIndexFromBallotScope(entry.ballotScope) >= 2);
-  const persistedProxyCredential = snapshot?.privateInviteCredentialsPerVoter === 2
-    || inviteContext.credentialsPerVoter === 2
-    || recoveredProxyCredential;
-  const credentialCount = proxyCredentialInvite || persistedProxyCredential ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
+  const persistedProxyCredential = Boolean(snapshot?.blindBallotPlan);
+  const credentialCount = persistedProxyCredential ? 2 : questionnaireCredentialsPerVoter(currentDefinition);
   const showProxyBallotsTogether = credentialCount > 1;
   const credentialIndexes = useMemo(
     () => Array.from({ length: credentialCount }, (_, index) => index + 1),
     [credentialCount],
   );
-  useEffect(() => {
-    const invite = proxyCredentialInvite;
-    if (
-      !runtime
-      || !snapshot?.loginVerified
-      || !invite
-      || snapshot.electionId !== currentQuestionnaireId
-      || snapshot.inviteMessage?.credentialsPerVoter === 2
-    ) {
-      return;
-    }
-
-    const next = runtime.bootstrapWithLocalIdentity({
-      invitedNpub: snapshot.invitedNpub,
-      coordinatorNpub: invite.coordinatorNpub,
-      invite,
-      allowInviteRecipientMismatch: true,
-      allowInviteMissing: true,
-    });
-    setSignedInNpub(next.invitedNpub);
-    setRefreshNonce((value) => value + 1);
-
-    if (next.blindRequestSent && !next.credentialReady && !next.submission) {
-      void runtime.requestBlindBallot({ forceResend: true }).then(() => {
-        markSignerWaitRecoveryBaseline();
-        scheduleSignerInitialPull();
-        setStatus(formatBlindRequestStatus("sent"));
-        setRefreshNonce((value) => value + 1);
-      }).catch(() => undefined);
-    }
-  }, [
-    currentQuestionnaireId,
-    proxyCredentialInvite,
-    runtime,
-    snapshot?.electionId,
-    snapshot?.invitedNpub,
-    snapshot?.inviteMessage?.credentialsPerVoter,
-    snapshot?.loginVerified,
-    snapshot?.submission,
-  ]);
 
   useEffect(() => {
     if (
