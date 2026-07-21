@@ -162,7 +162,11 @@ export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & {
   // Let the UI paint the initial progress state before starting synchronous hashes.
   input.onProgress?.(0);
   if (canMineInWorker()) {
-    return mineGeneralInvitePowInWorker(input);
+    try {
+      return await mineGeneralInvitePowInWorker(input);
+    } catch {
+      // Blob workers can be blocked by browser policy; retain a compatible main-thread fallback.
+    }
   }
   await yieldToBrowserFrame();
   for (let candidate = 0; ; candidate += 1) {
