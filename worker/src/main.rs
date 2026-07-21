@@ -509,6 +509,20 @@ fn short_ascii(value: &str) -> String {
     )
 }
 
+fn short_id_list(ids: &[&str]) -> String {
+    const MAX_IDS: usize = 3;
+    let mut result = ids
+        .iter()
+        .take(MAX_IDS)
+        .map(|id| short_ascii(id))
+        .collect::<Vec<_>>()
+        .join(",");
+    if ids.len() > MAX_IDS {
+        result.push_str(&format!("+{}", ids.len() - MAX_IDS));
+    }
+    result
+}
+
 fn compact_preview(value: &str, max_chars: usize) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut preview = compact.chars().take(max_chars).collect::<String>();
@@ -2539,7 +2553,18 @@ impl WorkerRuntime {
                     PreparedBlindIssuance::Handled => handled_by_job[job_index] = true,
                     PreparedBlindIssuance::Plan { plan } => {
                         match self.publish_blind_ballot_plan(&plan).await {
-                            Ok(_) => handled_by_job[job_index] = true,
+                            Ok(relay_successes) => {
+                                info!(
+                                    "blind ballot plan delivered: election_id={}, plan_id={}, request_id={}, recipient_npub={}, credential_count={}, relay_successes={}",
+                                    plan.election_id,
+                                    plan.plan_id,
+                                    plan.initial_request_id,
+                                    short_ascii(&plan.invited_npub),
+                                    plan.credential_count,
+                                    relay_successes,
+                                );
+                                handled_by_job[job_index] = true;
+                            }
                             Err(error) => warn!(
                                 "blind ballot plan publish failed and remains replayable: election_id={}, request_id={}, error={error}",
                                 plan.election_id, plan.initial_request_id,
@@ -2588,12 +2613,22 @@ impl WorkerRuntime {
                     continue;
                 }
             };
-            debug!(
-                "blind issuance batch published: election_id={}, recipient_npub={}, issuances={}, relay_successes={}",
+            let request_ids = issuances
+                .iter()
+                .map(|issuance| issuance.request_id.as_str())
+                .collect::<Vec<_>>();
+            let issuance_ids = issuances
+                .iter()
+                .map(|issuance| issuance.issuance_id.as_str())
+                .collect::<Vec<_>>();
+            info!(
+                "blind issuance delivered: election_id={}, request_ids={}, issuance_ids={}, recipient_npub={}, credential_count={}, relay_successes={}",
                 election_id,
-                recipient_npub,
+                short_id_list(&request_ids),
+                short_id_list(&issuance_ids),
+                short_ascii(&recipient_npub),
                 issuances.len(),
-                successes
+                successes,
             );
             let requests = entries
                 .iter()
@@ -4802,6 +4837,19 @@ mod tests {
             "npub1worker",
             "npub1coordinator"
         ));
+    }
+
+    #[test]
+    fn short_id_list_bounds_logged_identifier_lists() {
+        assert_eq!(
+            short_id_list(&["request_1", "request_2"]),
+            "request_1,request_2"
+        );
+        assert_eq!(short_id_list(&["a", "b", "c", "d"]), "a,b,c+1");
+        assert_eq!(
+            short_id_list(&["1234567890123456789012345"]),
+            "123456789012..012345"
+        );
     }
 
     fn sample_request() -> BlindBallotRequest {

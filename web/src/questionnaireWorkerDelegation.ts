@@ -77,6 +77,8 @@ export type StoredWorkerDelegation = {
   lastRevocation: WorkerDelegationRevocation | null;
   lastUpdatedAt: string;
   lastConfigVersion?: number;
+  /** Canonical configuration delivered successfully for the active delegation. */
+  lastConfigSyncKey?: string;
 };
 
 type WorkerDelegationStore = Record<string, StoredWorkerDelegation>;
@@ -139,6 +141,11 @@ export function upsertStoredWorkerDelegation(input: StoredWorkerDelegation) {
     ...input,
     electionId,
     lastUpdatedAt: input.lastUpdatedAt || new Date().toISOString(),
+    lastConfigSyncKey: input.lastConfigSyncKey ?? (
+      existing?.activeDelegation?.delegationId === input.activeDelegation?.delegationId
+        ? existing?.lastConfigSyncKey
+        : undefined
+    ),
   };
   store[electionId] = next;
   writeStore(store);

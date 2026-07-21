@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.153] - 2026-07-21
+
+### Fixed
+- Automatically synchronise a complete election configuration to an available selected audit proxy without repeatedly republishing its delegation.
+- Added visible proxy CLI confirmation when a ballot plan or blind issuance bundle reaches voter relays.
+
+### Changed
+- Bumped the web app package to `0.1.153` and audit proxy package to `0.1.45`.
+
 ## [0.1.152] - 2026-07-19
 
 ### Changed

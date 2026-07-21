@@ -110,6 +110,22 @@ function normaliseCloseTimerUnit(value: unknown): CloseTimerUnit {
     : "minutes";
 }
 
+function stableConfigValue(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableConfigValue).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableConfigValue(entry)}`).join(",")}}`;
+}
+
+function workerElectionConfigSyncKey(snapshot: WorkerElectionConfigSnapshot) {
+  const { configVersion: _configVersion, sentAt: _sentAt, ...config } = snapshot;
+  return `${snapshot.electionId}:${snapshot.workerNpub}:${snapshot.delegationId}:${stableConfigValue(config)}`;
+}
+
 function closeTimerUnitToMinutes(unit: CloseTimerUnit) {
   return CLOSE_TIMER_UNITS.find((entry) => entry.value === unit)?.minutes ?? 1;
 }
@@ -478,10 +494,16 @@ export async function checkQuestionnaireDefinitionCollision(input: {
   return { kind: "collision" as const, entry: matchingDefinitions[0] };
 }
 
+let lastGeneratedQuestionnaireSecond = 0;
+
 function generateQuestionnaireId() {
   const now = new Date();
+  const currentSecond = Math.floor(now.getTime() / 1000);
+  const generatedSecond = Math.max(currentSecond, lastGeneratedQuestionnaireSecond + 1);
+  lastGeneratedQuestionnaireSecond = generatedSecond;
+  const generatedAt = new Date(generatedSecond * 1000);
   const twoDigits = (value: number) => String(value).padStart(2, "0");
-  return `${DEFAULT_QUESTIONNAIRE_ID_PREFIX}_${twoDigits(now.getFullYear() % 100)}${twoDigits(now.getMonth() + 1)}${twoDigits(now.getDate())}_${twoDigits(now.getHours())}${twoDigits(now.getMinutes())}${twoDigits(now.getSeconds())}`;
+  return `${DEFAULT_QUESTIONNAIRE_ID_PREFIX}_${twoDigits(generatedAt.getFullYear() % 100)}${twoDigits(generatedAt.getMonth() + 1)}${twoDigits(generatedAt.getDate())}_${twoDigits(generatedAt.getHours())}${twoDigits(generatedAt.getMinutes())}${twoDigits(generatedAt.getSeconds())}`;
 }
 
 function generateVoterGroupId() {
@@ -4239,13 +4261,17 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     definitionOverride?: QuestionnaireDefinition | null;
     definitionEventIdOverride?: string | null;
     definitionHashOverride?: string | null;
+    forceConfigSync?: boolean;
   }) {
     const electionId = questionnaireId.trim();
     const coordinatorNsecTrimmed = coordinatorNsec.trim();
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
+    const storedActiveDelegation = loadStoredWorkerDelegation(electionId)?.activeDelegation ?? null;
     const existingActiveDelegation = activeWorkerDelegation?.electionId === electionId
       ? activeWorkerDelegation
-      : null;
+      : storedActiveDelegation?.electionId === electionId
+        ? storedActiveDelegation
+        : null;
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub)
       || normaliseWorkerNpub(existingActiveDelegation?.workerNpub ?? "");
     const expiryMinutes = delegatedWorkerExpiryEnabled
@@ -4299,15 +4325,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           ) * 60 * 1000,
         ).toISOString(),
       });
-    const needsElectionConfigDm = delegatedWorkerCapabilities.includes("issue_blind_tokens")
-      || delegatedWorkerCapabilities.includes("close_questionnaire")
-      || delegatedWorkerCapabilities.includes("publish_result_summary");
-    const coordinatorState = needsElectionConfigDm
-      ? loadCoordinatorState({
-        coordinatorNpub: coordinatorNpubTrimmed,
-        electionId,
-      })
-      : null;
+    const coordinatorState = loadCoordinatorState({
+      coordinatorNpub: coordinatorNpubTrimmed,
+      electionId,
+    });
     setStatus("Preparing audit proxy configuration...");
     const justPublishedDefinition = options?.definitionOverride?.questionnaireId === electionId
       ? options.definitionOverride
@@ -4417,45 +4438,58 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
-    const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot | null = needsElectionConfigDm
-      ? {
-        type: "worker_election_config",
-        schemaVersion: 1,
-        electionId,
-        delegationId: delegation.delegationId,
-        configVersion: 0,
-        coordinatorNpub: coordinatorNpubTrimmed,
-        workerNpub,
-        expectedInviteeCount,
-        whitelistNpubs,
-        proxyVoterNpubs,
-        ballotGroupsByNpub,
-        bearerInviteCodes,
-        eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
-        blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
-          ? blindSigningPrivateKeyForWorker
-          : null,
-        definitionReference: workerDefinitionReference,
-        definition: workerConfigDefinition,
-        sentAt: new Date().toISOString(),
-      }
-      : null;
-    setStatus("Publishing audit proxy delegation...");
+    if (!workerConfigDefinition) {
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy configuration needs the published vote definition.`);
+      return;
+    }
+    const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot = {
+      type: "worker_election_config",
+      schemaVersion: 1,
+      electionId,
+      delegationId: delegation.delegationId,
+      configVersion: 0,
+      coordinatorNpub: coordinatorNpubTrimmed,
+      workerNpub,
+      expectedInviteeCount,
+      whitelistNpubs,
+      proxyVoterNpubs,
+      ballotGroupsByNpub,
+      bearerInviteCodes,
+      eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
+      blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
+        ? blindSigningPrivateKeyForWorker
+        : null,
+      definitionReference: workerDefinitionReference,
+      definition: workerConfigDefinition,
+      sentAt: new Date().toISOString(),
+    };
+    const configSyncKey = workerElectionConfigSyncKey(workerElectionConfigSnapshot);
+    setStatus(canReuseActiveDelegation ? "Synchronising audit proxy configuration..." : "Publishing audit proxy delegation...");
     try {
-      const publicResult = await publishWorkerDelegationCertificate({
+      const publicResult = canReuseActiveDelegation ? null : await publishWorkerDelegationCertificate({
         coordinatorNsec: coordinatorNsecTrimmed,
         delegation,
         relays: controlRelays,
       });
-      const dmResult = await publishOptionAWorkerDelegationDm({
+      const dmResult = canReuseActiveDelegation ? null : await publishOptionAWorkerDelegationDm({
         signer: createSignerService(),
         recipientNpub: workerNpub,
         delegation,
         fallbackNsec: coordinatorNsecTrimmed,
         relays: workerDmRelays,
       });
+      const storedDelegation = upsertStoredWorkerDelegation({
+        electionId,
+        mode: "delegated_worker",
+        activeDelegation: delegation,
+        lastRevocation: null,
+        lastUpdatedAt: new Date().toISOString(),
+      })?.activeDelegation ?? delegation;
+      setActiveWorkerDelegation(storedDelegation);
+      setLastWorkerRevocationState("pending_activation");
       let configResultSummary = "";
-      if (workerElectionConfigSnapshot) {
+      const storedConfigSyncKey = loadStoredWorkerDelegation(electionId)?.lastConfigSyncKey;
+      if (options?.forceConfigSync || storedConfigSyncKey !== configSyncKey) {
         const configVersion = nextWorkerElectionConfigVersion({
           electionId,
           delegationId: delegation.delegationId,
@@ -4471,18 +4505,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         if (configDmResult.successes === 0) {
           throw new Error("Audit proxy configuration could not reach any relay.");
         }
+        upsertStoredWorkerDelegation({
+          electionId,
+          mode: "delegated_worker",
+          activeDelegation: storedDelegation,
+          lastRevocation: null,
+          lastUpdatedAt: new Date().toISOString(),
+          lastConfigSyncKey: configSyncKey,
+        });
         configResultSummary = `, ${configDmResult.successes} config DM relay successes`;
       }
-      const storedDelegation = upsertStoredWorkerDelegation({
-        electionId,
-        mode: "delegated_worker",
-        activeDelegation: delegation,
-        lastRevocation: null,
-        lastUpdatedAt: new Date().toISOString(),
-        lastConfigVersion: workerElectionConfigSnapshot?.configVersion,
-      })?.activeDelegation ?? delegation;
-      setActiveWorkerDelegation(storedDelegation);
-      setLastWorkerRevocationState("pending_activation");
       const existingSummary = loadElectionSummary(electionId);
       if (existingSummary) {
         upsertElectionSummary({
@@ -4499,7 +4531,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         });
       }
       setStatus(
-        `${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy configured (${publicResult.successes} public relay successes, ${dmResult.successes} delegation DM relay successes${configResultSummary}).`,
+        `${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy configured (${publicResult?.successes ?? 0} public relay successes, ${dmResult?.successes ?? 0} delegation DM relay successes${configResultSummary}).`,
       );
     } catch (error) {
       setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}${error instanceof Error ? error.message : "Audit proxy configuration failed."}`);
@@ -5641,7 +5673,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <UiButton
                       icon='check'
                       className='simple-voter-primary simple-voter-primary-wide simple-delegate-confirm-button'
-                      onPress={() => void delegateToWorker()}
+                      onPress={() => void delegateToWorker({ forceConfigSync: true })}
                     >
                       Confirm configuration
                     </UiButton>

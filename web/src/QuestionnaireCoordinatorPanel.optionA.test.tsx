@@ -74,9 +74,9 @@ import { loadCoordinatorState, saveCoordinatorState, upsertElectionSummary } fro
 import { readCachedQuestionnaireDefinitionReference, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
-import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
+import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerDelegationDm, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
 import { questionnaireDefinitionEventHash, questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
-import { createWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
+import { createWorkerDelegationCertificate, publishWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -316,7 +316,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     fireEvent(window, new Event("auditable-voting:coordinator-new"));
 
-    expect(idInput.value).toMatch(/^q_[a-f0-9]+$/);
+    expect(idInput.value).toMatch(/^q_\d{6}_\d{6}$/);
     expect(idInput.value).not.toBe(previousId);
     const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
     await waitFor(() => {
@@ -1399,6 +1399,124 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       coordinatorNpub,
       electionId: "q_proxy_key_recovery",
     })?.blindSigningPrivateKey?.keyId).toBe(publishedBlindKey.keyId);
+  });
+
+  it("synchronises a complete config when the selected active proxy appears without republishing its delegation", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerSecret = generateSecretKey();
+    const workerNpub = nip19.npubEncode(getPublicKey(workerSecret));
+    const workerNsec = nip19.nsecEncode(workerSecret);
+    const questionnaireId = "q_auto_proxy_config";
+    const blindKey = await generateQuestionnaireBlindKeyPair();
+    const definition = {
+      ...makeDefinition({ questionnaireId, title: "Automatic proxy config", coordinatorNpub }),
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindKey),
+    };
+    const election = {
+      electionId: questionnaireId,
+      title: definition.title,
+      description: "",
+      state: "open" as const,
+      openedAt: "2026-07-21T12:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: definition.blindSigningPublicKey,
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    upsertElectionSummary(election);
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        election,
+        whitelist: {
+          [workerNpub]: {
+            electionId: questionnaireId,
+            invitedNpub: workerNpub,
+            addedAt: "2026-07-21T12:00:00.000Z",
+            credentialsPerVoter: 2,
+            ballotGroup: "north",
+            claimState: "claimed",
+          },
+        },
+        bearerInviteCodes: {},
+        pendingBlindRequests: {},
+        issuedBlindResponses: {},
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        blindSigningPrivateKey: blindKey,
+        lastUpdatedAt: "2026-07-21T12:00:00.000Z",
+      },
+    });
+    const activeDelegation = createWorkerDelegationCertificate({
+      electionId: questionnaireId,
+      coordinatorNpub,
+      workerNpub,
+      capabilities: ["issue_blind_tokens"],
+      controlRelays: ["wss://relay.nostr.net"],
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+    upsertStoredWorkerDelegation({
+      electionId: questionnaireId,
+      mode: "delegated_worker",
+      activeDelegation,
+      lastRevocation: null,
+      lastUpdatedAt: "2026-07-21T12:00:00.000Z",
+    });
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId,
+        title: definition.title,
+        questions: definition.questions,
+        delegationMode: "delegated_worker",
+        delegatedWorkerNpub: workerNpub,
+        delegatedWorkerCapabilities: ["issue_blind_tokens"],
+        delegatedWorkerControlRelays: "wss://relay.nostr.net",
+      }),
+    );
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.worker-credentials.v1"),
+      JSON.stringify({ [coordinatorNpub]: { nsec: workerNsec, npub: workerNpub } }),
+    );
+    vi.mocked(fetchOptionAWorkerStatusDmsWithNsec).mockResolvedValue([{
+      type: "worker_status",
+      schemaVersion: 1,
+      workerNpub,
+      coordinatorNpub,
+      state: "active",
+      heartbeatAt: new Date().toISOString(),
+      delegationId: activeDelegation.delegationId,
+      delegationState: "active",
+      activeElectionId: questionnaireId,
+    }]);
+
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
+
+    await waitFor(() => {
+      expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledTimes(1);
+    });
+    expect(publishWorkerDelegationCertificate).not.toHaveBeenCalled();
+    expect(publishOptionAWorkerDelegationDm).not.toHaveBeenCalled();
+    expect(vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.snapshot).toMatchObject({
+      delegationId: activeDelegation.delegationId,
+      blindSigningPrivateKey: { keyId: blindKey.keyId },
+      definition,
+      whitelistNpubs: [workerNpub],
+      proxyVoterNpubs: [workerNpub],
+      ballotGroupsByNpub: { [workerNpub]: "north" },
+    });
+
+    cleanup();
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
+    await waitFor(() => {
+      expect(fetchOptionAWorkerStatusDmsWithNsec).toHaveBeenCalledTimes(2);
+    });
+    expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledTimes(1);
+    expect(publishWorkerDelegationCertificate).not.toHaveBeenCalled();
+    expect(publishOptionAWorkerDelegationDm).not.toHaveBeenCalled();
   });
 
   it("resends worker config for the active delegation without waiting on another relay read", async () => {
