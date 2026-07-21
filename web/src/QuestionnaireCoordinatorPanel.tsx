@@ -19,7 +19,7 @@ import {
   type QuestionnaireStateValue,
   type QuestionnaireVoterGroup,
 } from "./questionnaireProtocol";
-import { toQuestionnaireBlindPublicKey, type QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey, type QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -3723,8 +3723,46 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     }
 
     if (!definitionToPublish.blindSigningPublicKey) {
-      setStatus(BLIND_SIGNING_KEY_RELOAD_STATUS);
-      return;
+      try {
+        const privateKey = await generateQuestionnaireBlindKeyPair();
+        const publicKey = toQuestionnaireBlindPublicKey(privateKey);
+        const election = {
+          electionId: definitionToPublish.questionnaireId,
+          title: definitionToPublish.title,
+          description: definitionToPublish.description ?? "",
+          state: "draft" as const,
+          openedAt: null,
+          closedAt: null,
+          coordinatorNpub: definitionToPublish.coordinatorPubkey,
+          blindSigningPublicKey: publicKey,
+        };
+        upsertElectionSummary(election);
+        const state = loadCoordinatorState({
+          coordinatorNpub: coordinatorNpub.trim(),
+          electionId: definitionToPublish.questionnaireId,
+        });
+        if (!state) {
+          setStatus(BLIND_SIGNING_KEY_RELOAD_STATUS);
+          return;
+        }
+        saveCoordinatorState({
+          coordinatorNpub: coordinatorNpub.trim(),
+          state: {
+            ...state,
+            election,
+            blindSigningPrivateKey: privateKey,
+            lastUpdatedAt: new Date().toISOString(),
+          },
+        });
+        setRecoveredBlindSigningPublicKey(publicKey);
+        definitionToPublish = {
+          ...definitionToPublish,
+          blindSigningPublicKey: publicKey,
+        };
+      } catch {
+        setStatus(BLIND_SIGNING_KEY_RELOAD_STATUS);
+        return;
+      }
     }
 
     const validation = validateQuestionnaireDefinition(definitionToPublish);
@@ -4581,9 +4619,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       coordinatorNpub: coordinatorNpubTrimmed,
       electionId,
     });
-    if (delegatedWorkerCapabilities.includes("issue_blind_tokens") && !coordinatorState?.blindSigningPrivateKey) {
-      return;
-    }
 
     const autoConfirmKey = [
       electionId,
@@ -4680,11 +4715,17 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     setGeneratedWorkerNpub(credentials.npub);
     setGeneratedWorkerCoordinatorNpub(coordinatorNpub.trim());
     storeWorkerCredentials(coordinatorNpub.trim(), credentials);
+    setDelegatedWorkerCapabilities((current) => current.includes("issue_blind_tokens")
+      ? current
+      : ["issue_blind_tokens", ...current]);
     setDelegationMode("delegated_worker");
     setDelegatedWorkerNpub(credentials.npub);
   }
 
   function setupAuditProxyFromChecklist() {
+    setDelegatedWorkerCapabilities((current) => current.includes("issue_blind_tokens")
+      ? current
+      : ["issue_blind_tokens", ...current]);
     setDelegationMode("delegated_worker");
     setAuditProxyExpandSignal((current) => current + 1);
     props.onConfigureWorker?.(questionnaireId.trim());

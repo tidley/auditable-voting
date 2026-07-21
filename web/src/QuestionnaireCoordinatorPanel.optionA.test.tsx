@@ -70,7 +70,7 @@ vi.mock("./questionnaireOptionABlindDm", async () => {
 });
 
 import QuestionnaireCoordinatorPanel, { checkQuestionnaireDefinitionCollision } from "./QuestionnaireCoordinatorPanel";
-import { loadCoordinatorState, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
+import { loadCoordinatorState, loadElectionSummary, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import { readCachedQuestionnaireDefinitionReference, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
@@ -1215,6 +1215,33 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(workerConfigInput?.snapshot.blindSigningPrivateKey?.keyId).not.toBe(staleBlindKey.keyId);
   });
 
+  it("creates and sends a blind-signing key when publishing a new delegated questionnaire", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerNpub = nip19.npubEncode("8".repeat(64));
+
+    render(<QuestionnaireCoordinatorPanel coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New delegated questionnaire" } });
+    fireEvent.change(screen.getByPlaceholderText("Question prompt"), { target: { value: "Proceed?" } });
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
+    fireEvent.change(screen.getByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    const publishButton = screen.getByRole("button", { name: "Publish questionnaire" });
+    await waitFor(() => expect(publishButton.matches(":disabled")).toBe(false));
+    fireEvent.click(publishButton);
+
+    await waitFor(() => expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalled());
+    const definition = questionnaireNostrMocks.publishQuestionnaireDefinition.mock.calls[0]?.[0]?.definition;
+    const snapshot = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.snapshot;
+    expect(definition?.blindSigningPublicKey?.keyId).toBeTruthy();
+    expect(snapshot?.blindSigningPrivateKey?.keyId).toBe(definition?.blindSigningPublicKey?.keyId);
+    expect(loadCoordinatorState({
+      coordinatorNpub,
+      electionId: definition.questionnaireId,
+    })?.blindSigningPrivateKey?.keyId).toBe(definition?.blindSigningPublicKey?.keyId);
+  });
+
   it("does not configure the audit proxy when the local blind private key does not match the published vote key", async () => {
     const coordinatorSecret = generateSecretKey();
     const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
@@ -1507,6 +1534,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       whitelistNpubs: [workerNpub],
       proxyVoterNpubs: [workerNpub],
       ballotGroupsByNpub: { [workerNpub]: "north" },
+    });
+    expect(loadElectionSummary(questionnaireId)?.issueBlindTokensWorker).toMatchObject({
+      delegationId: activeDelegation.delegationId,
+      workerNpub,
     });
 
     cleanup();
