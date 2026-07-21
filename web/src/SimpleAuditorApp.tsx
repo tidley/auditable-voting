@@ -163,6 +163,8 @@ function writeSelectedQuestionnaireToUrl(input: {
   }
   if (input.definitionEventId.trim()) {
     url.searchParams.set("definition", input.definitionEventId.trim());
+  } else {
+    url.searchParams.delete("definition");
   }
   window.history.replaceState({}, "", url.toString());
 }
@@ -351,23 +353,25 @@ export default function SimpleAuditorApp({
         ? latestDefinitions
         : latestDefinitions.slice(0, AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT);
       const selectedIdForList = selectedQuestionnaireIdRef.current.trim();
-       if (selectedIdForList && !candidates.some((entry) => entry.definition.questionnaireId === selectedIdForList)) {
-        const selectedDefinitions = await fetchQuestionnaireDefinitions({
-          questionnaireId: selectedIdForList,
-          limit: 50,
-          readRelayLimit: 8,
-          preferKindOnly: true,
-        }).catch(() => []);
-         const selectedDefinitionsForCoordinator = selectedDefinitions.filter((entry) => (
-           !urlPinnedCoordinatorNpub || definitionMatchesCoordinator(entry, urlPinnedCoordinatorNpub)
-         ));
-         if (selectedDefinitionsForCoordinator.length > 0) {
-           candidates = [
-             ...selectedDefinitionsForCoordinator,
-             ...candidates.filter((entry) => entry.definition.questionnaireId !== selectedIdForList),
-           ];
-        }
-      }
+       if (selectedIdForList) {
+         const selectedDefinitions = await fetchQuestionnaireDefinitions({
+           questionnaireId: selectedIdForList,
+           // A selected round needs its complete public definition history, not only
+           // the recent variants which happened to fit in the discovery list.
+           limit: AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT,
+           readRelayLimit: 8,
+           preferKindOnly: true,
+         }).catch(() => []);
+          const selectedDefinitionsForCoordinator = selectedDefinitions.filter((entry) => (
+            !urlPinnedCoordinatorNpub || definitionMatchesCoordinator(entry, urlPinnedCoordinatorNpub)
+          ));
+          if (selectedDefinitionsForCoordinator.length > 0) {
+            candidates = dedupeDefinitionEntries([
+              ...selectedDefinitionsForCoordinator,
+              ...candidates.filter((entry) => entry.definition.questionnaireId !== selectedIdForList),
+            ]);
+         }
+       }
        const previousEntriesById = new Map(questionnairesRef.current.map((entry) => [entry.eventId, entry]));
       const entries: AuditorQuestionnaireEntry[] = [];
       for (const entry of candidates) {
@@ -464,7 +468,7 @@ export default function SimpleAuditorApp({
       ] = await Promise.all([
         fetchQuestionnaireDefinitions({
           questionnaireId: selectedId,
-          limit: 50,
+           limit: AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT,
           readRelayLimit: 8,
           preferKindOnly: true,
           relays: questionnaireRelays,
@@ -546,9 +550,9 @@ export default function SimpleAuditorApp({
          definitions: definitionEntries,
           responseEvents: responseEntries.map((entry) => entry.event),
           coordinatorNpub: urlPinnedCoordinatorNpub,
-          definitionEventId: selectedDefinitionIsPinnedRef.current
-            ? (selectedQuestionnaire?.eventId ?? selectedDefinitionEventIdRef.current)
-            : "",
+           definitionEventId: selectedDefinitionIsPinnedRef.current
+             ? selectedDefinitionEventIdRef.current
+             : "",
        });
        // Do not let a previously discovered, same-ID definition override an ambiguous public stream.
         const resolvedDefinition = resolvedDefinitionEntry?.definition
@@ -948,10 +952,16 @@ export default function SimpleAuditorApp({
   }, [questionnaires, selectedCoordinatorNpub, selectedDefinitionEventId, selectedQuestionnaireId]);
 
   const selectedQuestionnaire = useMemo(
-    () => filteredQuestionnaires.find((entry) => entry.eventId === selectedDefinitionEventId)
-      ?? filteredQuestionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId)
+    () => questionnaires.find((entry) => entry.eventId === selectedDefinitionEventId)
+      ?? questionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId)
       ?? null,
-    [filteredQuestionnaires, selectedDefinitionEventId, selectedQuestionnaireId],
+    [questionnaires, selectedDefinitionEventId, selectedQuestionnaireId],
+  );
+  const selectedDefinitionHistory = useMemo(
+    () => questionnaires
+      .filter((entry) => entry.questionnaireId === selectedQuestionnaireId)
+      .sort((left, right) => left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId)),
+    [questionnaires, selectedQuestionnaireId],
   );
 
   const decryptedResponseResult = useMemo(
@@ -1027,6 +1037,11 @@ export default function SimpleAuditorApp({
 
   function formatRoundOptionLabel(entry: AuditorQuestionnaireEntry) {
     return `${entry.title} · ${formatQuestionnaireDisplayId(entry.questionnaireId)} · organiser ${deriveActorDisplayId(entry.coordinatorNpub)} · ${formatQuestionnaireTime(entry.createdAt)} · ${entry.eventId.slice(0, 12)}`;
+  }
+
+  function formatDefinitionHistoryOptionLabel(entry: AuditorQuestionnaireEntry, index: number) {
+    const version = index === 0 ? "Initial / original" : `Revision ${index}`;
+    return `${version} · creator ${deriveActorDisplayId(entry.coordinatorNpub)} · event ${entry.eventId} · published ${formatQuestionnaireTime(entry.createdAt)} · ${entry.questions.length} question${entry.questions.length === 1 ? "" : "s"}`;
   }
 
   function exportResults() {
@@ -1114,6 +1129,37 @@ export default function SimpleAuditorApp({
       ) : (
         <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
       )}
+      {selectedQuestionnaire ? (
+        <div className='simple-auditor-definition-history'>
+          <UiSelect
+            label='Definition history'
+            id='simple-auditor-definition-history'
+            fieldClassName='simple-auditor-definition-history-field'
+            value={selectedQuestionnaire.eventId}
+            onChange={(event) => {
+              const selected = selectedDefinitionHistory.find((entry) => entry.eventId === event.target.value);
+              if (!selected) {
+                return;
+              }
+              selectedDefinitionIsPinnedRef.current = true;
+              setSelectedQuestionnaireId(selected.questionnaireId);
+              setSelectedDefinitionEventId(selected.eventId);
+              onFiltersMenuClose?.();
+            }}
+          >
+            {selectedDefinitionHistory.map((entry, index) => (
+              <option key={entry.eventId} value={entry.eventId}>
+                {formatDefinitionHistoryOptionLabel(entry, index)}
+              </option>
+            ))}
+          </UiSelect>
+          {selectedDefinitionHistory.length > 1 ? (
+            <p className='simple-voter-note'>The selected definition controls the displayed questions and blind-proof verification.</p>
+          ) : (
+            <p className='simple-voter-note'>No other definition variants were discoverable. Currently using definition event {selectedQuestionnaire.eventId}.</p>
+          )}
+        </div>
+      ) : null}
     </div>
   ) : null;
   const filterPortal = filtersInMenu && filtersMenuOpen && filterMenuMount && filterControls
@@ -1507,6 +1553,14 @@ function definitionMatchesCoordinator(
   return Boolean(expected)
     && normalizeToNpub(entry.event.pubkey) === expected
     && normalizeToNpub(entry.definition.coordinatorPubkey) === expected;
+}
+
+function dedupeDefinitionEntries<T extends { event: NostrEvent }>(entries: T[]) {
+  const byEventId = new Map<string, T>();
+  for (const entry of entries) {
+    byEventId.set(entry.event.id, entry);
+  }
+  return [...byEventId.values()];
 }
 
 function selectAuditorDefinition(input: {

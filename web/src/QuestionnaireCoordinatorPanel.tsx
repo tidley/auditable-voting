@@ -479,10 +479,9 @@ export async function checkQuestionnaireDefinitionCollision(input: {
 }
 
 function generateQuestionnaireId() {
-  const randomPart = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random().toString(16).slice(2)}`)
-    .replace(/-/g, "")
-    .slice(0, 12);
-  return `${DEFAULT_QUESTIONNAIRE_ID_PREFIX}_${randomPart}`;
+  const now = new Date();
+  const twoDigits = (value: number) => String(value).padStart(2, "0");
+  return `${DEFAULT_QUESTIONNAIRE_ID_PREFIX}_${twoDigits(now.getFullYear() % 100)}${twoDigits(now.getMonth() + 1)}${twoDigits(now.getDate())}_${twoDigits(now.getHours())}${twoDigits(now.getMinutes())}${twoDigits(now.getSeconds())}`;
 }
 
 function generateVoterGroupId() {

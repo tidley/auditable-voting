@@ -223,6 +223,65 @@ describe("SimpleAuditorApp", () => {
     expect(screen.queryByText("Conflicting 3-question questionnaire")).toBeNull();
   });
 
+  it("retains definition history and uses the selected original definition for questions and proof verification", async () => {
+    const user = userEvent.setup();
+    window.history.pushState(null, "", "/?role=auditor&q=q_70201bbedaf5");
+    setupTransportMocks();
+    const original = makeDefinitionEntry("q_70201bbedaf5", "Original 20-question questionnaire", 1_777_000_100);
+    original.event.id = "definition_original";
+    original.definition.questions = Array.from({ length: 20 }, (_, index) => ({
+      questionId: `original_${index + 1}`,
+      prompt: `Original question ${index + 1}`,
+      required: true,
+      type: "yes_no" as const,
+    }));
+    original.definition.blindSigningPublicKey = { keyId: "original-key" } as never;
+    const revision = makeDefinitionEntry("q_70201bbedaf5", "Revision 3-question questionnaire", 1_777_000_200);
+    revision.event.id = "definition_revision";
+    revision.definition.questions = Array.from({ length: 3 }, (_, index) => ({
+      questionId: `revision_${index + 1}`,
+      prompt: `Revision question ${index + 1}`,
+      required: true,
+      type: "yes_no" as const,
+    }));
+    revision.definition.blindSigningPublicKey = { keyId: "revision-key" } as never;
+    transportMocks.fetchQuestionnaireDefinitions.mockResolvedValue([original, revision]);
+    const { default: SimpleAuditorApp } = await import("./SimpleAuditorApp");
+
+    render(<SimpleAuditorApp />);
+
+    const history = await screen.findByLabelText("Definition history");
+    expect(screen.getByRole("option", { name: /Initial \/ original.*definition_original.*20 questions/i })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Revision 1.*definition_revision.*3 questions/i })).toBeTruthy();
+
+    await user.selectOptions(history, "definition_revision");
+    await waitFor(() => {
+      expect(screen.getByText("Revision 3-question questionnaire")).toBeTruthy();
+      expect(transportMocks.verifyQuestionnaireBlindResponseProofs).toHaveBeenLastCalledWith(
+        expect.objectContaining({ publicKey: revision.definition.blindSigningPublicKey }),
+      );
+    });
+    expect(new URL(window.location.href).searchParams.get("definition")).toBe("definition_revision");
+
+    await user.selectOptions(history, "definition_original");
+    await waitFor(() => {
+      expect(screen.getByText("Original 20-question questionnaire")).toBeTruthy();
+      expect(transportMocks.verifyQuestionnaireBlindResponseProofs).toHaveBeenLastCalledWith(
+        expect.objectContaining({ publicKey: original.definition.blindSigningPublicKey }),
+      );
+    });
+    expect(new URL(window.location.href).searchParams.get("definition")).toBe("definition_original");
+  });
+
+  it("states when no other definition variants were discovered and identifies the active event", async () => {
+    setupTransportMocks();
+    const { default: SimpleAuditorApp } = await import("./SimpleAuditorApp");
+
+    render(<SimpleAuditorApp />);
+
+    expect(await screen.findByText(/No other definition variants were discoverable.*definition_q_first/i)).toBeTruthy();
+  });
+
   it("lists same-ID definitions separately and pins verification to the selected organiser variant", async () => {
     const user = userEvent.setup();
     setupTransportMocks();
