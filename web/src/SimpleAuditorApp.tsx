@@ -175,7 +175,8 @@ export default function SimpleAuditorApp({
   filtersMenuOpen = false,
   onFiltersMenuClose,
 }: SimpleAuditorAppProps = {}) {
-  const initialQuestionnaireId = useMemo(() => readInitialQuestionnaireIdFromUrl() || auditorMemoryCache.selectedQuestionnaireId, []);
+  const urlPinnedQuestionnaireId = useMemo(() => readInitialQuestionnaireIdFromUrl(), []);
+  const initialQuestionnaireId = useMemo(() => urlPinnedQuestionnaireId || auditorMemoryCache.selectedQuestionnaireId, [urlPinnedQuestionnaireId]);
   const canUseCachedSelection = initialQuestionnaireId === auditorMemoryCache.selectedQuestionnaireId;
   const [questionnaires, setQuestionnaires] = useState<AuditorQuestionnaireEntry[]>(() => auditorMemoryCache.questionnaires);
   const [selectedQuestionnaireId, setSelectedQuestionnaireId] = useState(initialQuestionnaireId);
@@ -843,6 +844,10 @@ export default function SimpleAuditorApp({
   );
 
   useEffect(() => {
+    if (urlPinnedQuestionnaireId && selectedQuestionnaireId !== urlPinnedQuestionnaireId) {
+      setSelectedQuestionnaireId(urlPinnedQuestionnaireId);
+      return;
+    }
     if (filteredQuestionnaires.length === 0) {
       if (initialQuestionnaireId && selectedQuestionnaireId === initialQuestionnaireId) {
         return;
@@ -858,7 +863,7 @@ export default function SimpleAuditorApp({
       }
       setSelectedQuestionnaireId(filteredQuestionnaires[0].questionnaireId);
     }
-  }, [filteredQuestionnaires, initialQuestionnaireId, selectedQuestionnaireId]);
+  }, [filteredQuestionnaires, initialQuestionnaireId, selectedQuestionnaireId, urlPinnedQuestionnaireId]);
 
   useEffect(() => {
     writeSelectedQuestionnaireIdToUrl(selectedQuestionnaireId);
