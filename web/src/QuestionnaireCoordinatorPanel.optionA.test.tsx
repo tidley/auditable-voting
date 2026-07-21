@@ -1619,7 +1619,16 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       coordinatorNpub,
       state: {
         election,
-        whitelist: {},
+        whitelist: {
+          [workerNpub]: {
+            electionId: questionnaireId,
+            invitedNpub: workerNpub,
+            addedAt: "2026-07-11T14:49:00.000Z",
+            credentialsPerVoter: 2,
+            ballotGroup: "north",
+            claimState: "whitelisted",
+          },
+        },
         bearerInviteCodes: {},
         pendingBlindRequests: {},
         issuedBlindResponses: {},
@@ -1687,7 +1696,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     const configInput = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0];
     expect(sharedNostrPoolMocks.querySync).not.toHaveBeenCalled();
-    expect(configInput?.snapshot.expectedInviteeCount).toBe(0);
+    expect(configInput?.snapshot.expectedInviteeCount).toBe(1);
+    expect(configInput?.snapshot).toMatchObject({
+      whitelistNpubs: [workerNpub],
+      proxyVoterNpubs: [workerNpub],
+      ballotGroupsByNpub: { [workerNpub]: "north" },
+    });
     expect(configInput?.snapshot.definitionReference?.definitionEventId).toBe(publishedDefinitionEvent.id);
     expect(configInput?.snapshot.definitionReference?.definitionHash).toBe(questionnaireDefinitionEventHash(publishedDefinitionEvent.content));
     expect(configInput?.snapshot.definitionReference?.definitionHash).not.toBe(questionnaireDefinitionHash(staleCachedDefinition));

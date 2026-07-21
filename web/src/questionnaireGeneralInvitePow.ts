@@ -2,6 +2,7 @@ import { sha256HexRust } from "./wasm/auditableVotingCore";
 
 export const GENERAL_INVITE_POW_MAX_DIFFICULTY = 24;
 const GENERAL_INVITE_POW_YIELD_INTERVAL = 4_096;
+const GENERAL_INVITE_POW_WORKER_PROGRESS_INTERVAL = 128;
 
 export type GeneralInvitePowProof = {
   nonce: string;
@@ -23,6 +24,92 @@ function yieldToBrowserFrame() {
       return;
     }
     globalThis.setTimeout(resolve, 0);
+  });
+}
+
+function canMineInWorker() {
+  return typeof Worker !== "undefined"
+    && typeof Blob !== "undefined"
+    && typeof URL !== "undefined"
+    && typeof URL.createObjectURL === "function"
+    && typeof URL.revokeObjectURL === "function";
+}
+
+function mineGeneralInvitePowInWorker(input: GeneralInvitePowRequest & { difficulty: number; onProgress?: (attempts: number) => void }) {
+  const source = `
+    const progressInterval = ${GENERAL_INVITE_POW_WORKER_PROGRESS_INTERVAL};
+    const encoder = new TextEncoder();
+    function hasLeadingZeroBits(bytes, difficulty) {
+      const fullBytes = Math.floor(difficulty / 8);
+      for (let index = 0; index < fullBytes; index += 1) {
+        if (bytes[index] !== 0) return false;
+      }
+      const remainingBits = difficulty % 8;
+      return remainingBits === 0 || bytes[fullBytes] < (1 << (8 - remainingBits));
+    }
+    self.onmessage = async ({ data }) => {
+      const { input } = data;
+      for (let candidate = 0; ; candidate += 1) {
+        const nonce = String(candidate);
+        const preimage = JSON.stringify([
+          "auditable-voting-general-invite-pow:v1",
+          input.electionId,
+          input.requestId,
+          input.invitedNpub,
+          input.blindSigningKeyId,
+          input.blindedMessage,
+          input.clientNonce,
+          nonce,
+        ]);
+        const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(preimage)));
+        const attempts = candidate + 1;
+        if (hasLeadingZeroBits(digest, input.difficulty)) {
+          self.postMessage({ type: "complete", nonce, attempts });
+          self.close();
+          return;
+        }
+        if (attempts % progressInterval === 0) {
+          self.postMessage({ type: "progress", attempts });
+        }
+      }
+    };
+  `;
+  const workerUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  let worker: Worker;
+  try {
+    worker = new Worker(workerUrl);
+  } catch (error) {
+    URL.revokeObjectURL(workerUrl);
+    return Promise.reject(error);
+  }
+
+  return new Promise<GeneralInvitePowProof>((resolve, reject) => {
+    let settled = false;
+    const cleanUp = () => {
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanUp();
+      reject(error);
+    };
+    worker.onmessage = ({ data }: MessageEvent<{ type: string; attempts: number; nonce?: string }>) => {
+      if (settled) return;
+      if (data.type === "progress") {
+        input.onProgress?.(data.attempts);
+        return;
+      }
+      if (data.type === "complete" && data.nonce) {
+        settled = true;
+        cleanUp();
+        input.onProgress?.(data.attempts);
+        resolve({ nonce: data.nonce });
+      }
+    };
+    worker.onerror = () => fail(new Error("Browser proof-of-work worker failed."));
+    worker.postMessage({ input });
   });
 }
 
@@ -74,6 +161,9 @@ export async function mineGeneralInvitePow(input: GeneralInvitePowRequest & {
   }
   // Let the UI paint the initial progress state before starting synchronous hashes.
   input.onProgress?.(0);
+  if (canMineInWorker()) {
+    return mineGeneralInvitePowInWorker(input);
+  }
   await yieldToBrowserFrame();
   for (let candidate = 0; ; candidate += 1) {
     const proof = { nonce: String(candidate) };

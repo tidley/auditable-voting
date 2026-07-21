@@ -150,6 +150,7 @@ import {
   loadAdmittedVoters,
   loadCoordinatorState,
   loadElectionSummary,
+  findCoordinatorBlindSigningPrivateKey,
   readBlindIssuanceAckRecord,
   removeAdmittedVoter,
   saveAdmittedVoters,
@@ -5642,14 +5643,31 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!needsConfig) {
       return null;
     }
-    const coordinatorState = optionACoordinatorRuntime && electionId === optionAElectionId.trim()
-      ? optionACoordinatorRuntime.getSnapshot() ?? loadCoordinatorState({ coordinatorNpub, electionId })
+    // The active runtime is authoritative: local storage can lag a just-approved voter.
+    const coordinatorState = electionId === optionAElectionId.trim()
+      ? optionACoordinatorRuntime?.getSnapshot() ?? null
       : loadCoordinatorState({ coordinatorNpub, electionId });
     if (!coordinatorState) {
       return null;
     }
-    if (delegation.capabilities.includes("issue_blind_tokens") && !coordinatorState.blindSigningPrivateKey) {
-      return null;
+    const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
+    const expectedBlindKeyId = cachedDefinition?.blindSigningPublicKey?.keyId
+      ?? coordinatorState.election.blindSigningPublicKey?.keyId
+      ?? "";
+    let blindSigningPrivateKey = coordinatorState.blindSigningPrivateKey ?? null;
+    if (delegation.capabilities.includes("issue_blind_tokens")) {
+      if (!expectedBlindKeyId) {
+        return null;
+      }
+      if (blindSigningPrivateKey?.keyId !== expectedBlindKeyId) {
+        blindSigningPrivateKey = findCoordinatorBlindSigningPrivateKey({
+          coordinatorNpub,
+          keyId: expectedBlindKeyId,
+        })?.privateKey ?? null;
+      }
+      if (!blindSigningPrivateKey) {
+        return null;
+      }
     }
     const whitelistByNpub = new Map<string, { credentialsPerVoter: 1 | 2; ballotGroup: string | null }>();
     for (const entry of Object.values(coordinatorState.whitelist ?? {})) {
@@ -5658,27 +5676,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         whitelistByNpub.set(npub, {
           credentialsPerVoter: entry.credentialsPerVoter === 2 ? 2 : 1,
           ballotGroup: normaliseQuestionnaireBallotGroup(entry.ballotGroup),
-        });
-      }
-    }
-    if (electionId === optionAElectionId.trim()) {
-      const pendingManualApprovalNpubs = new Set(
-        optionAPendingAuthorizations
-          .map((entry) => entry.invitedNpub.trim())
-          .filter((npub) => npub.length > 0 && !whitelistByNpub.has(npub)),
-      );
-      for (const npub of admittedVoterNpubs) {
-        const normalized = npub.trim();
-        if (!normalized) {
-          continue;
-        }
-        if (pendingManualApprovalNpubs.has(normalized)) {
-          continue;
-        }
-        const existing = whitelistByNpub.get(normalized) ?? { credentialsPerVoter: 1 as const, ballotGroup: null };
-        whitelistByNpub.set(normalized, {
-          credentialsPerVoter: admittedVoters[normalized]?.proxyVoter === true ? 2 : existing.credentialsPerVoter,
-          ballotGroup: normaliseQuestionnaireBallotGroup(admittedVoters[normalized]?.ballotGroup) ?? existing.ballotGroup,
         });
       }
     }
@@ -5705,7 +5702,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, optionAKnownVoterCount, whitelistNpubs.length) + unclaimedPrivateInviteCount;
-    const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
     const cachedDefinitionReference = readCachedQuestionnaireDefinitionReference(electionId);
     return {
       workerNpub: delegation.workerNpub,
@@ -5725,7 +5721,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         bearerInviteCodes: workerBearerInviteCodes,
         eligibilityRequired: delegation.capabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegation.capabilities.includes("issue_blind_tokens")
-          ? coordinatorState.blindSigningPrivateKey ?? null
+          ? blindSigningPrivateKey
           : null,
         definitionReference: cachedDefinition
           ? buildQuestionnaireDefinitionReference({
@@ -6127,10 +6123,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const deliveries = await Promise.all(
       selectedImportedKnownVoterNpubs.map((npub) => sendInviteToKnownVoter(npub, {
         silent: true,
-        syncWorkerConfig: false,
       })),
     );
-    await syncActiveWorkerElectionConfig().catch(() => false);
     setKnownVoterInviteRefreshNonce((value) => value + 1);
     const deliveredCount = deliveries.filter((entry) => entry?.dmDelivered).length;
     setSelectedImportedKnownVoterNpubs([]);
@@ -6175,6 +6169,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const credentialsPerVoter = roster[invitedNpub]?.proxyVoter === true ? 2 : 1;
       const ballotGroup = normaliseQuestionnaireBallotGroup(roster[invitedNpub]?.ballotGroup);
       optionACoordinatorRuntime.addWhitelistNpub(invitedNpub, { credentialsPerVoter, ballotGroup });
+      if (options?.syncWorkerConfig !== false && buildActiveWorkerElectionConfigSnapshot()) {
+        const synced = await syncActiveWorkerElectionConfig();
+        if (!synced) {
+          throw new Error("Could not synchronise the approved voter with the audit proxy. Check the relay connection and try again.");
+        }
+      }
       const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Vote",
         description: "",
@@ -6213,9 +6213,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         [invitedNpub]: true,
       }));
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      if (options?.syncWorkerConfig !== false) {
-        void syncActiveWorkerElectionConfig().catch(() => false);
-      }
       return sent;
     } catch (error) {
       if (!options?.silent) {
@@ -6497,26 +6494,17 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           : `Authorised ${deriveActorDisplayId(invitedNpub)}. Processing their pending ballot request...`,
         options?.statusTarget,
       );
+      // Persisted whitelist state is synchronised before a worker can process this request.
       if (workerConfigRequired) {
-        const reportWorkerConfigFailure = () => {
+        const synced = await syncActiveWorkerElectionConfig().catch(() => false);
+        if (!synced) {
           setInviteFeedbackStatus(
             `Authorised ${deriveActorDisplayId(invitedNpub)}, but the audit proxy configuration did not reach a relay. Keep the proxy online, then refresh and retry if the voter does not receive a ballot.`,
             options?.statusTarget,
           );
-        };
-        void syncActiveWorkerElectionConfig().then((synced) => {
-          if (!synced) {
-            reportWorkerConfigFailure();
-          }
-        }).catch(reportWorkerConfigFailure);
+        }
       }
-      // This preserves local browser issuance while a delegated proxy waits for the config above.
-      void optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup }).catch((error) => {
-        setInviteFeedbackStatus(
-          error instanceof Error ? error.message : "Could not process the authorised voter's pending ballot request.",
-          options?.statusTarget,
-        );
-      });
+      await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
     } catch (error) {
       setInviteFeedbackStatus(error instanceof Error ? error.message : "Authorisation failed.", options?.statusTarget);
     }

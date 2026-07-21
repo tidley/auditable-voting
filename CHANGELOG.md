@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.154] - 2026-07-21
+
+### Fixed
+- Proxy configuration now uses the current coordinator whitelist when voters are admitted or invitations are resent.
+- Proof-of-work mining now runs in a browser worker so Chrome can render real progress updates.
+
 ## [0.1.153] - 2026-07-21
 
 ### Fixed
