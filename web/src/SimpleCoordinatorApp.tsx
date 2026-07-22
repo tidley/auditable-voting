@@ -5777,14 +5777,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           const config = buildWorkerConfigRef.current(electionId);
           let synced = false;
           if (config) {
-            const configVersion = nextWorkerElectionConfigVersion({
-              electionId: config.snapshot.electionId,
-              delegationId: config.snapshot.delegationId,
-            });
-            if (configVersion !== null) {
-              config.snapshot.configVersion = configVersion;
-              synced = await publishWorkerElectionConfig(config);
-            }
+            synced = await publishWorkerElectionConfig(config);
           }
           for (const resolve of waiters) {
             resolve(synced);
@@ -5819,6 +5812,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         config.snapshot.definition = publishedDefinition.definition;
       }
     }
+    // The final coalesced snapshot gets a version immediately before it is sent.
+    const configVersion = nextWorkerElectionConfigVersion({
+      electionId: config.snapshot.electionId,
+      delegationId: config.snapshot.delegationId,
+    });
+    if (configVersion === null) {
+      return false;
+    }
+    config.snapshot.configVersion = configVersion;
     const result = await publishOptionAWorkerElectionConfigDm({
       signer: createSignerService(),
       recipientNpub: config.workerNpub,
