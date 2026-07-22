@@ -146,6 +146,9 @@ export function upsertStoredWorkerDelegation(input: StoredWorkerDelegation) {
         ? existing?.lastConfigSyncKey
         : undefined
     ),
+    lastConfigVersion: existing?.activeDelegation?.delegationId === input.activeDelegation?.delegationId
+      ? existing?.lastConfigVersion
+      : undefined,
   };
   store[electionId] = next;
   writeStore(store);

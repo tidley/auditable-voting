@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.155] - 2026-07-22
+
+### Fixed
+- Made proxy configuration versions and approved-voter whitelist snapshots atomic, so deferred proxy ballot requests become eligible after approval.
+- Added worker config logs for version, whitelist, proxy-voter, and ballot-group counts.
+
+### Changed
+- Bumped the web app package to `0.1.155` and audit proxy package to `0.1.46`.
+
 ## [0.1.154] - 2026-07-21
 
 ### Fixed

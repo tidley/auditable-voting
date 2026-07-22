@@ -4028,10 +4028,14 @@ impl WorkerRuntime {
         self.store.save(&state)?;
         drop(state);
         info!(
-            "worker election config applied: election_id={}, delegation_id={}, expected_invitee_count={:?}, has_blind_signing_key={}, has_definition_reference={}, has_legacy_definition={}",
+            "worker election config applied: election_id={}, delegation_id={}, config_version={}, expected_invitee_count={:?}, whitelist_count={}, proxy_voter_count={}, ballot_group_count={}, has_blind_signing_key={}, has_definition_reference={}, has_legacy_definition={}",
             snapshot.election_id,
             snapshot.delegation_id,
+            snapshot.config_version,
             snapshot.expected_invitee_count,
+            snapshot.whitelist_npubs.as_ref().map_or(0, Vec::len),
+            snapshot.proxy_voter_npubs.as_ref().map_or(0, Vec::len),
+            snapshot.ballot_groups_by_npub.as_ref().map_or(0, HashMap::len),
             snapshot.blind_signing_private_key.is_some(),
             snapshot.definition_reference.is_some(),
             snapshot.definition.is_some(),
@@ -5838,6 +5842,59 @@ mod tests {
         );
         assert!(election.whitelist_npubs.contains("npub1knownvoter"));
         assert!(election.eligibility_required);
+    }
+
+    #[test]
+    fn approved_voter_config_makes_a_deferred_proxy_request_eligible() {
+        let mut election = ElectionRuntimeState::default();
+        let mut request = sample_request();
+        request.ballot_scope = Some(json!({ "credentialIndex": 2 }));
+        let initial_snapshot = WorkerElectionConfigSnapshot {
+            message_type: "worker_election_config".to_string(),
+            schema_version: 1,
+            config_version: 1,
+            election_id: request.election_id.clone(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
+                .to_string(),
+            worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
+            expected_invitee_count: Some(1),
+            whitelist_npubs: Some(vec!["npub1alreadyapproved".to_string()]),
+            proxy_voter_npubs: Some(vec![]),
+            ballot_groups_by_npub: Some(HashMap::new()),
+            bearer_invite_codes: Some(vec![]),
+            eligibility_required: Some(true),
+            blind_signing_private_key: None,
+            definition_reference: None,
+            definition: None,
+            sent_at: "2026-07-22T12:00:00.000Z".to_string(),
+        };
+        assert!(apply_worker_election_config(&mut election, &initial_snapshot));
+        assert!(!deferred_blind_request_ready_for_retry(&election, &request));
+
+        let approved_snapshot = WorkerElectionConfigSnapshot {
+            config_version: 2,
+            expected_invitee_count: Some(2),
+            whitelist_npubs: Some(vec![
+                "npub1alreadyapproved".to_string(),
+                request.invited_npub.clone(),
+            ]),
+            proxy_voter_npubs: Some(vec![request.invited_npub.clone()]),
+            sent_at: "2026-07-22T12:00:01.000Z".to_string(),
+            ..initial_snapshot
+        };
+        assert!(apply_worker_election_config(&mut election, &approved_snapshot));
+
+        assert!(election.whitelist_npubs.contains(&request.invited_npub));
+        assert!(election.proxy_voter_npubs.contains(&request.invited_npub));
+        assert!(deferred_blind_request_ready_for_retry(&election, &request));
+        assert!(blind_request_proxy_authorized(&election, &request));
+        assert_eq!(
+            authorize_blind_request(&mut election, &request),
+            BlindRequestAuthorization::Authorized {
+                state_changed: false,
+            },
+        );
     }
 
     #[test]

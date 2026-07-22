@@ -72,4 +72,27 @@ describe("worker delegation storage", () => {
     expect(ballotGroupUpdateVersion).toBe(2);
     expect(loadStoredWorkerDelegation(active.electionId)?.lastConfigVersion).toBe(2);
   });
+
+  it("retains the config version when recording a successful config sync", () => {
+    const active = delegation("delegation_active", "2026-07-13T11:47:50.000Z");
+    upsertStoredWorkerDelegation({
+      electionId: active.electionId,
+      mode: "delegated_worker",
+      activeDelegation: active,
+      lastRevocation: null,
+      lastUpdatedAt: active.issuedAt,
+    });
+    expect(nextWorkerElectionConfigVersion({ electionId: active.electionId, delegationId: active.delegationId })).toBe(1);
+
+    upsertStoredWorkerDelegation({
+      electionId: active.electionId,
+      mode: "delegated_worker",
+      activeDelegation: active,
+      lastRevocation: null,
+      lastUpdatedAt: "2026-07-13T11:48:00.000Z",
+      lastConfigSyncKey: "sent-config",
+    });
+
+    expect(nextWorkerElectionConfigVersion({ electionId: active.electionId, delegationId: active.delegationId })).toBe(2);
+  });
 });
