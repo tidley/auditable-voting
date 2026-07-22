@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.157] - 2026-07-22
+
+### Fixed
+- Prevented a delayed proxy setup task from assigning a newer config version to a stale pre-approval whitelist snapshot.
+- Reset worker config version state when replacing a delegation so the new delegation can apply config version 1.
+- Added deterministic race coverage and a public-relay deferred-request approval and issuance check.
+
+### Changed
+- Raised generated proxy launcher minimums to audit proxy `0.1.48`.
+- Bumped the web app package to `0.1.157` and audit proxy package to `0.1.48`.
+
 ## [0.1.156] - 2026-07-22
 
 ### Fixed

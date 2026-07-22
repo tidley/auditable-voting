@@ -1028,7 +1028,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.44";
+const WORKER_MINIMUM_VERSION = "0.1.48";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -4365,10 +4365,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           ) * 60 * 1000,
         ).toISOString(),
       });
-    const coordinatorState = loadCoordinatorState({
-      coordinatorNpub: coordinatorNpubTrimmed,
-      electionId,
-    });
     setStatus("Preparing audit proxy configuration...");
     const justPublishedDefinition = options?.definitionOverride?.questionnaireId === electionId
       ? options.definitionOverride
@@ -4411,7 +4407,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     }
     const summaryForWorkerConfig = loadElectionSummary(electionId);
     let blindSigningPrivateKeyForWorker = delegatedWorkerCapabilities.includes("issue_blind_tokens")
-      ? coordinatorState?.blindSigningPrivateKey ?? null
+      ? loadCoordinatorState({
+        coordinatorNpub: coordinatorNpubTrimmed,
+        electionId,
+      })?.blindSigningPrivateKey ?? null
       : null;
     if (delegatedWorkerCapabilities.includes("issue_blind_tokens")) {
       const advertisedPublicKey = workerConfigDefinition?.blindSigningPublicKey
@@ -4429,6 +4428,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           });
           if (recovered) {
             blindSigningPrivateKeyForWorker = recovered.privateKey;
+            const coordinatorState = loadCoordinatorState({
+              coordinatorNpub: coordinatorNpubTrimmed,
+              electionId,
+            });
             if (coordinatorState) {
               const recoveredState = {
                 ...coordinatorState,
@@ -4458,52 +4461,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         return;
       }
     }
-    const whitelistNpubs = Object.keys(coordinatorState?.whitelist ?? {})
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    const proxyVoterNpubs = Object.values(coordinatorState?.whitelist ?? {})
-      .filter((entry) => entry.credentialsPerVoter === 2)
-      .map((entry) => entry.invitedNpub.trim())
-      .filter((entry) => entry.length > 0);
-    const ballotGroupsByNpub = Object.fromEntries(
-      Object.values(coordinatorState?.whitelist ?? {})
-        .map((entry) => [entry.invitedNpub.trim(), normaliseQuestionnaireBallotGroup(entry.ballotGroup)] as const)
-        .filter((entry): entry is readonly [string, string] => entry[0].length > 0 && Boolean(entry[1])),
-    );
-    const bearerInviteCodes = Object.values(coordinatorState?.bearerInviteCodes ?? {});
-    const unclaimedPrivateInviteCount = bearerInviteCodes
-      .filter((entry) => entry.state !== "revoked")
-      .filter((entry) => {
-        const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
-        return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
-      }).length;
-    const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
     if (!workerConfigDefinition) {
       setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy configuration needs the published vote definition.`);
       return;
     }
-    const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot = {
-      type: "worker_election_config",
-      schemaVersion: 1,
-      electionId,
-      delegationId: delegation.delegationId,
-      configVersion: 0,
-      coordinatorNpub: coordinatorNpubTrimmed,
-      workerNpub,
-      expectedInviteeCount,
-      whitelistNpubs,
-      proxyVoterNpubs,
-      ballotGroupsByNpub,
-      bearerInviteCodes,
-      eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
-      blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
-        ? blindSigningPrivateKeyForWorker
-        : null,
-      definitionReference: workerDefinitionReference,
-      definition: workerConfigDefinition,
-      sentAt: new Date().toISOString(),
-    };
-    const configSyncKey = workerElectionConfigSyncKey(workerElectionConfigSnapshot);
     setStatus(canReuseActiveDelegation ? "Synchronising audit proxy configuration..." : "Publishing audit proxy delegation...");
     try {
       const publicResult = canReuseActiveDelegation ? null : await publishWorkerDelegationCertificate({
@@ -4528,13 +4489,77 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       setActiveWorkerDelegation(storedDelegation);
       setLastWorkerRevocationState("pending_activation");
       let configResultSummary = "";
-      const storedConfigSyncKey = loadStoredWorkerDelegation(electionId)?.lastConfigSyncKey;
-      if (options?.forceConfigSync || storedConfigSyncKey !== configSyncKey) {
+      const preparedWorkerConfig = (() => {
+        const freshCoordinatorState = loadCoordinatorState({
+          coordinatorNpub: coordinatorNpubTrimmed,
+          electionId,
+        });
+        const whitelistNpubs = Object.keys(freshCoordinatorState?.whitelist ?? {})
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        const proxyVoterNpubs = Object.values(freshCoordinatorState?.whitelist ?? {})
+          .filter((entry) => entry.credentialsPerVoter === 2)
+          .map((entry) => entry.invitedNpub.trim())
+          .filter((entry) => entry.length > 0);
+        const ballotGroupsByNpub = Object.fromEntries(
+          Object.values(freshCoordinatorState?.whitelist ?? {})
+            .map((entry) => [entry.invitedNpub.trim(), normaliseQuestionnaireBallotGroup(entry.ballotGroup)] as const)
+            .filter((entry): entry is readonly [string, string] => entry[0].length > 0 && Boolean(entry[1])),
+        );
+        const bearerInviteCodes = Object.values(freshCoordinatorState?.bearerInviteCodes ?? {});
+        const unclaimedPrivateInviteCount = bearerInviteCodes
+          .filter((entry) => entry.state !== "revoked")
+          .filter((entry) => {
+            const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+            return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
+          }).length;
+        const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
+        const workerElectionConfigBase: WorkerElectionConfigSnapshot = {
+          type: "worker_election_config",
+          schemaVersion: 1,
+          electionId,
+          delegationId: delegation.delegationId,
+          configVersion: 0,
+          coordinatorNpub: coordinatorNpubTrimmed,
+          workerNpub,
+          expectedInviteeCount,
+          whitelistNpubs,
+          proxyVoterNpubs,
+          ballotGroupsByNpub,
+          bearerInviteCodes,
+          eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
+          blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
+            ? blindSigningPrivateKeyForWorker
+            : null,
+          definitionReference: workerDefinitionReference,
+          definition: workerConfigDefinition,
+          sentAt: new Date().toISOString(),
+        };
+        const configSyncKey = workerElectionConfigSyncKey(workerElectionConfigBase);
+        const storedConfigSyncKey = loadStoredWorkerDelegation(electionId)?.lastConfigSyncKey;
+        if (!options?.forceConfigSync && storedConfigSyncKey === configSyncKey) {
+          return { configSyncKey, snapshot: null };
+        }
         const configVersion = nextWorkerElectionConfigVersion({
           electionId,
           delegationId: delegation.delegationId,
         });
-        workerElectionConfigSnapshot.configVersion = configVersion ?? 1;
+        const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot = {
+          ...workerElectionConfigBase,
+          configVersion: configVersion ?? 1,
+        };
+        console.info("[worker-config] snapshot built", {
+          electionId,
+          configVersion: workerElectionConfigSnapshot.configVersion,
+          whitelistCount: whitelistNpubs.length,
+          approvedVoterIncluded: false,
+          proxyVoterCount: proxyVoterNpubs.length,
+          ballotGroupCount: Object.keys(ballotGroupsByNpub).length,
+        });
+        return { configSyncKey, snapshot: workerElectionConfigSnapshot };
+      })();
+      if (preparedWorkerConfig.snapshot) {
+        const workerElectionConfigSnapshot = preparedWorkerConfig.snapshot;
         const configDmResult = await publishOptionAWorkerElectionConfigDm({
           signer: createSignerService(),
           recipientNpub: workerNpub,
@@ -4542,6 +4567,22 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           fallbackNsec: coordinatorNsecTrimmed,
           relays: workerDmRelays,
         });
+        const configFailureCount = Math.max(0, configDmResult.relayResults.length - configDmResult.successes);
+        if (configFailureCount > 0) {
+          console.error("[worker-config] DM publish had relay failures", {
+            electionId,
+            configVersion: workerElectionConfigSnapshot.configVersion,
+            successes: configDmResult.successes,
+            failures: configFailureCount,
+          });
+        } else {
+          console.info("[worker-config] DM published", {
+            electionId,
+            configVersion: workerElectionConfigSnapshot.configVersion,
+            successes: configDmResult.successes,
+            failures: configFailureCount,
+          });
+        }
         if (configDmResult.successes === 0) {
           throw new Error("Audit proxy configuration could not reach any relay.");
         }
@@ -4551,9 +4592,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           activeDelegation: storedDelegation,
           lastRevocation: null,
           lastUpdatedAt: new Date().toISOString(),
-          lastConfigSyncKey: configSyncKey,
+          lastConfigSyncKey: preparedWorkerConfig.configSyncKey,
         });
         configResultSummary = `, ${configDmResult.successes} config DM relay successes`;
+      } else {
+        console.info("[worker-config] sync skipped", {
+          electionId,
+          reason: "config_sync_key_unchanged",
+          force: options?.forceConfigSync === true,
+        });
+        configResultSummary = ", config unchanged; DM sync skipped";
       }
       const existingSummary = loadElectionSummary(electionId);
       if (existingSummary) {

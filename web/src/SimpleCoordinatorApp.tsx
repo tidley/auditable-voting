@@ -2907,8 +2907,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     inFlight: false,
     scheduled: false,
     pendingElectionIds: new Set<string>(),
+    forcedElectionIds: new Set<string>(),
+    approvedVoterByElectionId: new Map<string, string>(),
     waiters: new Map<string, Array<(synced: boolean) => void>>(),
   });
+  const lastWorkerConfigSyncSkipReasonRef = useRef<string | null>(null);
 
   useEffect(() => {
     latestCoordinatorHexRosterRef.current = coordinatorHexRoster;
@@ -5739,14 +5742,22 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 
   buildWorkerConfigRef.current = buildActiveWorkerElectionConfigSnapshot;
 
-  async function syncActiveWorkerElectionConfig(questionnaireId = optionAElectionId) {
+  async function syncActiveWorkerElectionConfig(questionnaireId = optionAElectionId, options?: { force?: boolean; approvedVoterNpub?: string }) {
     const electionId = questionnaireId.trim();
     if (!electionId) {
+      lastWorkerConfigSyncSkipReasonRef.current = "election_id_missing";
+      console.info("[worker-config] sync skipped", { reason: "election_id_missing" });
       return false;
     }
     return new Promise<boolean>((resolve) => {
       const queue = workerConfigSyncRef.current;
       queue.pendingElectionIds.add(electionId);
+      if (options?.force) {
+        queue.forcedElectionIds.add(electionId);
+      }
+      if (options?.approvedVoterNpub?.trim()) {
+        queue.approvedVoterByElectionId.set(electionId, options.approvedVoterNpub.trim());
+      }
       const waiters = queue.waiters.get(electionId) ?? [];
       waiters.push(resolve);
       queue.waiters.set(electionId, waiters);
@@ -5774,10 +5785,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         for (const electionId of electionIds) {
           const waiters = queue.waiters.get(electionId) ?? [];
           queue.waiters.delete(electionId);
+          const force = queue.forcedElectionIds.delete(electionId);
+          const approvedVoterNpub = queue.approvedVoterByElectionId.get(electionId);
+          queue.approvedVoterByElectionId.delete(electionId);
           const config = buildWorkerConfigRef.current(electionId);
           let synced = false;
           if (config) {
-            synced = await publishWorkerElectionConfig(config);
+            synced = await publishWorkerElectionConfig(config, { force, approvedVoterNpub });
+          } else {
+            lastWorkerConfigSyncSkipReasonRef.current = "config_unavailable";
+            console.info("[worker-config] sync skipped", { electionId, reason: "config_unavailable", force });
           }
           for (const resolve of waiters) {
             resolve(synced);
@@ -5795,7 +5812,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
   }
 
-  async function publishWorkerElectionConfig(config: { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] }) {
+  async function publishWorkerElectionConfig(config: { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] }, options?: { force?: boolean; approvedVoterNpub?: string }) {
     if (config.snapshot.definitionReference && !config.snapshot.definitionReference.definitionEventId) {
       const publishedDefinition = await fetchLatestQuestionnaireDefinitionByCoordinator({
         questionnaireId: config.snapshot.electionId,
@@ -5818,9 +5835,24 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       delegationId: config.snapshot.delegationId,
     });
     if (configVersion === null) {
+      lastWorkerConfigSyncSkipReasonRef.current = "config_version_unavailable";
+      console.info("[worker-config] sync skipped", {
+        electionId: config.snapshot.electionId,
+        reason: "config_version_unavailable",
+        force: options?.force === true,
+      });
       return false;
     }
     config.snapshot.configVersion = configVersion;
+    console.info("[worker-config] snapshot built", {
+      electionId: config.snapshot.electionId,
+      configVersion,
+      whitelistCount: config.snapshot.whitelistNpubs?.length ?? 0,
+      approvedVoterIncluded: Boolean(options?.approvedVoterNpub && config.snapshot.whitelistNpubs?.includes(options.approvedVoterNpub)),
+      proxyVoterCount: config.snapshot.proxyVoterNpubs?.length ?? 0,
+      ballotGroupCount: Object.keys(config.snapshot.ballotGroupsByNpub ?? {}).length,
+      force: options?.force === true,
+    });
     const result = await publishOptionAWorkerElectionConfigDm({
       signer: createSignerService(),
       recipientNpub: config.workerNpub,
@@ -5828,6 +5860,23 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       fallbackNsec: keypair?.nsec ?? undefined,
       relays: config.relays,
     });
+    const failureCount = Math.max(0, result.relayResults.length - result.successes);
+    if (failureCount > 0) {
+      console.error("[worker-config] DM publish had relay failures", {
+        electionId: config.snapshot.electionId,
+        configVersion,
+        successes: result.successes,
+        failures: failureCount,
+      });
+    } else {
+      console.info("[worker-config] DM published", {
+        electionId: config.snapshot.electionId,
+        configVersion,
+        successes: result.successes,
+        failures: failureCount,
+      });
+    }
+    lastWorkerConfigSyncSkipReasonRef.current = null;
     return result.successes > 0;
   }
 
@@ -6443,6 +6492,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     try {
       const normalizedInvitedNpub = invitedNpub.trim();
+      console.info("[voter-approval] manual approval started", {
+        electionId: optionAElectionId.trim(),
+        hasVoterNpub: Boolean(normalizedInvitedNpub),
+      });
       const noteInputId = `admitted-voter-note-${normalizedInvitedNpub}`;
       const noteDraft = participantNoteDraftsRef.current[noteInputId];
       const pendingSettings = pendingParticipantSettingsByNpub[normalizedInvitedNpub];
@@ -6478,6 +6531,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         ? normaliseQuestionnaireBallotGroup(stagedSettings?.ballotGroup)
         : normaliseQuestionnaireBallotGroup(roster[normalizedInvitedNpub]?.ballotGroup);
       optionACoordinatorRuntime.addWhitelistNpub(normalizedInvitedNpub, { credentialsPerVoter, ballotGroup });
+      const runtimeWhitelistContainsVoter = Object.values(optionACoordinatorRuntime.getSnapshot()?.whitelist ?? {})
+        .some((entry) => entry.invitedNpub.trim() === normalizedInvitedNpub);
+      console.info("[voter-approval] runtime whitelist updated", {
+        electionId: optionAElectionId.trim(),
+        runtimeWhitelistContainsVoter,
+      });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       const workerConfigRequired = Boolean(buildActiveWorkerElectionConfigSnapshot());
       setPendingParticipantSettingsByNpub((current) => {
@@ -6498,16 +6557,31 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       );
       // Persisted whitelist state is synchronised before a worker can process this request.
       if (workerConfigRequired) {
-        const synced = await syncActiveWorkerElectionConfig().catch(() => false);
+        const synced = await syncActiveWorkerElectionConfig(optionAElectionId, {
+          // An approval must resend config even if an automatic sync was coalesced or deduped.
+          force: true,
+          approvedVoterNpub: normalizedInvitedNpub,
+        }).catch(() => false);
         if (!synced) {
+          const skippedReason = lastWorkerConfigSyncSkipReasonRef.current;
           setInviteFeedbackStatus(
-            `Authorised ${deriveActorDisplayId(invitedNpub)}, but the audit proxy configuration did not reach a relay. Keep the proxy online, then refresh and retry if the voter does not receive a ballot.`,
+            skippedReason
+              ? `Authorised ${deriveActorDisplayId(invitedNpub)}, but audit proxy configuration was skipped (${skippedReason}). Refresh and retry before the voter requests a ballot.`
+              : `Authorised ${deriveActorDisplayId(invitedNpub)}, but the audit proxy configuration did not reach a relay. Keep the proxy online, then refresh and retry if the voter does not receive a ballot.`,
             options?.statusTarget,
           );
         }
       }
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
+      console.info("[voter-approval] manual approval finished", {
+        electionId: optionAElectionId.trim(),
+        workerConfigRequired,
+      });
     } catch (error) {
+      console.error("[voter-approval] manual approval failed", {
+        electionId: optionAElectionId.trim(),
+        error: "approval_failed",
+      });
       setInviteFeedbackStatus(error instanceof Error ? error.message : "Authorisation failed.", options?.statusTarget);
     }
   }

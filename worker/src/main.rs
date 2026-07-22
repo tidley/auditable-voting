@@ -4433,6 +4433,7 @@ impl WorkerRuntime {
             existing.published_response_refs.clear();
             existing.expected_invitee_count = None;
             existing.last_election_config_sent_at = None;
+            existing.last_election_config_version = 0;
             existing.blind_signing_private_key = None;
             existing.definition = None;
             existing.summary_published = false;
@@ -5842,6 +5843,78 @@ mod tests {
         );
         assert!(election.whitelist_npubs.contains("npub1knownvoter"));
         assert!(election.eligibility_required);
+    }
+
+    #[tokio::test]
+    async fn replacement_delegation_accepts_a_fresh_version_one_config() {
+        let coordinator_keys = Keys::generate();
+        let election_id = "q_replacement_config_version";
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            election_id.to_string(),
+            ElectionRuntimeState {
+                election_id: election_id.to_string(),
+                delegation_id: "delegation_old".to_string(),
+                eligibility_configured: true,
+                eligibility_required: true,
+                whitelist_npubs: HashSet::from(["npub1oldvoter".to_string()]),
+                expected_invitee_count: Some(1),
+                last_election_config_version: 7,
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let replacement = WorkerDelegationCertificate {
+            message_type: "worker_delegation".to_string(),
+            schema_version: 1,
+            delegation_id: "delegation_new".to_string(),
+            election_id: election_id.to_string(),
+            coordinator_npub: runtime.config.coordinator_npub.clone(),
+            worker_npub: runtime.worker_npub.clone(),
+            capabilities: vec![WorkerCapability::IssueBlindTokens],
+            control_relays: vec![],
+            issued_at: now_iso(),
+            expires_at: (Utc::now() + ChronoDuration::hours(1)).to_rfc3339(),
+        };
+
+        runtime
+            .apply_delegation(replacement.clone())
+            .await
+            .expect("apply replacement delegation");
+
+        let mut state = runtime.state.lock().await;
+        let election = state
+            .elections
+            .get_mut(election_id)
+            .expect("election stored");
+        assert_eq!(election.last_election_config_version, 0);
+        assert!(!election.eligibility_configured);
+        assert!(apply_worker_election_config(
+            election,
+            &WorkerElectionConfigSnapshot {
+                message_type: "worker_election_config".to_string(),
+                schema_version: 1,
+                config_version: 1,
+                election_id: election_id.to_string(),
+                delegation_id: replacement.delegation_id,
+                coordinator_npub: runtime.config.coordinator_npub.clone(),
+                worker_npub: runtime.worker_npub.clone(),
+                expected_invitee_count: Some(1),
+                whitelist_npubs: Some(vec!["npub1newvoter".to_string()]),
+                proxy_voter_npubs: Some(vec![]),
+                ballot_groups_by_npub: Some(HashMap::new()),
+                bearer_invite_codes: Some(vec![]),
+                eligibility_required: Some(true),
+                blind_signing_private_key: None,
+                definition_reference: None,
+                definition: None,
+                sent_at: now_iso(),
+            }
+        ));
+        assert_eq!(election.last_election_config_version, 1);
+        assert!(election.whitelist_npubs.contains("npub1newvoter"));
+        drop(state);
+        let _ = fs::remove_dir_all(state_dir);
     }
 
     #[test]

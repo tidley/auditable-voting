@@ -1429,6 +1429,118 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     })?.blindSigningPrivateKey?.keyId).toBe(publishedBlindKey.keyId);
   });
 
+  it("includes a voter approved while the worker definition fetch is suspended", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerNpub = nip19.npubEncode("3".repeat(64));
+    const approvedVoterNpub = nip19.npubEncode("5".repeat(64));
+    const questionnaireId = "q_proxy_config_race";
+    const blindKey = await generateQuestionnaireBlindKeyPair();
+    const definition = {
+      ...makeDefinition({ questionnaireId, title: "Proxy config race", coordinatorNpub }),
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindKey),
+    };
+    const definitionEvent = {
+      id: "proxy-config-race-definition",
+      pubkey: getPublicKey(coordinatorSecret),
+      created_at: definition.createdAt,
+      kind: QUESTIONNAIRE_DEFINITION_KIND,
+      tags: [["q", questionnaireId], ["questionnaire-id", questionnaireId]],
+      content: JSON.stringify(definition),
+      sig: "0".repeat(128),
+    };
+    const election = {
+      electionId: questionnaireId,
+      title: definition.title,
+      description: "",
+      state: "open" as const,
+      openedAt: "2026-07-22T12:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: definition.blindSigningPublicKey,
+    };
+    upsertElectionSummary(election);
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        election,
+        whitelist: {},
+        bearerInviteCodes: {},
+        pendingBlindRequests: {},
+        issuedBlindResponses: {},
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        blindSigningPrivateKey: blindKey,
+        lastUpdatedAt: "2026-07-22T12:00:00.000Z",
+      },
+    });
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId,
+        title: definition.title,
+        questions: definition.questions,
+        delegationMode: "delegated_worker",
+        delegatedWorkerNpub: workerNpub,
+      }),
+    );
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        draftQuestionnaireId={questionnaireId}
+        knownVoterCount={0}
+      />,
+    );
+    const confirmButton = await screen.findByRole("button", { name: "Confirm configuration" });
+
+    let resolveDefinitionFetch!: (events: Array<typeof definitionEvent>) => void;
+    const heldDefinitionFetch = new Promise<Array<typeof definitionEvent>>((resolve) => {
+      resolveDefinitionFetch = resolve;
+    });
+    sharedNostrPoolMocks.querySync.mockClear();
+    sharedNostrPoolMocks.querySync.mockImplementation(() => heldDefinitionFetch);
+    fireEvent.click(confirmButton);
+    await waitFor(() => expect(sharedNostrPoolMocks.querySync).toHaveBeenCalled());
+
+    const suspendedState = loadCoordinatorState({ coordinatorNpub, electionId: questionnaireId });
+    expect(suspendedState).not.toBeNull();
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        ...suspendedState!,
+        whitelist: {
+          [approvedVoterNpub]: {
+            electionId: questionnaireId,
+            invitedNpub: approvedVoterNpub,
+            addedAt: "2026-07-22T12:00:01.000Z",
+            credentialsPerVoter: 2,
+            ballotGroup: "north",
+            claimState: "whitelisted",
+          },
+        },
+        lastUpdatedAt: "2026-07-22T12:00:01.000Z",
+      },
+    });
+    resolveDefinitionFetch([definitionEvent]);
+
+    await waitFor(() => expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledTimes(1));
+    const snapshot = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.snapshot;
+    expect(snapshot).toMatchObject({
+      configVersion: 1,
+      expectedInviteeCount: 1,
+      whitelistNpubs: [approvedVoterNpub],
+      proxyVoterNpubs: [approvedVoterNpub],
+      ballotGroupsByNpub: { [approvedVoterNpub]: "north" },
+      bearerInviteCodes: [],
+    });
+    expect(snapshot?.expectedInviteeCount).toBe(snapshot?.whitelistNpubs?.length);
+  });
+
   it("synchronises a complete config when the selected active proxy appears without republishing its delegation", async () => {
     const coordinatorSecret = generateSecretKey();
     const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
@@ -1549,6 +1661,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledTimes(1);
     expect(publishWorkerDelegationCertificate).not.toHaveBeenCalled();
     expect(publishOptionAWorkerDelegationDm).not.toHaveBeenCalled();
+    expect(screen.getByText(/config unchanged; DM sync skipped/)).toBeTruthy();
   });
 
   it("resends worker config for the active delegation without waiting on another relay read", async () => {
