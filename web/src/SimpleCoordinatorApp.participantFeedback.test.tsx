@@ -16,6 +16,7 @@ import {
   InviteQrOverlay,
   ParticipantBallotGroupSelect,
   preserveParticipantBallotGroupCellWhileFocused,
+  voterApprovalWorkerConfigSyncOptions,
 } from "./SimpleCoordinatorApp";
 import { storeBlindIssuanceAckRecord } from "./questionnaireOptionAStorage";
 
@@ -26,6 +27,23 @@ afterEach(() => {
 });
 
 describe("organiser participant feedback", () => {
+  it("requires a forced worker config sync containing the newly approved voter for the current delegation", () => {
+    expect(voterApprovalWorkerConfigSyncOptions({
+      selectedDelegation: { electionId: "q_current" },
+      electionId: "q_current",
+      approvedVoterNpub: "npub1newlyapproved",
+    })).toEqual({
+      force: true,
+      approvedVoterNpub: "npub1newlyapproved",
+    });
+
+    expect(voterApprovalWorkerConfigSyncOptions({
+      selectedDelegation: { electionId: "q_other" },
+      electionId: "q_current",
+      approvedVoterNpub: "npub1newlyapproved",
+    })).toBeNull();
+  });
+
   it("waits for every proxy credential acknowledgement before showing ballot received", () => {
     const electionId = "q_proxy_ack";
     const invitedNpub = "npub1proxyack";

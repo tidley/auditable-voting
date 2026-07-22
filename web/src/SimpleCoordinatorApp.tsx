@@ -163,7 +163,7 @@ import {
   type WorkerElectionConfigSnapshot,
 } from "./questionnaireOptionABlindDm";
 import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
-import { loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
+import { loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, upsertStoredWorkerDelegation, type WorkerDelegationCertificate } from "./questionnaireWorkerDelegation";
 import { tryWriteClipboard } from "./clipboard";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -690,6 +690,19 @@ export function hasAcknowledgedBlindIssuanceForNpub(
       && (!issuance || ack.issuanceId === issuance.issuanceId)
     );
   });
+}
+
+export function voterApprovalWorkerConfigSyncOptions(input: {
+  selectedDelegation: Pick<WorkerDelegationCertificate, "electionId"> | null;
+  electionId: string;
+  approvedVoterNpub: string;
+}): { force: true; approvedVoterNpub: string } | null {
+  const electionId = input.electionId.trim();
+  const approvedVoterNpub = input.approvedVoterNpub.trim();
+  if (!approvedVoterNpub || input.selectedDelegation?.electionId !== electionId) {
+    return null;
+  }
+  return { force: true, approvedVoterNpub };
 }
 
 function pendingAuthorisationStatusIndicator(): StatusIndicatorView {
@@ -1785,6 +1798,27 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const params = new URLSearchParams(window.location.search);
     return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
   }, [questionnaireRosterAnnouncement.questionnaireId]);
+  const [selectedActiveWorkerDelegation, setSelectedActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
+  const handleWorkerDelegationChange = useCallback((delegation: WorkerDelegationCertificate | null) => {
+    setSelectedActiveWorkerDelegation(delegation);
+  }, []);
+  useEffect(() => {
+    const electionId = optionAElectionId.trim();
+    if (!electionId) {
+      setSelectedActiveWorkerDelegation(null);
+      return;
+    }
+    const stored = loadStoredWorkerDelegation(electionId);
+    const delegation = stored?.mode === "delegated_worker" ? stored.activeDelegation : null;
+    const expiresAtMs = Date.parse(delegation?.expiresAt ?? "");
+    setSelectedActiveWorkerDelegation(
+      delegation
+      && stored?.lastRevocation?.delegationId !== delegation.delegationId
+      && (!Number.isFinite(expiresAtMs) || expiresAtMs > Date.now())
+        ? delegation
+        : null,
+    );
+  }, [optionAElectionId]);
   useEffect(() => {
     participantNoteDraftsRef.current = {};
     participantNoteFocusRef.current = null;
@@ -1911,9 +1945,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!electionId) {
       return "";
     }
-    const storedWorker = loadStoredWorkerDelegation(electionId);
-    const delegation = storedWorker?.activeDelegation ?? null;
-    if (!delegation || storedWorker?.mode !== "delegated_worker") {
+    const delegation = selectedActiveWorkerDelegation?.electionId === electionId
+      ? selectedActiveWorkerDelegation
+      : null;
+    if (!delegation) {
       return "";
     }
     const whitelistKey = visibleOptionAKnownVoters
@@ -1926,7 +1961,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       .sort()
       .join("|");
     return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}:${admittedVoterWorkerConfigKey}`;
-  }, [admittedVoterWorkerConfigKey, optionAElectionId, privateInviteCodeEntries, visibleOptionAKnownVoters]);
+  }, [admittedVoterWorkerConfigKey, optionAElectionId, privateInviteCodeEntries, selectedActiveWorkerDelegation, visibleOptionAKnownVoters]);
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec?.trim() ?? "";
     const coordinatorNpub = activeCoordinatorNpub.trim();
@@ -5629,12 +5664,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!electionId || !coordinatorNpub) {
       return null;
     }
-    const storedWorker = loadStoredWorkerDelegation(electionId);
-    const delegation = storedWorker?.activeDelegation ?? null;
-    if (!delegation || storedWorker?.mode !== "delegated_worker") {
-      return null;
-    }
-    if (storedWorker.lastRevocation?.delegationId === delegation.delegationId) {
+    const delegation = selectedActiveWorkerDelegation?.electionId === electionId
+      ? selectedActiveWorkerDelegation
+      : null;
+    if (!delegation) {
       return null;
     }
     if (Date.parse(delegation.expiresAt) <= Date.now()) {
@@ -5929,6 +5962,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           lastRevocation: null,
           lastUpdatedAt: new Date().toISOString(),
         });
+        setSelectedActiveWorkerDelegation(publicDelegation);
       }
       const knownWorkerRouting = loadElectionSummary(electionId)?.issueBlindTokensWorker ?? null;
       const knownWorkerRoutingActive = Boolean(
@@ -6538,7 +6572,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         runtimeWhitelistContainsVoter,
       });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      const workerConfigRequired = Boolean(buildActiveWorkerElectionConfigSnapshot());
+      const workerConfigSyncOptions = voterApprovalWorkerConfigSyncOptions({
+        selectedDelegation: selectedActiveWorkerDelegation,
+        electionId: optionAElectionId,
+        approvedVoterNpub: normalizedInvitedNpub,
+      });
+      const workerConfigRequired = workerConfigSyncOptions !== null;
       setPendingParticipantSettingsByNpub((current) => {
         if (!current[normalizedInvitedNpub]) {
           return current;
@@ -6556,12 +6595,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         options?.statusTarget,
       );
       // Persisted whitelist state is synchronised before a worker can process this request.
-      if (workerConfigRequired) {
-        const synced = await syncActiveWorkerElectionConfig(optionAElectionId, {
-          // An approval must resend config even if an automatic sync was coalesced or deduped.
-          force: true,
-          approvedVoterNpub: normalizedInvitedNpub,
-        }).catch(() => false);
+      if (workerConfigSyncOptions) {
+        // An approval must resend config even if an automatic sync was coalesced or deduped.
+        const synced = await syncActiveWorkerElectionConfig(optionAElectionId, workerConfigSyncOptions).catch(() => false);
         if (!synced) {
           const skippedReason = lastWorkerConfigSyncSkipReasonRef.current;
           setInviteFeedbackStatus(
@@ -8840,6 +8876,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
               onConfigureWorker={openQuestionnaireProxy}
+              onWorkerDelegationChange={handleWorkerDelegationChange}
               initialQuestionnaireId={optionAElectionId}
               setupFocusTarget={setupFocusRequest.target}
               setupFocusSignal={setupFocusRequest.signal}
@@ -8877,6 +8914,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
               onConfigureWorker={openQuestionnaireProxy}
+              onWorkerDelegationChange={handleWorkerDelegationChange}
               initialQuestionnaireId={optionAElectionId}
               proxySetupSignal={proxySetupSignal}
               newRoundMode={newRoundMode}
@@ -8911,6 +8949,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onAddSession={startNewRound}
               canAddSession={canStartNewRound}
               questionnaireRelaysInput={questionnaireRelaysInput}
+              onWorkerDelegationChange={handleWorkerDelegationChange}
               onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />

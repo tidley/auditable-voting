@@ -165,6 +165,7 @@ type QuestionnaireCoordinatorPanelProps = {
   onQuestionnaireRelaysInputChange?: (value: string) => void;
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: (questionnaireId: string) => void;
+  onWorkerDelegationChange?: (delegation: WorkerDelegationCertificate | null) => void;
   initialQuestionnaireId?: string;
   proxySetupSignal?: number;
   setupFocusTarget?: QuestionnaireSetupFocusTarget;
@@ -1930,39 +1931,29 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (!electionId) {
       setActiveWorkerDelegation(null);
       setLastWorkerRevocationState(null);
+      props.onWorkerDelegationChange?.(null);
       return;
     }
     const stored = loadStoredWorkerDelegation(electionId);
-    setActiveWorkerDelegation(stored?.activeDelegation ?? null);
+    const storedDelegation = stored?.activeDelegation ?? null;
+    setActiveWorkerDelegation(storedDelegation);
     if (stored?.lastRevocation?.delegationId) {
       setLastWorkerRevocationState("revoked");
+      props.onWorkerDelegationChange?.(null);
     } else {
-      const expiresAtMs = Date.parse(stored?.activeDelegation?.expiresAt ?? "");
+      const expiresAtMs = Date.parse(storedDelegation?.expiresAt ?? "");
       if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
         setLastWorkerRevocationState("expired");
-      } else if (stored?.activeDelegation) {
+        props.onWorkerDelegationChange?.(null);
+      } else if (stored?.mode === "delegated_worker" && storedDelegation) {
         setLastWorkerRevocationState("active");
+        props.onWorkerDelegationChange?.(storedDelegation);
       } else {
         setLastWorkerRevocationState(null);
+        props.onWorkerDelegationChange?.(null);
       }
     }
-  }, [questionnaireId]);
-
-  useEffect(() => {
-    const electionId = questionnaireId.trim();
-    if (!electionId) {
-      return;
-    }
-    if (delegationMode === "browser_only" && !activeWorkerDelegation) {
-      upsertStoredWorkerDelegation({
-        electionId,
-        mode: "browser_only",
-        activeDelegation: null,
-        lastRevocation: null,
-        lastUpdatedAt: new Date().toISOString(),
-      });
-    }
-  }, [activeWorkerDelegation, delegationMode, questionnaireId]);
+  }, [props.onWorkerDelegationChange, questionnaireId]);
 
   useEffect(() => {
     const nsec = coordinatorNsec.trim();
@@ -4487,6 +4478,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         lastUpdatedAt: new Date().toISOString(),
       })?.activeDelegation ?? delegation;
       setActiveWorkerDelegation(storedDelegation);
+      props.onWorkerDelegationChange?.(storedDelegation);
       setLastWorkerRevocationState("pending_activation");
       let configResultSummary = "";
       const preparedWorkerConfig = (() => {
@@ -4737,6 +4729,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       });
       setLastWorkerRevocationState("revoked");
       setActiveWorkerDelegation(null);
+      props.onWorkerDelegationChange?.(null);
       upsertStoredWorkerDelegation({
         electionId,
         mode: "browser_only",

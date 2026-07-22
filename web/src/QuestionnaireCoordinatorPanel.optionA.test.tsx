@@ -76,7 +76,7 @@ import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerDelegationDm, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
 import { questionnaireDefinitionEventHash, questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
-import { createWorkerDelegationCertificate, publishWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
+import { createWorkerDelegationCertificate, loadStoredWorkerDelegation, publishWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -1664,11 +1664,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.getByText(/config unchanged; DM sync skipped/)).toBeTruthy();
   });
 
-  it("resends worker config for the active delegation without waiting on another relay read", async () => {
+  it("retains the active proxy across a Participants remount and builds config from the latest persisted whitelist", async () => {
     const coordinatorSecret = generateSecretKey();
     const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
     const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
     const workerNpub = nip19.npubEncode("4".repeat(64));
+    const approvedVoterNpub = nip19.npubEncode("6".repeat(64));
     const blindKey = await generateQuestionnaireBlindKeyPair();
     const questionnaireId = "q_proxy_config_resend";
     const definition = {
@@ -1768,7 +1769,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
         description: "",
         closeTimerEnabled: false,
         closeAfterMinutes: "60",
-        delegationMode: "delegated_worker",
+        delegationMode: "browser_only",
         delegatedWorkerNpub: workerNpub,
         questions: [{
           questionId: "q1",
@@ -1779,6 +1780,20 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       }),
     );
 
+    const onWorkerDelegationChange = vi.fn();
+    const participantsPanel = render(
+      <QuestionnaireCoordinatorPanel
+        view='responses'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        initialQuestionnaireId={questionnaireId}
+        onWorkerDelegationChange={onWorkerDelegationChange}
+      />,
+    );
+    await waitFor(() => expect(onWorkerDelegationChange).toHaveBeenCalledWith(activeDelegation));
+    expect(loadStoredWorkerDelegation(questionnaireId)?.activeDelegation?.delegationId).toBe(activeDelegation.delegationId);
+    participantsPanel.unmount();
+
     render(
       <QuestionnaireCoordinatorPanel
         view='build'
@@ -1786,9 +1801,11 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
         coordinatorNsec={coordinatorNsec}
         draftQuestionnaireId={questionnaireId}
         knownVoterCount={0}
+        onWorkerDelegationChange={onWorkerDelegationChange}
       />,
     );
 
+    fireEvent.change(await screen.findByLabelText("Mode"), { target: { value: "delegated_worker" } });
     const confirmButton = await screen.findByRole("button", { name: "Confirm configuration" });
     await waitFor(() => {
       expect(sharedNostrPoolMocks.querySync).toHaveBeenCalled();
@@ -1796,6 +1813,26 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     sharedNostrPoolMocks.querySync.mockClear();
     sharedNostrPoolMocks.querySync.mockImplementation(() => new Promise(() => undefined));
+    const stateBeforeApproval = loadCoordinatorState({ coordinatorNpub, electionId: questionnaireId });
+    expect(stateBeforeApproval).not.toBeNull();
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        ...stateBeforeApproval!,
+        whitelist: {
+          ...stateBeforeApproval!.whitelist,
+          [approvedVoterNpub]: {
+            electionId: questionnaireId,
+            invitedNpub: approvedVoterNpub,
+            addedAt: "2026-07-11T14:51:00.000Z",
+            credentialsPerVoter: 1,
+            ballotGroup: null,
+            claimState: "whitelisted",
+          },
+        },
+        lastUpdatedAt: "2026-07-11T14:51:00.000Z",
+      },
+    });
     fireEvent.click(confirmButton);
 
     await waitFor(() => {
@@ -1810,9 +1847,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     const configInput = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0];
     expect(sharedNostrPoolMocks.querySync).not.toHaveBeenCalled();
-    expect(configInput?.snapshot.expectedInviteeCount).toBe(1);
+    expect(loadStoredWorkerDelegation(questionnaireId)?.activeDelegation?.delegationId).toBe(activeDelegation.delegationId);
+    expect(configInput?.snapshot.expectedInviteeCount).toBe(2);
     expect(configInput?.snapshot).toMatchObject({
-      whitelistNpubs: [workerNpub],
+      whitelistNpubs: [workerNpub, approvedVoterNpub],
       proxyVoterNpubs: [workerNpub],
       ballotGroupsByNpub: { [workerNpub]: "north" },
     });

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.158] - 2026-07-22
+
+### Fixed
+- Preserved active audit proxy delegations when changing coordinator views instead of briefly resetting them to browser-only mode.
+- Shared the selected proxy delegation with voter approval so each approval forces a configuration update containing the newly admitted voter.
+- Reported unavailable proxy configuration explicitly instead of silently continuing as browser-only processing.
+
+### Changed
+- Bumped the web app package to `0.1.158`.
+
 ## [0.1.157] - 2026-07-22
 
 ### Fixed
