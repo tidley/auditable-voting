@@ -3860,6 +3860,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             definitionOverride: definitionToPublish,
             definitionEventIdOverride: result.eventId,
             definitionHashOverride: questionnaireDefinitionEventHash(result.event.content),
+            // Publishing establishes the worker's initial authoritative configuration.
+            forceConfigSync: true,
           });
         }
       } else {

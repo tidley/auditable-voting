@@ -1215,7 +1215,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(workerConfigInput?.snapshot.blindSigningPrivateKey?.keyId).not.toBe(staleBlindKey.keyId);
   });
 
-  it("creates and sends a blind-signing key when publishing a new delegated questionnaire", async () => {
+  it("delivers the generated blind-signing key in the initial worker config after publishing a delegated questionnaire", async () => {
     const coordinatorSecret = generateSecretKey();
     const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
     const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
@@ -1231,9 +1231,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     await waitFor(() => expect(publishButton.matches(":disabled")).toBe(false));
     fireEvent.click(publishButton);
 
-    await waitFor(() => expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalled());
+    await waitFor(() => expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledTimes(1));
     const definition = questionnaireNostrMocks.publishQuestionnaireDefinition.mock.calls[0]?.[0]?.definition;
     const snapshot = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.snapshot;
+    expect(vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.recipientNpub).toBe(workerNpub);
     expect(definition?.blindSigningPublicKey?.keyId).toBeTruthy();
     expect(snapshot?.blindSigningPrivateKey?.keyId).toBe(definition?.blindSigningPublicKey?.keyId);
     expect(loadCoordinatorState({

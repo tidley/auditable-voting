@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.156] - 2026-07-22
+
+### Fixed
+- Allowed same-origin and Blob workers in the browser CSP so proof-of-work mining can run in Chrome without being blocked.
+
+### Changed
+- Bumped the web app package to `0.1.156` and audit proxy package to `0.1.47`.
+
 ## [0.1.155] - 2026-07-22
 
 ### Fixed
