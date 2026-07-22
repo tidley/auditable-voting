@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.159] - 2026-07-22
+
+### Fixed
+- Recovered missing non-revoked audit proxy delegation state before reserving a configuration version, while preserving explicit revocations and newer delegations.
+- Prevented failed proxy configuration publications from leaving voter approval or private invite creation waiting indefinitely.
+- Serialised concurrent manual and automatic approval of the same voter.
+- Opened the enlarged QR automatically after creating a private invite and reported clipboard failures accurately.
+
+### Changed
+- Bumped the web app package to `0.1.159`.
+
 ## [0.1.158] - 2026-07-22
 
 ### Fixed

@@ -11,11 +11,14 @@ vi.mock("qrcode", () => ({
 }));
 
 import {
+  buildPrivateInviteCreationFeedback,
   hasAcknowledgedBlindIssuanceForNpub,
   InviteQrButton,
   InviteQrOverlay,
   ParticipantBallotGroupSelect,
   preserveParticipantBallotGroupCellWhileFocused,
+  runVoterApprovalLocked,
+  settleWorkerConfigSyncEntries,
   voterApprovalWorkerConfigSyncOptions,
 } from "./SimpleCoordinatorApp";
 import { storeBlindIssuanceAckRecord } from "./questionnaireOptionAStorage";
@@ -27,6 +30,56 @@ afterEach(() => {
 });
 
 describe("organiser participant feedback", () => {
+  it("settles rejected worker config waiters and continues with later elections", async () => {
+    const firstWaiter = vi.fn();
+    const secondWaiter = vi.fn();
+    const onFailure = vi.fn();
+    const secondSync = vi.fn(async () => true);
+
+    await settleWorkerConfigSyncEntries([
+      {
+        electionId: "q_rejected",
+        waiters: [firstWaiter],
+        sync: async () => { throw new Error("relay unavailable"); },
+      },
+      {
+        electionId: "q_next",
+        waiters: [secondWaiter],
+        sync: secondSync,
+      },
+    ], onFailure);
+
+    expect(firstWaiter).toHaveBeenCalledWith(false);
+    expect(secondWaiter).toHaveBeenCalledWith(true);
+    expect(secondSync).toHaveBeenCalledOnce();
+    expect(onFailure).toHaveBeenCalledWith("q_rejected", expect.any(Error));
+  });
+
+  it("builds the generated private invite preview and reports clipboard failure accurately", () => {
+    const inviteUrl = "https://example.test/vote?q=q_private&invite=secret";
+
+    expect(buildPrivateInviteCreationFeedback({
+      inviteUrl,
+      credentialsPerVoter: 1,
+      copied: false,
+    })).toEqual({
+      preview: {
+        value: inviteUrl,
+        label: "private invite link",
+        title: "Private invite link",
+      },
+      status: "Private link created and QR shown.",
+    });
+    expect(buildPrivateInviteCreationFeedback({
+      inviteUrl,
+      credentialsPerVoter: 2,
+      copied: true,
+    })).toMatchObject({
+      preview: { value: inviteUrl, title: "Proxy private invite link" },
+      status: "Proxy private link copied.",
+    });
+  });
+
   it("requires a forced worker config sync containing the newly approved voter for the current delegation", () => {
     expect(voterApprovalWorkerConfigSyncOptions({
       selectedDelegation: { electionId: "q_current" },
@@ -42,6 +95,26 @@ describe("organiser participant feedback", () => {
       electionId: "q_current",
       approvedVoterNpub: "npub1newlyapproved",
     })).toBeNull();
+  });
+
+  it("serialises approval by election and voter and releases the lock after failure", async () => {
+    const inFlight = new Set<string>();
+    let finishFirst!: () => void;
+    const firstAction = vi.fn(() => new Promise<void>((resolve) => {
+      finishFirst = resolve;
+    }));
+    const duplicateAction = vi.fn(async () => undefined);
+
+    const first = runVoterApprovalLocked(inFlight, "q_test:npub1voter", firstAction);
+    expect(await runVoterApprovalLocked(inFlight, "q_test:npub1voter", duplicateAction)).toBeUndefined();
+    expect(duplicateAction).not.toHaveBeenCalled();
+    finishFirst();
+    await first;
+
+    await expect(runVoterApprovalLocked(inFlight, "q_test:npub1voter", async () => {
+      throw new Error("approval failed");
+    })).rejects.toThrow("approval failed");
+    expect(await runVoterApprovalLocked(inFlight, "q_test:npub1voter", async () => "retried")).toBe("retried");
   });
 
   it("waits for every proxy credential acknowledgement before showing ballot received", () => {

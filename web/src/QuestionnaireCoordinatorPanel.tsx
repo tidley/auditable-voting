@@ -4535,10 +4535,20 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         const configVersion = nextWorkerElectionConfigVersion({
           electionId,
           delegationId: delegation.delegationId,
+          recoveryDelegation: delegation,
         });
+        if (configVersion === null) {
+          const storedDelegationId = loadStoredWorkerDelegation(electionId)?.activeDelegation?.delegationId ?? null;
+          console.error("[worker-config] panel reservation failed", {
+            electionId,
+            storedDelegationId,
+            selectedDelegationId: delegation.delegationId,
+          });
+          throw new Error("Audit proxy configuration was not sent because its version could not be reserved. Re-select or reconfigure the audit proxy, then try again.");
+        }
         const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot = {
           ...workerElectionConfigBase,
-          configVersion: configVersion ?? 1,
+          configVersion,
         };
         console.info("[worker-config] snapshot built", {
           electionId,

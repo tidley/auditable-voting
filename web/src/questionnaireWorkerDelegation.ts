@@ -118,6 +118,37 @@ export function loadStoredWorkerDelegation(electionId: string): StoredWorkerDele
   return readStore()[id] ?? null;
 }
 
+export function selectWorkerDelegationForConfig(input: {
+  electionId: string;
+  selectedDelegation: WorkerDelegationCertificate | null;
+  storedDelegation: StoredWorkerDelegation | null;
+  now?: Date;
+}) {
+  const electionId = input.electionId.trim();
+  const stored = input.storedDelegation;
+  const nowMs = (input.now ?? new Date()).getTime();
+  const isValid = (delegation: WorkerDelegationCertificate | null | undefined) => {
+    const expiresAtMs = Date.parse(delegation?.expiresAt ?? "");
+    return Boolean(
+      delegation
+      && delegation.electionId === electionId
+      && Number.isFinite(expiresAtMs)
+      && expiresAtMs > nowMs
+      && stored?.lastRevocation?.delegationId !== delegation.delegationId
+    );
+  };
+  const storedActive = stored?.mode === "delegated_worker" && isValid(stored.activeDelegation)
+    ? stored.activeDelegation
+    : null;
+  const selected = isValid(input.selectedDelegation) ? input.selectedDelegation : null;
+
+  // A differing stored certificate won the synchronous upsert and makes rendered state stale.
+  if (storedActive && selected?.delegationId !== storedActive.delegationId) {
+    return storedActive;
+  }
+  return selected ?? storedActive;
+}
+
 export function upsertStoredWorkerDelegation(input: StoredWorkerDelegation) {
   const electionId = input.electionId.trim();
   if (!electionId) {
@@ -125,6 +156,25 @@ export function upsertStoredWorkerDelegation(input: StoredWorkerDelegation) {
   }
   const store = readStore();
   const existing = store[electionId];
+  const preservesExistingActive = Boolean(
+    existing?.activeDelegation
+    && !input.activeDelegation
+    && input.lastRevocation?.delegationId !== existing.activeDelegation.delegationId,
+  );
+  if (preservesExistingActive && existing) {
+    const next = {
+      ...input,
+      electionId,
+      mode: existing.mode,
+      activeDelegation: existing.activeDelegation,
+      lastUpdatedAt: input.lastUpdatedAt || new Date().toISOString(),
+      lastConfigSyncKey: existing.lastConfigSyncKey,
+      lastConfigVersion: existing.lastConfigVersion,
+    };
+    store[electionId] = next;
+    writeStore(store);
+    return next;
+  }
   const existingIssuedAt = Date.parse(existing?.activeDelegation?.issuedAt ?? "");
   const incomingIssuedAt = Date.parse(input.activeDelegation?.issuedAt ?? "");
   if (
@@ -155,15 +205,49 @@ export function upsertStoredWorkerDelegation(input: StoredWorkerDelegation) {
   return next;
 }
 
-export function nextWorkerElectionConfigVersion(input: { electionId: string; delegationId: string }) {
+export function nextWorkerElectionConfigVersion(input: {
+  electionId: string;
+  delegationId: string;
+  recoveryDelegation?: WorkerDelegationCertificate | null;
+}) {
   const electionId = input.electionId.trim();
   const delegationId = input.delegationId.trim();
   if (!electionId || !delegationId) {
     return null;
   }
   const store = readStore();
-  const current = store[electionId];
+  let current = store[electionId];
+  const recoveryDelegation = input.recoveryDelegation;
+  if (
+    !current?.activeDelegation
+    && recoveryDelegation?.electionId === electionId
+    && recoveryDelegation.delegationId === delegationId
+    && current?.lastRevocation?.delegationId !== delegationId
+  ) {
+    const recoveryFloor = Math.max(Date.now(), current?.lastConfigVersion ?? 0);
+    current = {
+      electionId,
+      mode: "delegated_worker",
+      activeDelegation: recoveryDelegation,
+      lastRevocation: current?.lastRevocation ?? null,
+      lastUpdatedAt: new Date().toISOString(),
+      lastConfigVersion: recoveryFloor,
+    };
+    store[electionId] = current;
+    console.info("[worker-config] delegation storage recovered", {
+      electionId,
+      storedDelegationId: null,
+      selectedDelegationId: delegationId,
+      recoveryFloor,
+    });
+  }
   if (current?.activeDelegation?.delegationId !== delegationId) {
+    console.warn("[worker-config] version reservation failed", {
+      electionId,
+      storedDelegationId: current?.activeDelegation?.delegationId ?? null,
+      selectedDelegationId: delegationId,
+      explicitlyRevoked: current?.lastRevocation?.delegationId === delegationId,
+    });
     return null;
   }
   const nextVersion = Math.max(0, current.lastConfigVersion ?? 0) + 1;

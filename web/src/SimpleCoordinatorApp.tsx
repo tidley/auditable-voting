@@ -163,7 +163,7 @@ import {
   type WorkerElectionConfigSnapshot,
 } from "./questionnaireOptionABlindDm";
 import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
-import { loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, upsertStoredWorkerDelegation, type WorkerDelegationCertificate } from "./questionnaireWorkerDelegation";
+import { loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, selectWorkerDelegationForConfig, upsertStoredWorkerDelegation, type WorkerDelegationCertificate } from "./questionnaireWorkerDelegation";
 import { tryWriteClipboard } from "./clipboard";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -705,6 +705,41 @@ export function voterApprovalWorkerConfigSyncOptions(input: {
   return { force: true, approvedVoterNpub };
 }
 
+export async function runVoterApprovalLocked<T>(
+  inFlight: Set<string>,
+  key: string,
+  action: () => Promise<T>,
+): Promise<T | undefined> {
+  if (inFlight.has(key)) {
+    return undefined;
+  }
+  inFlight.add(key);
+  try {
+    return await action();
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+export async function settleWorkerConfigSyncEntries(entries: Array<{
+  electionId: string;
+  waiters: Array<(synced: boolean) => void>;
+  sync: () => Promise<boolean>;
+}>, onFailure: (electionId: string, error: unknown) => void) {
+  for (const entry of entries) {
+    let synced = false;
+    try {
+      synced = await entry.sync();
+    } catch (error) {
+      onFailure(entry.electionId, error);
+    } finally {
+      for (const resolve of entry.waiters) {
+        resolve(synced);
+      }
+    }
+  }
+}
+
 function pendingAuthorisationStatusIndicator(): StatusIndicatorView {
   return {
     className: "simple-vote-status-icon simple-status-indicator is-voter-pending",
@@ -1236,6 +1271,24 @@ type InviteQrButtonProps = {
 };
 
 type InviteQrPreview = Pick<InviteQrButtonProps, "value" | "label" | "title">;
+
+export function buildPrivateInviteCreationFeedback(input: {
+  inviteUrl: string;
+  credentialsPerVoter: 1 | 2;
+  copied: boolean;
+}) {
+  const isProxy = input.credentialsPerVoter === 2;
+  return {
+    preview: {
+      value: input.inviteUrl,
+      label: isProxy ? "proxy private invite link" : "private invite link",
+      title: isProxy ? "Proxy private invite link" : "Private invite link",
+    } satisfies InviteQrPreview,
+    status: input.copied
+      ? (isProxy ? "Proxy private link copied." : "Private link copied.")
+      : (isProxy ? "Proxy private link created and QR shown." : "Private link created and QR shown."),
+  };
+}
 
 const inviteQrSrcCache = new Map<string, string>();
 
@@ -1945,9 +1998,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!electionId) {
       return "";
     }
-    const delegation = selectedActiveWorkerDelegation?.electionId === electionId
-      ? selectedActiveWorkerDelegation
-      : null;
+    const delegation = selectWorkerDelegationForConfig({
+      electionId,
+      selectedDelegation: selectedActiveWorkerDelegation,
+      storedDelegation: loadStoredWorkerDelegation(electionId),
+    });
     if (!delegation) {
       return "";
     }
@@ -2840,7 +2895,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   );
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
-  const optionAAutoAuthorizeInFlightRef = useRef<Set<string>>(new Set());
+  const optionAAuthorizeInFlightRef = useRef<Set<string>>(new Set());
   const autoShareAssignmentAttemptRef = useRef('');
   const coordinatorControlServiceRef = useRef<CoordinatorControlService | null>(null);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
@@ -2937,7 +2992,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const lastSavedStateSignatureRef = useRef<string>("");
   const optionAQueueProcessingInFlightRef = useRef(false);
   const optionAQueueLifecycleRefreshAtRef = useRef(0);
-  const buildWorkerConfigRef = useRef<(questionnaireId: string) => { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] } | null>(() => null);
+  const buildWorkerConfigRef = useRef<(questionnaireId: string) => { snapshot: WorkerElectionConfigSnapshot; delegation: WorkerDelegationCertificate; workerNpub: string; relays: string[] } | null>(() => null);
   const workerConfigSyncRef = useRef({
     inFlight: false,
     scheduled: false,
@@ -5658,19 +5713,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, knownVoterInviteRefreshNonce, admittedVoterNpubKey]);
 
-  function buildActiveWorkerElectionConfigSnapshot(questionnaireId = optionAElectionId): { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] } | null {
+  function buildActiveWorkerElectionConfigSnapshot(questionnaireId = optionAElectionId): { snapshot: WorkerElectionConfigSnapshot; delegation: WorkerDelegationCertificate; workerNpub: string; relays: string[] } | null {
     const electionId = questionnaireId.trim();
     const coordinatorNpub = activeCoordinatorNpub.trim();
     if (!electionId || !coordinatorNpub) {
       return null;
     }
-    const delegation = selectedActiveWorkerDelegation?.electionId === electionId
-      ? selectedActiveWorkerDelegation
-      : null;
+    const delegation = selectWorkerDelegationForConfig({
+      electionId,
+      selectedDelegation: selectedActiveWorkerDelegation,
+      storedDelegation: loadStoredWorkerDelegation(electionId),
+    });
     if (!delegation) {
-      return null;
-    }
-    if (Date.parse(delegation.expiresAt) <= Date.now()) {
       return null;
     }
     const needsConfig = delegation.capabilities.includes("issue_blind_tokens")
@@ -5740,6 +5794,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const expectedInviteeCount = Math.max(0, optionAKnownVoterCount, whitelistNpubs.length) + unclaimedPrivateInviteCount;
     const cachedDefinitionReference = readCachedQuestionnaireDefinitionReference(electionId);
     return {
+      delegation,
       workerNpub: delegation.workerNpub,
       relays: delegation.controlRelays,
       snapshot: {
@@ -5815,24 +5870,34 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       while (queue.pendingElectionIds.size > 0) {
         const electionIds = [...queue.pendingElectionIds];
         queue.pendingElectionIds.clear();
-        for (const electionId of electionIds) {
+        const entries = electionIds.map((electionId) => {
           const waiters = queue.waiters.get(electionId) ?? [];
           queue.waiters.delete(electionId);
           const force = queue.forcedElectionIds.delete(electionId);
           const approvedVoterNpub = queue.approvedVoterByElectionId.get(electionId);
           queue.approvedVoterByElectionId.delete(electionId);
-          const config = buildWorkerConfigRef.current(electionId);
-          let synced = false;
-          if (config) {
-            synced = await publishWorkerElectionConfig(config, { force, approvedVoterNpub });
-          } else {
-            lastWorkerConfigSyncSkipReasonRef.current = "config_unavailable";
-            console.info("[worker-config] sync skipped", { electionId, reason: "config_unavailable", force });
-          }
-          for (const resolve of waiters) {
-            resolve(synced);
-          }
-        }
+          return {
+            electionId,
+            waiters,
+            sync: async () => {
+              const config = buildWorkerConfigRef.current(electionId);
+              if (config) {
+                return publishWorkerElectionConfig(config, { force, approvedVoterNpub });
+              }
+              lastWorkerConfigSyncSkipReasonRef.current = "config_unavailable";
+              console.info("[worker-config] sync skipped", { electionId, reason: "config_unavailable", force });
+              return false;
+            },
+          };
+        });
+        await settleWorkerConfigSyncEntries(entries, (electionId, error) => {
+          lastWorkerConfigSyncSkipReasonRef.current = "publication_failed";
+          console.error("[worker-config] sync failed", {
+            electionId,
+            reason: "publication_failed",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
       }
     } finally {
       queue.inFlight = false;
@@ -5845,7 +5910,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
   }
 
-  async function publishWorkerElectionConfig(config: { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] }, options?: { force?: boolean; approvedVoterNpub?: string }) {
+  async function publishWorkerElectionConfig(config: { snapshot: WorkerElectionConfigSnapshot; delegation: WorkerDelegationCertificate; workerNpub: string; relays: string[] }, options?: { force?: boolean; approvedVoterNpub?: string }) {
     if (config.snapshot.definitionReference && !config.snapshot.definitionReference.definitionEventId) {
       const publishedDefinition = await fetchLatestQuestionnaireDefinitionByCoordinator({
         questionnaireId: config.snapshot.electionId,
@@ -5866,13 +5931,17 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const configVersion = nextWorkerElectionConfigVersion({
       electionId: config.snapshot.electionId,
       delegationId: config.snapshot.delegationId,
+      recoveryDelegation: config.delegation,
     });
     if (configVersion === null) {
       lastWorkerConfigSyncSkipReasonRef.current = "config_version_unavailable";
-      console.info("[worker-config] sync skipped", {
+      const storedDelegationId = loadStoredWorkerDelegation(config.snapshot.electionId)?.activeDelegation?.delegationId ?? null;
+      console.error("[worker-config] sync skipped", {
         electionId: config.snapshot.electionId,
         reason: "config_version_unavailable",
         force: options?.force === true,
+        storedDelegationId,
+        selectedDelegationId: config.delegation.delegationId,
       });
       return false;
     }
@@ -5909,8 +5978,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         failures: failureCount,
       });
     }
-    lastWorkerConfigSyncSkipReasonRef.current = null;
-    return result.successes > 0;
+    const synced = result.successes > 0;
+    lastWorkerConfigSyncSkipReasonRef.current = synced ? null : "publication_failed";
+    return synced;
   }
 
   useEffect(() => {
@@ -6000,11 +6070,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         [inviteCodeHash]: inviteUrl,
       }));
       const copied = await tryWriteClipboard(inviteUrl);
+      const feedback = buildPrivateInviteCreationFeedback({ inviteUrl, credentialsPerVoter, copied });
+      setExpandedInviteQr(feedback.preview);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       if (copied) {
         showPrivateInviteCreateCopied();
+      } else {
+        setPrivateInviteCreateCopied(false);
       }
-      setAdmittedVoterStatus(credentialsPerVoter === 2 ? "Proxy private link copied." : "Private link copied.");
+      setAdmittedVoterStatus(feedback.status);
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not create private link.");
     }
@@ -6524,8 +6598,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       setInviteFeedbackStatus("Questionnaire is still loading. Try approving this voter again in a moment.", options?.statusTarget);
       return;
     }
-    try {
-      const normalizedInvitedNpub = invitedNpub.trim();
+    const normalizedInvitedNpub = invitedNpub.trim();
+    const approvalLockKey = `${optionAElectionId.trim()}:${normalizedInvitedNpub}`;
+    if (!normalizedInvitedNpub) {
+      return;
+    }
+    return runVoterApprovalLocked(optionAAuthorizeInFlightRef.current, approvalLockKey, async () => {
       console.info("[voter-approval] manual approval started", {
         electionId: optionAElectionId.trim(),
         hasVoterNpub: Boolean(normalizedInvitedNpub),
@@ -6613,13 +6691,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         electionId: optionAElectionId.trim(),
         workerConfigRequired,
       });
-    } catch (error) {
+    }).catch((error) => {
       console.error("[voter-approval] manual approval failed", {
         electionId: optionAElectionId.trim(),
         error: "approval_failed",
       });
       setInviteFeedbackStatus(error instanceof Error ? error.message : "Authorisation failed.", options?.statusTarget);
-    }
+    });
   }
 
   useEffect(() => {
@@ -6642,13 +6720,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         continue;
       }
       const key = `${optionAElectionId}:${invitedNpub}`;
-      if (optionAAutoAuthorizeInFlightRef.current.has(key)) {
+      if (optionAAuthorizeInFlightRef.current.has(key)) {
         continue;
       }
-      optionAAutoAuthorizeInFlightRef.current.add(key);
-      void authorizePendingRequester(invitedNpub, { statusTarget: "admitted" }).finally(() => {
-        optionAAutoAuthorizeInFlightRef.current.delete(key);
-      });
+      void authorizePendingRequester(invitedNpub, { statusTarget: "admitted" });
     }
   }, [optionACoordinatorRuntime, optionAElectionId, optionAPendingAuthorizations, visibleOptionAKnownVoters]);
 

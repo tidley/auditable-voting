@@ -40,6 +40,7 @@ vi.mock("./questionnaireWorkerDelegation", async () => {
   const actual = await vi.importActual<typeof import("./questionnaireWorkerDelegation")>("./questionnaireWorkerDelegation");
   return {
     ...actual,
+    nextWorkerElectionConfigVersion: vi.fn(actual.nextWorkerElectionConfigVersion),
     publishWorkerDelegationCertificate: vi.fn().mockResolvedValue({
       eventId: "mock-worker-delegation",
       successes: 1,
@@ -76,7 +77,7 @@ import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerDelegationDm, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
 import { questionnaireDefinitionEventHash, questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
-import { createWorkerDelegationCertificate, loadStoredWorkerDelegation, publishWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
+import { createWorkerDelegationCertificate, loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, publishWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -1662,6 +1663,31 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(publishWorkerDelegationCertificate).not.toHaveBeenCalled();
     expect(publishOptionAWorkerDelegationDm).not.toHaveBeenCalled();
     expect(screen.getByText(/config unchanged; DM sync skipped/)).toBeTruthy();
+
+    const changedState = loadCoordinatorState({ coordinatorNpub, electionId: questionnaireId });
+    expect(changedState).not.toBeNull();
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        ...changedState!,
+        whitelist: {
+          ...changedState!.whitelist,
+          npub1newvoter: {
+            electionId: questionnaireId,
+            invitedNpub: "npub1newvoter",
+            addedAt: "2026-07-21T12:01:00.000Z",
+            credentialsPerVoter: 1,
+            claimState: "claimed",
+          },
+        },
+      },
+    });
+    vi.mocked(nextWorkerElectionConfigVersion).mockReturnValueOnce(null);
+    cleanup();
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
+
+    expect(await screen.findByText(/configuration was not sent because its version could not be reserved/i)).toBeTruthy();
+    expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledTimes(1);
   });
 
   it("retains the active proxy across a Participants remount and builds config from the latest persisted whitelist", async () => {
