@@ -366,14 +366,14 @@ function readPrivateQuestionnaireInviteCodeFromUrl() {
   if (typeof window === "undefined") {
     return "";
   }
-  return (new URLSearchParams(window.location.search).get("invite_code") ?? "").trim();
+  return parseInviteFromUrl().inviteCode ?? "";
 }
 
 function readLinkedCoordinatorNpubFromUrl() {
   if (typeof window === "undefined") {
     return "";
   }
-  return parseInviteFromUrl(window.location.search).coordinatorNpub?.trim() ?? "";
+  return parseInviteFromUrl().coordinatorNpub?.trim() ?? "";
 }
 
 export function selectQuestionnaireVoterIdentity(input: {

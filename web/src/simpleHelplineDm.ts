@@ -159,7 +159,7 @@ export function contentIsQuestionnaireInviteLinkOnly(content: string) {
     if (role === "voter" && hasQuestionnaireId) {
       return true;
     }
-    return Boolean(parseInviteFromUrl(url.search).electionId && role === "voter");
+    return Boolean(parseInviteFromUrl(url).electionId && role === "voter");
   } catch {
     return false;
   }

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { consumeQuestionnaireInviteCodeFromUrl } from "./questionnaireInvite";
 
 vi.mock("./SimpleUiApp", () => ({
   default: (props: { activeTab?: string }) => <div data-testid='simple-voter-app'>Voter app {props.activeTab ?? "none"}</div>,
@@ -222,6 +223,7 @@ describe("SimpleAppShell invite-link login", () => {
     const handleNewIdentity = (event: Event) => newIdentityEvents.push(event);
     window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
     window.history.pushState(null, "", "/?role=voter&q=q_private&coordinator=npub1organiser&invite_code=private123&request_ballot=1");
+    consumeQuestionnaireInviteCodeFromUrl();
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     try {
@@ -236,6 +238,56 @@ describe("SimpleAppShell invite-link login", () => {
     } finally {
       window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
     }
+  });
+
+  it("consumes a fragment private invite before bootstrap without creating a public identity", async () => {
+    const newIdentityEvents: Event[] = [];
+    const handleNewIdentity = (event: Event) => newIdentityEvents.push(event);
+    window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
+    window.history.pushState(
+      { existing: "state" },
+      "",
+      "/?role=voter&q=q_private&coordinator=npub1organiser&request_ballot=1&keep=query#invite_code=private%20123&keep=fragment",
+    );
+    consumeQuestionnaireInviteCodeFromUrl();
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    try {
+      render(<SimpleAppShell />);
+      await act(async () => undefined);
+
+      expect(screen.getByTestId("simple-voter-app").textContent).toContain("vote");
+      expect(newIdentityEvents).toEqual([]);
+      expect(window.location.search).toContain("keep=query");
+      expect(window.location.search).not.toContain("invite_code");
+      expect(window.location.hash).toBe("#keep=fragment");
+      expect(window.history.state).toMatchObject({
+        existing: "state",
+        auditableVotingQuestionnaireInviteCode: {
+          code: "private 123",
+          electionId: "q_private",
+        },
+      });
+    } finally {
+      window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
+    }
+  });
+
+  it("clears private invite context when the gateway activates a non-voter role", async () => {
+    const user = userEvent.setup();
+    window.history.pushState(null, "", "/?login=1&role=voter&q=q_private#invite_code=secret&section");
+    consumeQuestionnaireInviteCodeFromUrl();
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+    await user.click(screen.getByRole("tab", { name: "Organiser" }));
+    await user.click(screen.getByRole("button", { name: "Continue as Organiser" }));
+
+    await waitFor(() => {
+      expect(window.location.search).toBe("?role=coordinator");
+    });
+    expect(window.location.hash).toBe("#section");
+    expect(window.history.state?.auditableVotingQuestionnaireInviteCode).toBeUndefined();
   });
 
   it("uses the voter identity label as the profile menu trigger", async () => {

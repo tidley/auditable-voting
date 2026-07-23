@@ -21,7 +21,10 @@
         var basePath = new URL(base, window.location.origin).pathname.replace(/\/+$/, "/");
 
         if (window.location.hostname.endsWith("github.io") && currentPath === basePath + "simple.html") {
-          window.location.replace(new URL(base, window.location.origin).toString());
+          var target = new URL(base, window.location.origin);
+          target.search = window.location.search;
+          target.hash = window.location.hash;
+          window.location.replace(target.toString());
         }
       })();
     </script>

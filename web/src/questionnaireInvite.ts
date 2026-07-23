@@ -3,6 +3,66 @@ import { normaliseQuestionnaireInviteCode } from "./questionnaireInviteCode";
 import { normaliseQuestionnaireBallotGroup } from "./questionnaireProtocol";
 
 const DEFAULT_INVITE_BASE_URL = "https://example.invalid/";
+const CONSUMED_INVITE_CODE_STATE_KEY = "auditableVotingQuestionnaireInviteCode";
+
+type ConsumedInviteCodeContext = {
+  code: string;
+  electionId: string;
+};
+
+function currentHistoryState() {
+  if (typeof window === "undefined" || !window.history.state || typeof window.history.state !== "object") {
+    return {} as Record<string, unknown>;
+  }
+  return window.history.state as Record<string, unknown>;
+}
+
+function readConsumedInviteCode(electionId: string | null) {
+  const value = currentHistoryState()[CONSUMED_INVITE_CODE_STATE_KEY] as Partial<ConsumedInviteCodeContext> | undefined;
+  if (!electionId || !value || typeof value !== "object" || value.electionId !== electionId) {
+    return "";
+  }
+  return normaliseQuestionnaireInviteCode(value.code);
+}
+
+function fragmentPartIsInviteCodeParameter(part: string) {
+  const separatorIndex = part.indexOf("=");
+  if (separatorIndex < 0) {
+    return false;
+  }
+  const key = [...new URLSearchParams(`${part.slice(0, separatorIndex)}=`).keys()][0];
+  return key === "invite_code" || key === "code";
+}
+
+function withoutInviteCodeFragment(hash: string) {
+  const fragment = hash.replace(/^#/, "");
+  if (!fragment) {
+    return "";
+  }
+  const retained = fragment.split("&").filter((part) => !fragmentPartIsInviteCodeParameter(part));
+  return retained.length > 0 ? `#${retained.join("&")}` : "";
+}
+
+function resolveUrlParts(source: string | URL | undefined, hash: string | undefined, useCurrentPage: boolean) {
+  const explicitUrl = source instanceof URL ? source : null;
+  return {
+    search: useCurrentPage && typeof window !== "undefined"
+      ? window.location.search
+      : explicitUrl?.search ?? (typeof source === "string" ? source : ""),
+    hash: useCurrentPage && typeof window !== "undefined" ? window.location.hash : explicitUrl?.hash ?? hash ?? "",
+    sourceUrl: useCurrentPage && typeof window !== "undefined" ? new URL(window.location.href) : explicitUrl,
+  };
+}
+
+function firstInviteCode(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const normalised = normaliseQuestionnaireInviteCode(value);
+    if (normalised) {
+      return normalised;
+    }
+  }
+  return "";
+}
 
 function parseCredentialsPerVoter(params: URLSearchParams): 2 | undefined {
   const value = (
@@ -13,7 +73,7 @@ function parseCredentialsPerVoter(params: URLSearchParams): 2 | undefined {
   return value === "2" ? 2 : undefined;
 }
 
-export function parseInviteFromUrl(search = typeof window !== "undefined" ? window.location.search : ""): {
+export function parseInviteFromUrl(source?: string | URL, hash?: string): {
   electionId: string | null;
   invite: ElectionInviteMessage | null;
   inviteCode: string | null;
@@ -21,7 +81,10 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
   credentialsPerVoter?: 2;
   ballotGroup?: string | null;
 } {
-  const params = new URLSearchParams(search);
+  const useCurrentPage = arguments.length === 0;
+  const urlParts = resolveUrlParts(source, hash, useCurrentPage);
+  const params = new URLSearchParams(urlParts.search);
+  const fragmentParams = new URLSearchParams(urlParts.hash.replace(/^#/, ""));
   const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
   const coordinatorNpub = (params.get("coordinator") ?? "").trim();
   const invitedNpub = (params.get("invited") ?? "").trim();
@@ -32,11 +95,19 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
     .map((entry) => entry.trim())
     .filter((entry, index, entries) => entry.length > 0 && entries.indexOf(entry) === index);
   const encodedInvite = (params.get("invite") ?? "").trim();
-  const inviteCode = normaliseQuestionnaireInviteCode(params.get("invite_code") ?? params.get("code"));
+  const inviteCode = firstInviteCode(
+    fragmentParams.get("invite_code"),
+    fragmentParams.get("code"),
+    params.get("invite_code"),
+    params.get("code"),
+    useCurrentPage ? readConsumedInviteCode(electionId) : "",
+  );
   if (!encodedInvite) {
     if (electionId && coordinatorNpub && invitedNpub) {
-      const voteUrl = typeof window !== "undefined"
-        ? new URL(`simple.html${search.startsWith("?") ? search : `?${search}`}`, window.location.href).toString()
+      const voteUrl = urlParts.sourceUrl
+        ? useCurrentPage
+          ? new URL(`simple.html${urlParts.search.startsWith("?") ? urlParts.search : `?${urlParts.search}`}${urlParts.hash}`, urlParts.sourceUrl).toString()
+          : urlParts.sourceUrl.toString()
         : "";
       return {
         electionId,
@@ -137,7 +208,9 @@ export function buildQuestionnaireInviteUrl(input: {
   }
   const inviteCode = normaliseQuestionnaireInviteCode(input.inviteCode);
   if (inviteCode) {
-    url.searchParams.set("invite_code", inviteCode);
+    const fragmentParams = new URLSearchParams();
+    fragmentParams.set("invite_code", inviteCode);
+    url.hash = fragmentParams.toString();
   }
   for (const relay of input.relays ?? []) {
     const trimmed = relay.trim();
@@ -164,8 +237,12 @@ export function shouldAutoRequestBallotFromUrl(search = typeof window !== "undef
   return value === "1" || value === "true" || value === "yes";
 }
 
-export function hasVoterInviteContextInUrl(search = typeof window !== "undefined" ? window.location.search : "") {
-  const params = new URLSearchParams(search);
+export function hasVoterInviteContextInUrl(source?: string | URL, hash?: string) {
+  const useCurrentPage = arguments.length === 0;
+  const urlParts = resolveUrlParts(source, hash, useCurrentPage);
+  const params = new URLSearchParams(urlParts.search);
+  const fragmentParams = new URLSearchParams(urlParts.hash.replace(/^#/, ""));
+  const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
   return Boolean(
     (params.get("q") ?? "").trim()
     || (params.get("election_id") ?? "").trim()
@@ -174,18 +251,20 @@ export function hasVoterInviteContextInUrl(search = typeof window !== "undefined
     || (params.get("invited") ?? "").trim()
     || (params.get("invite") ?? "").trim()
     || (params.get("invite_code") ?? "").trim()
-    || (params.get("code") ?? "").trim(),
+    || (params.get("code") ?? "").trim()
+    || (fragmentParams.get("invite_code") ?? "").trim()
+    || (fragmentParams.get("code") ?? "").trim()
+    || (useCurrentPage ? readConsumedInviteCode(electionId) : ""),
   );
 }
 
-export function isGeneralVoterInviteUrl(search = typeof window !== "undefined" ? window.location.search : "") {
-  const params = new URLSearchParams(search);
-  const hasQuestionnaireContext = Boolean(
-    (params.get("q") ?? "").trim()
-    || (params.get("election_id") ?? "").trim()
-    || (params.get("questionnaire") ?? "").trim(),
-  );
-  if (!hasQuestionnaireContext) {
+export function isGeneralVoterInviteUrl(source?: string | URL, hash?: string) {
+  const useCurrentPage = arguments.length === 0;
+  const urlParts = resolveUrlParts(source, hash, useCurrentPage);
+  const params = new URLSearchParams(urlParts.search);
+  const fragmentParams = new URLSearchParams(urlParts.hash.replace(/^#/, ""));
+  const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
+  if (!electionId) {
     return false;
   }
 
@@ -194,9 +273,51 @@ export function isGeneralVoterInviteUrl(search = typeof window !== "undefined" ?
     || (params.get("invite") ?? "").trim()
     || (params.get("invite_code") ?? "").trim()
     || (params.get("code") ?? "").trim()
+    || (fragmentParams.get("invite_code") ?? "").trim()
+    || (fragmentParams.get("code") ?? "").trim()
+    || (useCurrentPage ? readConsumedInviteCode(electionId) : "")
     || (params.get("credentials_per_voter") ?? "").trim()
     || (params.get("credentialsPerVoter") ?? "").trim(),
   );
 
   return !hasPrivateInviteContext;
+}
+
+export function consumeQuestionnaireInviteCodeFromUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const parsed = parseInviteFromUrl(window.location.search, window.location.hash);
+  const inviteCode = parsed.inviteCode;
+  const url = new URL(window.location.href);
+  const fragmentParts = url.hash.replace(/^#/, "").split("&");
+  const hasSecretInUrl = url.searchParams.has("invite_code")
+    || url.searchParams.has("code")
+    || fragmentParts.some(fragmentPartIsInviteCodeParameter);
+  if (!hasSecretInUrl) {
+    return readConsumedInviteCode(parsed.electionId) || null;
+  }
+  url.searchParams.delete("invite_code");
+  url.searchParams.delete("code");
+  url.hash = withoutInviteCodeFragment(url.hash);
+  const state = { ...currentHistoryState() };
+  delete state[CONSUMED_INVITE_CODE_STATE_KEY];
+  if (inviteCode && parsed.electionId) {
+    state[CONSUMED_INVITE_CODE_STATE_KEY] = { code: inviteCode, electionId: parsed.electionId } satisfies ConsumedInviteCodeContext;
+  }
+  window.history.replaceState(state, "", `${url.pathname}${url.search}${url.hash}`);
+  return inviteCode || null;
+}
+
+export function clearQuestionnaireInviteCodeUrlContext() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.delete("invite_code");
+  url.searchParams.delete("code");
+  url.hash = withoutInviteCodeFragment(url.hash);
+  const state = { ...currentHistoryState() };
+  delete state[CONSUMED_INVITE_CODE_STATE_KEY];
+  window.history.replaceState(state, "", `${url.pathname}${url.search}${url.hash}`);
 }

@@ -42,7 +42,8 @@ describe("questionnaire invite sharing", () => {
       coordinatorNpub,
       invitedNpub,
     });
-    const parsed = parseInviteFromUrl(new URL(url).search);
+    const parsedUrl = new URL(url);
+    const parsed = parseInviteFromUrl(parsedUrl.search, parsedUrl.hash);
 
     expect(url).toBe("https://vote.example/?login=1&role=voter&q=q_public_123&coordinator=npub1coordinator&invited=npub1invited");
     expect(parsed.invite?.coordinatorNpub).toBe(coordinatorNpub);
@@ -57,7 +58,8 @@ describe("questionnaire invite sharing", () => {
       invitedNpub: "npub1invited",
       credentialsPerVoter: 2,
     });
-    const parsed = parseInviteFromUrl(new URL(url).search);
+    const parsedUrl = new URL(url);
+    const parsed = parseInviteFromUrl(parsedUrl.search, parsedUrl.hash);
 
     expect(url).toBe("https://vote.example/?login=1&role=voter&q=q_public_123&coordinator=npub1coordinator&invited=npub1invited&credentials_per_voter=2");
     expect(parsed.invite?.credentialsPerVoter).toBe(2);
@@ -71,9 +73,11 @@ describe("questionnaire invite sharing", () => {
       login: false,
       autoRequestBallot: true,
     });
-    const parsed = parseInviteFromUrl(new URL(url).search);
+    const parsedUrl = new URL(url);
+    const parsed = parseInviteFromUrl(parsedUrl.search, parsedUrl.hash);
 
-    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&invite_code=abc123private&request_ballot=1");
+    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&request_ballot=1#invite_code=abc123private");
+    expect(parsedUrl.searchParams.has("invite_code")).toBe(false);
     expect(parsed.electionId).toBe("q_public_123");
     expect(parsed.invite).toBeNull();
     expect(parsed.inviteCode).toBe("abc123private");
@@ -90,9 +94,10 @@ describe("questionnaire invite sharing", () => {
       autoRequestBallot: true,
       credentialsPerVoter: 2,
     });
-    const parsed = parseInviteFromUrl(new URL(url).search);
+    const parsedUrl = new URL(url);
+    const parsed = parseInviteFromUrl(parsedUrl.search, parsedUrl.hash);
 
-    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&invite_code=abc123private&request_ballot=1&credentials_per_voter=2");
+    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&request_ballot=1&credentials_per_voter=2#invite_code=abc123private");
     expect(parsed.inviteCode).toBe("abc123private");
     expect(parsed.credentialsPerVoter).toBe(2);
   });
@@ -106,7 +111,8 @@ describe("questionnaire invite sharing", () => {
       autoRequestBallot: true,
       ballotGroup: "group_north",
     });
-    const parsed = parseInviteFromUrl(new URL(url).search);
+    const parsedUrl = new URL(url);
+    const parsed = parseInviteFromUrl(parsedUrl.search, parsedUrl.hash);
 
     expect(new URL(url).searchParams.get("ballot_group")).toBe("group_north");
     expect(parsed.inviteCode).toBe("abc123private");
@@ -120,6 +126,26 @@ describe("questionnaire invite sharing", () => {
     expect(parsed.invite).toBeNull();
     expect(parsed.inviteCode).toBe("abc123private");
     expect(parsed.coordinatorNpub).toBe("npub1coordinator");
+  });
+
+  it("parses encoded fragment aliases before conflicting query aliases", () => {
+    const parsed = parseInviteFromUrl(
+      "?q=q_public_123&invite_code=query-primary&code=query-legacy",
+      "#code=fragment%20legacy&invite_code=Fragment%2BPrimary",
+    );
+
+    expect(parsed.inviteCode).toBe("fragment+primary");
+  });
+
+  it("normalises aliases independently and skips empty higher-precedence values", () => {
+    expect(parseInviteFromUrl(
+      "?q=q_public_123&invite_code=query-primary&code=query-legacy",
+      "#invite_code=%20&code=Fragment%20Legacy",
+    ).inviteCode).toBe("fragment legacy");
+    expect(parseInviteFromUrl(
+      "?q=q_public_123&invite_code=%20&code=query-legacy",
+      "#invite_code=&code=%20",
+    ).inviteCode).toBe("query-legacy");
   });
 
   it("recognises legacy auto-request flags without enabling normal invite links", () => {

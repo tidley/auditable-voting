@@ -41,7 +41,7 @@ The client supports these admission paths:
 
 - **General invite:** a shareable link opens Vote, creates a fresh browser-local voter identity, and requests a ballot. The organiser may approve the resulting request.
 - **Personalised invite:** a link names an expected Nostr public key; the voter must use that identity.
-- **Private one-use invite:** a bearer URL contains a high-entropy code. The protocol transmits and records only a hash of the code, never the raw code in public records.
+- **Private one-use invite:** a bearer URL contains a high-entropy code. Newly generated links place it only in the URL fragment as `#invite_code=...`; the browser immediately scrubs `invite_code` and `code` from both query and fragment and retains the normalised code only in the current history entry. Previously issued query-string links remain accepted. The protocol transmits and records only a hash of the code, never the raw code in public records.
 - **Organiser roster:** a browser-local roster can be applied to a questionnaire as eligibility input without publishing the roster itself.
 
 Admission binds an eligibility identity to the right to receive a credential. It must not bind that identity to a submitted ballot.

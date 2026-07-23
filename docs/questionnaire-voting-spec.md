@@ -103,8 +103,9 @@ The coordinator may enable any combination of:
 ### Private one-use link
 
 - Possession automatically admits its first valid claimant.
-- Plaintext claim material exists only in the browser tab session.
-- It is displayed once, removed when claimed, and excluded from backups.
+- Newly generated links carry plaintext claim material only in the URL fragment as `#invite_code=...`; non-secret routing and ballot parameters remain in the query.
+- The browser accepts previously issued query-string links, but immediately removes `invite_code` and `code` from both query and fragment and retains the normalised value only in the current history entry for remount and reload recovery.
+- Plaintext claim material is not stored in local storage or backups and is cleared when the voter leaves or resets the invite context.
 - Public or persisted records contain only the minimum non-reusable commitment.
 
 ### Named Nostr identity

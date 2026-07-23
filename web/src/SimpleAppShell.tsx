@@ -20,7 +20,11 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDisplay";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
-import { hasVoterInviteContextInUrl, isGeneralVoterInviteUrl } from "./questionnaireInvite";
+import {
+  clearQuestionnaireInviteCodeUrlContext,
+  hasVoterInviteContextInUrl,
+  isGeneralVoterInviteUrl,
+} from "./questionnaireInvite";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 type AuditorPage = "gallery" | "relays";
@@ -152,6 +156,7 @@ function clearVoterInviteUrlContext() {
     return;
   }
 
+  clearQuestionnaireInviteCodeUrlContext();
   const url = new URL(window.location.href);
   for (const key of [
     "q",
@@ -168,7 +173,7 @@ function clearVoterInviteUrlContext() {
   ]) {
     url.searchParams.delete(key);
   }
-  window.history.replaceState({}, "", url.toString());
+  window.history.replaceState(window.history.state ?? {}, "", url.toString());
 }
 
 function getLandingPageUrl() {
@@ -332,6 +337,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   useEffect(() => {
     if (role !== "voter") {
+      clearVoterInviteUrlContext();
       setVoterMessagesUnread(false);
     }
     if (role !== "auditor") {
@@ -513,10 +519,17 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     }
   }
 
+  function activateRole(nextRole: SimpleRole) {
+    if (nextRole !== "voter") {
+      clearVoterInviteUrlContext();
+    }
+    setRole(nextRole);
+  }
+
   const handleRoleSelect = async (nextRole: SimpleRole) => {
     setAccountMenuOpen(false);
     await preserveLocalIdentityForRoleSwitch(nextRole);
-    setRole(nextRole);
+    activateRole(nextRole);
   };
 
   const handleVoterIdentityChange = useCallback((npub: string) => {
@@ -595,7 +608,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         if (typeof window !== "undefined") {
           window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
         }
-        setRole("voter");
+        activateRole("voter");
         setShowGateway(false);
       }
       return npub;
@@ -621,7 +634,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         if (typeof window !== "undefined") {
           window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
         }
-        setRole(gatewayRole);
+        activateRole(gatewayRole);
         setShowGateway(false);
       }
       return;
@@ -631,7 +644,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       if (typeof window !== "undefined") {
         window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
       }
-      setRole(gatewayRole);
+      activateRole(gatewayRole);
       setShowGateway(false);
     }
   }
@@ -658,7 +671,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
       }
     }
-    setRole(gatewayRole);
+    activateRole(gatewayRole);
     setShowGateway(false);
   }
 

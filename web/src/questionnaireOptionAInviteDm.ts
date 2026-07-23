@@ -270,7 +270,7 @@ function parseInviteDmContent(content: string, tags?: string[][]): ElectionInvit
   if (urlMatch) {
     try {
       const url = new URL(urlMatch[0]);
-      const { invite } = parseInviteFromUrl(url.search);
+      const { invite } = parseInviteFromUrl(url);
       if (invite) {
         return invite;
       }
