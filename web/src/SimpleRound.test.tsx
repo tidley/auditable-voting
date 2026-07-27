@@ -147,9 +147,9 @@ async function openInviteVotersFromReadiness(
   user: ReturnType<typeof userEvent.setup>,
   ui: ReturnType<typeof within>,
 ) {
-  const inviteButton = ui.getAllByRole("button", { name: /^Invite voters:/i })[0];
+  const inviteButton = ui.getAllByRole("button", { name: /^Results & Voters:/i })[0];
   if (!inviteButton) {
-    throw new Error("Invite voters readiness button not found");
+    throw new Error("Results & Voters readiness button not found");
   }
   await user.click(inviteButton);
 }

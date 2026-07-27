@@ -1809,13 +1809,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   useEffect(() => {
     const voterNpub = signedInNpub.trim();
     const inFlight = hasInFlightState();
-    if (!voterNpub || inviteContext.invite) {
+    if (!voterNpub || inviteContext.invite || !inFlight) {
       return;
     }
-    if (!inFlight && (pendingInvites.length > 0 || activeInvite)) {
-      return;
-    }
-
     const triggerRefresh = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
@@ -1830,6 +1826,24 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           const matchingInvites = invites.filter((invite) => invite.electionId === currentQuestionnaireId);
           if (matchingInvites.length > 0) {
             setPendingInvites((current) => mergeInvitesByKey(current, matchingInvites));
+            const refreshedInvite = matchingInvites.at(-1)!;
+            const currentInvite = runtime?.getSnapshot()?.inviteMessage ?? null;
+            const currentScopes = currentInvite
+              ? allowedScopesForRequiredScope(currentInvite.ballotGroup)
+              : null;
+            const refreshedScopes = allowedScopesForRequiredScope(refreshedInvite.ballotGroup);
+            if (runtime && JSON.stringify(currentScopes) !== JSON.stringify(refreshedScopes)) {
+              const refreshed = runtime.bootstrapWithLocalIdentity({
+                invitedNpub: refreshedInvite.invitedNpub,
+                coordinatorNpub: refreshedInvite.coordinatorNpub,
+                invite: refreshedInvite,
+                allowInviteRecipientMismatch: refreshedInvite.invitedNpub !== voterNpub,
+                allowInviteMissing: false,
+              });
+              setSignedInNpub(refreshed.invitedNpub);
+              setActiveInvite(refreshed.inviteMessage ?? refreshedInvite);
+              setRefreshNonce((value) => value + 1);
+            }
           }
           return;
         }
@@ -1988,7 +2002,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       || "";
     if (currentSnapshot?.invitedNpub === localVoterNpub) {
       const knownCoordinator = currentSnapshot.coordinatorNpub?.trim() ?? "";
-      if (knownCoordinator) {
+      const currentInviteScopes = currentSnapshot.inviteMessage
+        ? allowedScopesForRequiredScope(currentSnapshot.inviteMessage.ballotGroup)
+        : null;
+      const refreshedInviteScopes = fallbackInvite
+        ? allowedScopesForRequiredScope(fallbackInvite.ballotGroup)
+        : null;
+      const inviteScopeChanged = Boolean(fallbackInvite)
+        && JSON.stringify(currentInviteScopes) !== JSON.stringify(refreshedInviteScopes);
+      if (knownCoordinator && !inviteScopeChanged) {
         return currentSnapshot;
       }
       if (!fallbackInvite?.coordinatorNpub?.trim() && !inviteContext.coordinatorNpub?.trim() && !publicCoordinatorNpub) {
@@ -2020,6 +2042,25 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ?? (latestAnnouncedQuestionnaireId ? usableInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) : null)
         ?? (linkedContextElectionId ? null : usableInvites.at(-1))
         ?? null;
+      const currentInviteScopes = next.inviteMessage
+        ? allowedScopesForRequiredScope(next.inviteMessage.ballotGroup)
+        : null;
+      const preferredInviteScopes = preferredInvite
+        ? allowedScopesForRequiredScope(preferredInvite.ballotGroup)
+        : null;
+      if (preferredInvite && JSON.stringify(currentInviteScopes) !== JSON.stringify(preferredInviteScopes)) {
+        const refreshed = runtime.bootstrapWithLocalIdentity({
+          invitedNpub: preferredInvite.invitedNpub,
+          coordinatorNpub: preferredInvite.coordinatorNpub,
+          invite: preferredInvite,
+          allowInviteRecipientMismatch: preferredInvite.invitedNpub !== next.invitedNpub,
+          allowInviteMissing: false,
+        });
+        setSignedInNpub(refreshed.invitedNpub);
+        setActiveInvite(refreshed.inviteMessage ?? preferredInvite);
+        setRefreshNonce((value) => value + 1);
+        return;
+      }
       setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
         ? next.inviteMessage
         : preferredInvite);
@@ -2051,7 +2092,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         for (const invite of dmInvites) {
           publishInviteToMailbox(invite);
         }
-        return mergeInvitesByKey(dmInvites, fromMailbox);
+        return mergeInvitesByKey(fromMailbox, dmInvites);
       } catch {
         return mergeInvitesByKey(fromMailbox);
       }
@@ -2063,7 +2104,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       for (const invite of dmInvites) {
         publishInviteToMailbox(invite);
       }
-      return mergeInvitesByKey(dmInvites, fromMailbox);
+      return mergeInvitesByKey(fromMailbox, dmInvites);
     } catch {
       return mergeInvitesByKey(fromMailbox);
     }

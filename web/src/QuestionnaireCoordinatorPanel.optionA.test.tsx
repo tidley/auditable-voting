@@ -601,7 +601,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     expect(await screen.findByRole("combobox", { name: "Questionnaire" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Publish results" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Close + publish results" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close & Publish" })).toBeNull();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
     expect(screen.queryByText("Publish a questionnaire to inspect results.")).toBeNull();
   });
@@ -637,7 +637,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
         />,
       );
 
-      fireEvent.click(await screen.findByRole("button", { name: "Close + publish results" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Close & Publish" }));
 
       expect(confirmSpy).not.toHaveBeenCalled();
       expect(questionnaireNostrMocks.publishQuestionnaireState).not.toHaveBeenCalled();
@@ -676,7 +676,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       />,
     );
 
-    const closeButton = await screen.findByRole("button", { name: "Close + publish results" }) as HTMLButtonElement;
+    const closeButton = await screen.findByRole("button", { name: "Close & Publish" }) as HTMLButtonElement;
     expect(closeButton.disabled).toBe(false);
     fireEvent.click(closeButton);
     expect(await screen.findByRole("dialog", { name: "Close and publish?" })).toBeTruthy();
@@ -934,7 +934,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(titleInput.matches(":disabled")).toBe(true);
     expect(questionnaireIdInput.matches(":disabled")).toBe(true);
     expect((screen.getByDisplayValue("Proceed?") as HTMLInputElement).matches(":disabled")).toBe(true);
-    expect(screen.queryByRole("button", { name: "Publish questionnaire" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Go Live" })).toBeNull();
   });
 
   it("switches from a locked published questionnaire to the parent requested draft round", async () => {
@@ -1031,7 +1031,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     expect(titleInput.matches(":disabled")).toBe(false);
     expect(questionnaireIdInput.matches(":disabled")).toBe(false);
-    expect(screen.getByRole("button", { name: "Publish questionnaire" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Go Live" })).toBeTruthy();
   });
 
   it("keeps fresh local runtime summaries editable until a definition is published", async () => {
@@ -1094,7 +1094,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       complete: false,
     });
     expect(latestReadiness.find((item: { id: string }) => item.id === "answers")).toMatchObject({
-      label: "Questions complete",
+      label: "Questions Complete",
       group: "questionnaire",
       action: "setup_questions",
       stageLabel: "2",
@@ -1107,14 +1107,14 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       complete: false,
     });
     expect(latestReadiness.find((item: { id: string }) => item.id === "proxy")).toMatchObject({
-      label: "Set up proxy",
+      label: "Set Up Proxy",
       group: "session",
       optional: true,
       stageLabel: "3a",
       complete: false,
     });
     expect(latestReadiness.find((item: { id: string }) => item.id === "invite")).toMatchObject({
-      label: "Invite voters",
+      label: "Results & Voters",
       group: "session",
       action: "invite_voters",
       stageLabel: "4",
@@ -1196,7 +1196,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       />,
     );
 
-    const publishButton = await screen.findByRole("button", { name: "Publish questionnaire" }) as HTMLButtonElement;
+    const publishButton = await screen.findByRole("button", { name: "Go Live" }) as HTMLButtonElement;
     await waitFor(() => {
       expect(publishButton.matches(":disabled")).toBe(false);
     });
@@ -1228,7 +1228,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     fireEvent.change(screen.getByPlaceholderText("Question prompt"), { target: { value: "Proceed?" } });
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
     fireEvent.change(screen.getByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
-    const publishButton = screen.getByRole("button", { name: "Publish questionnaire" });
+    const publishButton = screen.getByRole("button", { name: "Go Live" });
     await waitFor(() => expect(publishButton.matches(":disabled")).toBe(false));
     fireEvent.click(publishButton);
 

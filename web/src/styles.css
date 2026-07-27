@@ -1101,7 +1101,7 @@ code {
 
 .simple-account-menu-about-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
   gap: 8px;
 }
@@ -1112,8 +1112,9 @@ code {
 }
 
 .simple-account-menu-version {
+  grid-column: 1 / -1;
   justify-self: end;
-  margin: 0 0 0 8px;
+  margin: 0;
   color: var(--simple-muted);
   font-size: 0.88rem;
   font-weight: 800;
@@ -1279,7 +1280,7 @@ code {
 
 .simple-account-menu-identity-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 12px;
 }
 
@@ -2020,6 +2021,13 @@ code {
 .simple-sidebar-readiness-button.is-action:focus-visible,
 .simple-sidebar-readiness-compact-button.is-action:hover,
 .simple-sidebar-readiness-compact-button.is-action:focus-visible {
+  border-color: rgba(45, 212, 191, 0.52);
+  background: #10202b;
+  color: var(--simple-text);
+}
+
+.simple-sidebar-readiness-button.is-active,
+.simple-sidebar-readiness-compact-button.is-active {
   border-color: rgba(45, 212, 191, 0.52);
   background: #10202b;
   color: var(--simple-text);

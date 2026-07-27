@@ -176,6 +176,8 @@ type QuestionnaireCoordinatorPanelProps = {
   onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
   onResponseDetailsChange?: (responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => void;
   onReadinessChange?: (items: QuestionnaireReadinessItem[]) => void;
+  onPrimaryPublishActionChange?: (action: QuestionnairePrimaryPublishAction) => void;
+  primaryPublishActionSignal?: number;
   onStatusChange?: (status: {
     questionnaireId: string;
     state: QuestionnaireStateValue | null;
@@ -195,6 +197,11 @@ export type QuestionnaireReadinessItem = {
   group?: "questionnaire" | "session";
   action?: "setup_basics" | "setup_questions" | "open_session" | "setup_proxy" | "invite_voters";
 };
+
+export type QuestionnairePrimaryPublishAction = {
+  label: string;
+  disabled: boolean;
+} | null;
 
 export type QuestionnaireSetupFocusTarget = "basics" | "questions";
 
@@ -3365,7 +3372,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "answers",
-      label: "Questions complete",
+      label: "Questions Complete",
       shortLabel: "Done",
       complete: questionsValid,
       stageLabel: "2",
@@ -3383,7 +3390,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "proxy",
-      label: "Set up proxy",
+      label: "Set Up Proxy",
       shortLabel: "Proxy",
       complete: Boolean(activeWorkerDelegation),
       optional: true,
@@ -3393,8 +3400,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "invite",
-      label: "Invite voters",
-      shortLabel: "Invite",
+      label: "Results & Voters",
+      shortLabel: "Voters",
       complete: knownVoterCount > 0,
       stageLabel: "4",
       group: "session",
@@ -3610,6 +3617,35 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     : !canPublishResults) || isCloseAndPublishInFlight;
   const hasIncompleteResponses = knownVoterCount > 0 && displayAcceptedCount < knownVoterCount;
   const canExportResults = currentState === "results_published" && Boolean(activePublishedDefinition);
+  const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
+  const primaryPublishAction: QuestionnairePrimaryPublishAction = !showNewRoundPublishOnly && !publishedDefinition
+    ? { label: "Go Live", disabled: !canPublishDraft }
+    : publishedDefinition && currentState !== "results_published"
+      ? {
+        label: currentState === "open" ? "Close & Publish" : "Publish results",
+        disabled: closeAndPublishButtonDisabled,
+      }
+      : null;
+  const showPrimaryPublishActionInToolbar = !props.onPrimaryPublishActionChange;
+  useEffect(() => {
+    props.onPrimaryPublishActionChange?.(primaryPublishAction);
+  }, [primaryPublishAction, props.onPrimaryPublishActionChange]);
+  const lastPrimaryPublishActionSignalRef = useRef(0);
+  useEffect(() => {
+    const signal = props.primaryPublishActionSignal ?? 0;
+    if (signal <= 0 || signal === lastPrimaryPublishActionSignalRef.current) {
+      return;
+    }
+    lastPrimaryPublishActionSignalRef.current = signal;
+    if (!primaryPublishAction || primaryPublishAction.disabled) {
+      return;
+    }
+    if (!publishedDefinition) {
+      void publishDefinition();
+      return;
+    }
+    requestCloseAndPublishResults();
+  }, [primaryPublishAction, props.primaryPublishActionSignal, publishedDefinition]);
   const publishStatusText = useMemo(() => {
     if (isCloseAndPublishInFlight) {
       return currentState === "open" ? "Closing and publishing..." : "Publishing...";
@@ -4821,7 +4857,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   }, [props.setupFocusSignal, props.setupFocusTarget, titleReady]);
 
   const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
-  const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
   const hasBuildSideActions = Boolean(
     (showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish)
       || !coordinatorNsec.trim()
@@ -4859,9 +4894,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             </UiButton>
           ) : !publishedDefinition ? (
             <>
-              <UiButton icon='uploadLine' className='simple-voter-primary' isDisabled={!canPublishDraft} onPress={() => void publishDefinition()}>
-                Publish questionnaire
-              </UiButton>
+              {showPrimaryPublishActionInToolbar ? (
+                <UiButton icon='uploadLine' className='simple-voter-primary' isDisabled={!canPublishDraft} onPress={() => void publishDefinition()}>
+                  Go Live
+                </UiButton>
+              ) : null}
               {props.onAfterPublishQuestionnaire && canPublishDraft && props.canApplyAdmissionsOnPublish ? (
                 <UiButton
                   icon='users'
@@ -4874,14 +4911,14 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             </>
           ) : (
             <>
-              {currentState !== "results_published" ? (
+              {showPrimaryPublishActionInToolbar && currentState !== "results_published" ? (
                 <UiButton
                   icon='uploadLine'
                   className='simple-voter-primary'
                   isDisabled={closeAndPublishButtonDisabled}
                   onPress={requestCloseAndPublishResults}
                 >
-                  {currentState === "open" ? "Close + publish results" : "Publish results"}
+                  {currentState === "open" ? "Close & Publish" : "Publish results"}
                 </UiButton>
               ) : null}
               {canExportResults ? (
@@ -4899,14 +4936,14 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           <>
             {publishedDefinition ? (
               <>
-                {currentState !== "results_published" ? (
+                {showPrimaryPublishActionInToolbar && currentState !== "results_published" ? (
                   <UiButton
                     icon='uploadLine'
                     className='simple-voter-primary'
                     isDisabled={closeAndPublishButtonDisabled}
                     onPress={requestCloseAndPublishResults}
                   >
-                    {currentState === "open" ? "Close + publish results" : "Publish results"}
+                    {currentState === "open" ? "Close & Publish" : "Publish results"}
                   </UiButton>
                 ) : null}
                 {canExportResults ? (
@@ -5096,6 +5133,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
               inputClassName='simple-voter-input simple-voter-input-inline'
               inputProps={{
                 id: 'questionnaire-id',
+                'aria-label': 'Questionnaire ID',
                 value: questionnaireId,
                 readOnly: isNewRoundMode,
                 onChange: (event) => setQuestionnaireId(event.target.value),
@@ -5392,6 +5430,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                 inputClassName='simple-voter-input'
                 inputProps={{
                   id: `question-prompt-${index}`,
+                  'aria-label': `Question ${index + 1} prompt`,
                   value: question.prompt,
                   placeholder: 'Question prompt',
                   onChange: (event) => {
@@ -5853,6 +5892,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                           textAreaClassName='simple-voter-input'
                           textAreaProps={{
                             id: 'delegated-worker-relays',
+                            'aria-label': 'Control relays',
                             rows: 2,
                             placeholder: DEFAULT_WORKER_CONTROL_RELAYS.join(", "),
                             value: delegatedWorkerControlRelays,

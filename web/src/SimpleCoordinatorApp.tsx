@@ -64,6 +64,7 @@ import QuestionnaireCoordinatorPanel, {
   QUESTIONNAIRE_ID_RESET_EVENT,
   readStoredQuestionnaireRelayInput,
   resetStoredQuestionnaireDraftId,
+  type QuestionnairePrimaryPublishAction,
   type QuestionnaireReadinessItem,
   type QuestionnaireSetupFocusTarget,
   writeStoredQuestionnaireRelayInput,
@@ -301,7 +302,7 @@ export function ParticipantBallotGroupSelect({
   id: string;
   value: string;
   restoreFocus?: boolean;
-  onCommit: (ballotGroup: string) => void;
+  onCommit: (ballotGroup: string) => void | Promise<void>;
   onFocusStateChange: (id: string | null) => void;
   onSavingChange?: (saving: boolean) => void;
   options: Array<{ value: string; label: string }>;
@@ -365,10 +366,11 @@ export function ParticipantBallotGroupSelect({
           onSavingChange?.(true);
           onFocusStateChange(id);
           scheduleAfterNextPaint(() => {
-            onCommit(nextValue);
-            scheduleAfterNextPaint(() => {
-              setSavingValue(null);
-              onSavingChange?.(false);
+            void Promise.resolve(onCommit(nextValue)).finally(() => {
+              scheduleAfterNextPaint(() => {
+                setSavingValue(null);
+                onSavingChange?.(false);
+              });
             });
           });
         }}
@@ -410,10 +412,10 @@ function scheduleAfterNextPaint(callback: () => void) {
 const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
 const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
-  { id: "answers", label: "Questions complete", shortLabel: "Done", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
+  { id: "answers", label: "Questions Complete", shortLabel: "Done", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
   { id: "publish", label: "Published", shortLabel: "Pub", complete: false, stageLabel: "3", group: "session" },
-  { id: "proxy", label: "Set up proxy", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session" },
-  { id: "invite", label: "Invite voters", shortLabel: "Invite", complete: false, stageLabel: "4", group: "session", action: "invite_voters" },
+  { id: "proxy", label: "Set Up Proxy", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session" },
+  { id: "invite", label: "Results & Voters", shortLabel: "Voters", complete: false, stageLabel: "4", group: "session", action: "invite_voters" },
 ];
 
 function questionnaireReadinessStatusLabel(item: QuestionnaireReadinessItem) {
@@ -431,13 +433,13 @@ function questionnaireReadinessSubtitle(item: QuestionnaireReadinessItem) {
     return item.complete ? "All questions added" : "Add questions";
   }
   if (item.id === "publish") {
-    return item.complete ? "Questionnaire is published" : "Publish questionnaire";
+    return item.complete ? "Questionnaire is published" : "Go Live";
   }
   if (item.id === "proxy") {
     return item.complete ? "Proxy is configured" : "Configure proxy";
   }
   if (item.id === "invite") {
-    return item.complete ? "Voters have access" : "Invite voters";
+    return item.complete ? "Voters have access" : "Results & Voters";
   }
   return questionnaireReadinessStatusLabel(item);
 }
@@ -1706,8 +1708,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [newRoundMode, setNewRoundMode] = useState(false);
   const [draftQuestionnaireId, setDraftQuestionnaireId] = useState("");
   const [questionnaireReadinessItems, setQuestionnaireReadinessItems] = useState<QuestionnaireReadinessItem[]>(DEFAULT_QUESTIONNAIRE_READINESS_ITEMS);
+  const [questionnairePrimaryPublishAction, setQuestionnairePrimaryPublishAction] = useState<QuestionnairePrimaryPublishAction>(null);
+  const [primaryPublishActionSignal, setPrimaryPublishActionSignal] = useState(0);
   const [proxySetupSignal, setProxySetupSignal] = useState(0);
+  const [activeReadinessItemId, setActiveReadinessItemId] = useState<QuestionnaireReadinessItem["id"] | null>("basics");
   const [pendingParticipantSettingsByNpub, setPendingParticipantSettingsByNpub] = useState<Record<string, PendingParticipantSettings>>({});
+  const [queuedParticipantApprovalByNpub, setQueuedParticipantApprovalByNpub] = useState<Record<string, true>>({});
   const [setupFocusRequest, setSetupFocusRequest] = useState<{ target: QuestionnaireSetupFocusTarget; signal: number }>({
     target: "basics",
     signal: 0,
@@ -2686,11 +2692,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             <div className='simple-admitted-voter-actions'>
               {state.pendingAuthorization ? (
                 <UiButton
-                  icon={actionLabel || groupSaving ? 'spinner' : 'check'}
-                  isDisabled={Boolean(actionLabel) || groupSaving}
-                  onPress={() => void runParticipantAction(participant.npub, "Approving...", () => authorizePendingRequester(participant.npub, { statusTarget: "admitted" }))}
+                  icon={actionLabel || groupSaving || queuedParticipantApprovalByNpub[participantKey] ? 'spinner' : 'check'}
+                  isDisabled={Boolean(actionLabel) || Boolean(queuedParticipantApprovalByNpub[participantKey])}
+                  onPress={() => requestParticipantApproval(participant.npub)}
                 >
-                  {actionLabel || (groupSaving ? "Saving group..." : "Approve")}
+                  {actionLabel || (queuedParticipantApprovalByNpub[participantKey] ? "Queued..." : groupSaving ? "Saving group..." : "Approve")}
                 </UiButton>
               ) : state.canUseCurrentInviteActions ? (
                 <UiButton
@@ -2764,6 +2770,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     participantGroupSavingByNpub,
     participantBallotGroupFocusId,
     authorizePendingRequester,
+    queuedParticipantApprovalByNpub,
+    requestParticipantApproval,
     copyPrivateInviteCodeLink,
     getPrivateInviteCodeLink,
     isCopyLabelActive,
@@ -5403,7 +5411,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         },
       }));
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      return;
+      return Promise.resolve();
     }
     if (participant.admittedEntry && coordinatorNpub && participantNpub) {
       const next = updateAdmittedVoter({
@@ -5422,7 +5430,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }
     }
     setKnownVoterInviteRefreshNonce((value) => value + 1);
-    void syncActiveWorkerElectionConfig().catch(() => false);
+    if (!buildActiveWorkerElectionConfigSnapshot()) {
+      return Promise.resolve();
+    }
+    return syncActiveWorkerElectionConfig().then((synced) => {
+      if (!synced) {
+        setAdmittedVoterStatus("Voter group changed locally, but the audit proxy configuration did not reach a relay. Try again before approving this voter.");
+      }
+    }).catch(() => {
+      setAdmittedVoterStatus("Voter group changed locally, but the audit proxy configuration could not be sent. Try again before approving this voter.");
+    });
   }
 
   function updateParticipantProxyVoter(participant: ParticipantDisplayRow, proxyVoter: boolean) {
@@ -6684,9 +6701,23 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               : `Authorised ${deriveActorDisplayId(invitedNpub)}, but the audit proxy configuration did not reach a relay. Keep the proxy online, then refresh and retry if the voter does not receive a ballot.`,
             options?.statusTarget,
           );
+          return;
         }
       }
-      await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
+      const authorisation = await optionACoordinatorRuntime.authorizeRequester(invitedNpub, { credentialsPerVoter, ballotGroup });
+      const needsScopedReplacementInvite = Boolean(ballotGroup) || authorisation.deferredVoterGroupMismatchCount > 0;
+      if (needsScopedReplacementInvite) {
+        const invite = await sendInviteToKnownVoter(normalizedInvitedNpub, {
+          statusTarget: options?.statusTarget,
+          syncWorkerConfig: false,
+        });
+        setInviteFeedbackStatus(
+          invite?.dmDelivered
+            ? `Authorised ${deriveActorDisplayId(invitedNpub)}. A group-specific ballot link was sent.`
+            : `Authorised ${deriveActorDisplayId(invitedNpub)}. Send them a fresh group-specific invite link.`,
+          options?.statusTarget,
+        );
+      }
       console.info("[voter-approval] manual approval finished", {
         electionId: optionAElectionId.trim(),
         workerConfigRequired,
@@ -6699,6 +6730,43 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       setInviteFeedbackStatus(error instanceof Error ? error.message : "Authorisation failed.", options?.statusTarget);
     });
   }
+
+  function requestParticipantApproval(npub: string) {
+    const participantNpub = npub.trim();
+    if (!participantNpub) {
+      return;
+    }
+    if (participantGroupSavingByNpub[participantNpub]) {
+      setQueuedParticipantApprovalByNpub((current) => ({ ...current, [participantNpub]: true }));
+      return;
+    }
+    void runParticipantAction(
+      participantNpub,
+      "Approving...",
+      () => authorizePendingRequester(participantNpub, { statusTarget: "admitted" }),
+    );
+  }
+
+  useEffect(() => {
+    for (const participantNpub of Object.keys(queuedParticipantApprovalByNpub)) {
+      if (participantGroupSavingByNpub[participantNpub]) {
+        continue;
+      }
+      setQueuedParticipantApprovalByNpub((current) => {
+        if (!current[participantNpub]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[participantNpub];
+        return next;
+      });
+      void runParticipantAction(
+        participantNpub,
+        "Approving...",
+        () => authorizePendingRequester(participantNpub, { statusTarget: "admitted" }),
+      );
+    }
+  }, [participantGroupSavingByNpub, queuedParticipantApprovalByNpub]);
 
   useEffect(() => {
     if (!optionACoordinatorRuntime || !optionAElectionId.trim() || optionAPendingAuthorizations.length === 0) {
@@ -7473,6 +7541,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 
   function selectTab(nextTab: CoordinatorTab) {
     setActiveTab(nextTab);
+    if (nextTab === "messages" || nextTab === "settings") {
+      setActiveReadinessItemId(null);
+    }
     if (isMobileCoordinatorViewport()) {
       setSidebarCollapsed(true);
     }
@@ -7547,6 +7618,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     };
     const setupTarget = item.action ? setupTargets[item.action] : undefined;
     if (setupTarget) {
+      setActiveReadinessItemId(item.id);
       selectTab("configure");
       setSetupFocusRequest((current) => ({
         target: setupTarget,
@@ -7555,10 +7627,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       return;
     }
     if (item.action === "open_session") {
+      setActiveReadinessItemId(item.id);
       selectTab("participants");
       return;
     }
     if (item.action === "setup_proxy") {
+      setActiveReadinessItemId(item.id);
       selectTab("proxy");
       setProxySetupSignal((current) => current + 1);
       return;
@@ -7566,6 +7640,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (item.action === "invite_voters") {
       openInviteVotersSection();
     }
+  }
+
+  function handleQuestionnairePrimaryPublishActionChange(nextAction: QuestionnairePrimaryPublishAction) {
+    setQuestionnairePrimaryPublishAction((currentAction) => (
+      currentAction?.label === nextAction?.label && currentAction?.disabled === nextAction?.disabled
+        ? currentAction
+        : nextAction
+    ));
   }
 
   const setQuestionnaireRelaysInput = useCallback((value: string) => {
@@ -8706,9 +8788,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const sessionReadinessItems = questionnaireReadinessItems.filter((item) => item.group !== "questionnaire");
 
   function renderReadinessRow(item: QuestionnaireReadinessItem, index: number) {
-    const isActive = item.id === "proxy" && activeTab === "proxy";
-    const className = `simple-sidebar-readiness-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${item.action ? " is-action" : ""}${isActive ? " is-active" : ""}`;
-    const label = `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
+    const isActive = activeReadinessItemId === item.id && (
+      (item.id === "proxy" && activeTab === "proxy")
+      || ((item.id === "basics" || item.id === "answers") && activeTab === "configure")
+      || (item.id === "publish" && (activeTab === "configure" || activeTab === "participants"))
+    );
+    const isPrimaryPublishAction = item.id === "publish" && questionnairePrimaryPublishAction;
+    const className = `simple-sidebar-readiness-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${(item.action || isPrimaryPublishAction) ? " is-action" : ""}${isActive ? " is-active" : ""}`;
+    const label = isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
     const content = (
       <>
         <span className='simple-sidebar-readiness-entry-main'>
@@ -8716,8 +8803,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             <UiIcon name={questionnaireReadinessEntryIcon(item)} />
           </span>
           <span className='simple-sidebar-readiness-copy'>
-            <span className='simple-sidebar-readiness-label'>{item.label}</span>
-            <span className='simple-sidebar-readiness-description'>{questionnaireReadinessSubtitle(item)}</span>
+            <span className='simple-sidebar-readiness-label'>{isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : item.label}</span>
+            <span className='simple-sidebar-readiness-description'>{isPrimaryPublishAction ? "Publish the questionnaire or its results" : questionnaireReadinessSubtitle(item)}</span>
           </span>
         </span>
         <span className='simple-sidebar-readiness-status'>
@@ -8726,14 +8813,17 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         </span>
       </>
     );
-    return item.action ? (
+    return item.action || isPrimaryPublishAction ? (
       <UiButton
         key={item.id}
         icon={false}
         className={className}
         aria-current={isActive ? "page" : undefined}
         aria-label={label}
-        onPress={() => handleReadinessAction(item)}
+        isDisabled={isPrimaryPublishAction ? questionnairePrimaryPublishAction.disabled : undefined}
+        onPress={() => isPrimaryPublishAction
+          ? (setActiveReadinessItemId(item.id), setPrimaryPublishActionSignal((current) => current + 1))
+          : handleReadinessAction(item)}
       >
         {content}
       </UiButton>
@@ -8750,19 +8840,27 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   }
 
   function renderCompactReadinessItem(item: QuestionnaireReadinessItem, index: number) {
-    const isActive = item.id === "proxy" && activeTab === "proxy";
-    const className = `simple-sidebar-readiness-compact-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${item.action ? " is-action" : ""}${item.group === "questionnaire" ? " is-questionnaire" : ""}${isActive ? " is-active" : ""}`;
-    const label = `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
+    const isActive = activeReadinessItemId === item.id && (
+      (item.id === "proxy" && activeTab === "proxy")
+      || ((item.id === "basics" || item.id === "answers") && activeTab === "configure")
+      || (item.id === "publish" && (activeTab === "configure" || activeTab === "participants"))
+    );
+    const isPrimaryPublishAction = item.id === "publish" && questionnairePrimaryPublishAction;
+    const className = `simple-sidebar-readiness-compact-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${(item.action || isPrimaryPublishAction) ? " is-action" : ""}${item.group === "questionnaire" ? " is-questionnaire" : ""}${isActive ? " is-active" : ""}`;
+    const label = isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
     const content = <QuestionnaireReadinessIcon item={item} index={index} />;
-    return item.action ? (
+    return item.action || isPrimaryPublishAction ? (
       <UiButton
         key={item.id}
         icon={false}
         className={className}
         aria-current={isActive ? "page" : undefined}
-        title={`${item.shortLabel}: ${questionnaireReadinessStatusLabel(item)}`}
+        title={isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : `${item.shortLabel}: ${questionnaireReadinessStatusLabel(item)}`}
         aria-label={label}
-        onPress={() => handleReadinessAction(item)}
+        isDisabled={isPrimaryPublishAction ? questionnairePrimaryPublishAction.disabled : undefined}
+        onPress={() => isPrimaryPublishAction
+          ? (setActiveReadinessItemId(item.id), setPrimaryPublishActionSignal((current) => current + 1))
+          : handleReadinessAction(item)}
       >
         {content}
       </UiButton>
@@ -8960,6 +9058,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               canApplyAdmissionsOnPublish={canApplyAdmissionsOnPublish}
               onAfterPublishQuestionnaire={handlePublishedQuestionnaire}
               onReadinessChange={handleQuestionnaireReadinessChange}
+              onPrimaryPublishActionChange={handleQuestionnairePrimaryPublishActionChange}
+              primaryPublishActionSignal={primaryPublishActionSignal}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>
@@ -8997,6 +9097,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               canApplyAdmissionsOnPublish={canApplyAdmissionsOnPublish}
               onAfterPublishQuestionnaire={handlePublishedQuestionnaire}
               onReadinessChange={handleQuestionnaireReadinessChange}
+              onPrimaryPublishActionChange={handleQuestionnairePrimaryPublishActionChange}
+              primaryPublishActionSignal={primaryPublishActionSignal}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>
@@ -9026,6 +9128,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               questionnaireRelaysInput={questionnaireRelaysInput}
               onWorkerDelegationChange={handleWorkerDelegationChange}
               onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
+              onPrimaryPublishActionChange={handleQuestionnairePrimaryPublishActionChange}
+              primaryPublishActionSignal={primaryPublishActionSignal}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
@@ -9093,6 +9197,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                      <UiTextField
 	                        inputClassName='simple-voter-input simple-voter-input-inline'
 	                        inputProps={{
+	                          'aria-label': 'Voter npub',
 	                          value: admittedVoterDraftNpub,
 	                          placeholder: 'npub1... or nostr:nprofile1...',
 	                          onChange: (event) => setAdmittedVoterDraftNpub(event.target.value),
@@ -9122,6 +9227,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                          inputClassName='simple-voter-input'
 	                          inputProps={{
 	                            id: 'known-voter-contact-search',
+	                            'aria-label': 'Search imported contacts',
 	                            value: knownVoterContactSearch,
 	                            onChange: (event) => setKnownVoterContactSearch(event.target.value),
 	                            placeholder: 'Search by name, NIP-05, or npub',

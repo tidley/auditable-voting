@@ -22,8 +22,7 @@ import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/audi
 const HELPLINE_DM_PUBLISH_MAX_WAIT_MS = 5000;
 const HELPLINE_DM_PUBLISH_STAGGER_MS = 250;
 const HELPLINE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
-const HELPLINE_DM_READ_RELAYS_MAX = 4;
-const HELPLINE_DM_LIVE_LIMIT = 50;
+const HELPLINE_DM_RETRY_DELAY_MS = 5_000;
 const HELPLINE_DM_SUBJECT = "Auditable Voting helpline";
 const HELPLINE_DM_SENT_CACHE_PREFIX = "auditableVoting.helpline.sent.v1:";
 const HELPLINE_DM_SENT_CACHE_LIMIT = 100;
@@ -52,8 +51,11 @@ function buildDmRelays(relays?: string[]) {
   return rankRelaysByBackoff(normalizeRelaysRust([...SIMPLE_DM_RELAYS, ...(relays ?? [])]));
 }
 
-function selectDmReadRelays(relays: string[], maxRelays = HELPLINE_DM_READ_RELAYS_MAX) {
-  return selectRelaysWithBackoff(normalizeRelaysRust(relays), maxRelays);
+export function selectHelplineDmReadRelays(relays: string[]) {
+  const normalizedRelays = normalizeRelaysRust(relays);
+  // Messages are written to every conversation relay. Read every healthy relay so a
+  // message is not hidden merely because it landed outside an arbitrary read subset.
+  return selectRelaysWithBackoff(normalizedRelays, normalizedRelays.length);
 }
 
 function decodeNsecSecretKey(nsec: string) {
@@ -102,14 +104,14 @@ async function resolveConversationDmRelays(
   relays?: string[],
 ) {
   if (!isNip65EnabledForSession()) {
-    return selectDmReadRelays(buildDmRelays(relays));
+    return selectHelplineDmReadRelays(buildDmRelays(relays));
   }
   const resolved = await resolveNip65ConversationRelays({
     senderNpub,
     recipientNpub,
     fallbackRelays: buildDmRelays(relays),
   });
-  return selectDmReadRelays(resolved);
+  return selectHelplineDmReadRelays(resolved);
 }
 
 async function publishOwnRelayHintsIfEnabled(input: Parameters<typeof publishOwnNip65RelayHints>[0]) {
@@ -307,6 +309,7 @@ type HelplineDmFeed = {
   historyLoaded: boolean;
   closed: boolean;
   subscription: { close: () => void } | null;
+  retryTimer: ReturnType<typeof globalThis.setTimeout> | null;
 };
 
 const helplineDmFeeds = new Map<string, HelplineDmFeed>();
@@ -363,7 +366,22 @@ function closeFeedIfUnused(feed: HelplineDmFeed) {
   }
   feed.closed = true;
   feed.subscription?.close();
+  if (feed.retryTimer) {
+    globalThis.clearTimeout(feed.retryTimer);
+    feed.retryTimer = null;
+  }
   helplineDmFeeds.delete(feed.key);
+}
+
+function retryHelplineDmFeed(feed: HelplineDmFeed) {
+  if (feed.closed || feed.retryTimer || feed.listeners.size === 0) {
+    return;
+  }
+  feed.retryTimer = globalThis.setTimeout(() => {
+    feed.retryTimer = null;
+    feed.started = false;
+    startHelplineDmFeed(feed);
+  }, HELPLINE_DM_RETRY_DELAY_MS);
 }
 
 async function fetchHelplineDmMessagesFromRelays(input: {
@@ -406,12 +424,12 @@ function startHelplineDmFeed(feed: HelplineDmFeed) {
     if (feed.closed) {
       return;
     }
-    const dmRelays = selectDmReadRelays(inboxRelays);
+    const dmRelays = selectHelplineDmReadRelays(inboxRelays);
     const pool = getSharedNostrPool();
     feed.subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
       "#p": [feed.actor.publicHex],
-      limit: Math.min(feed.limit, HELPLINE_DM_LIVE_LIMIT),
+      since: Math.floor(Date.now() / 1000),
     }, {
       onevent: (wrappedEvent) => {
         const message = parseHelplineMessageFromGiftWrap(wrappedEvent, feed.actor.secretKey, feed.actor.npub, {
@@ -426,6 +444,9 @@ function startHelplineDmFeed(feed: HelplineDmFeed) {
       },
       onclose: (reasons) => {
         recordRelayCloseReasons(reasons);
+        feed.subscription = null;
+        feed.started = false;
+        retryHelplineDmFeed(feed);
       },
     });
 
@@ -455,6 +476,8 @@ function startHelplineDmFeed(feed: HelplineDmFeed) {
   }).catch((error) => {
     if (!feed.closed && error instanceof Error) {
       publishFeedError(feed, error);
+      feed.started = false;
+      retryHelplineDmFeed(feed);
     }
   });
 }
@@ -557,7 +580,7 @@ export async function fetchHelplineDmMessages(input: {
 }) {
   const actor = decodeNsecSecretKey(input.actorNsec);
   const inboxRelays = await resolveRecipientInboxRelays(actor.npub, input.relays);
-  const dmRelays = selectDmReadRelays(inboxRelays);
+  const dmRelays = selectHelplineDmReadRelays(inboxRelays);
   const messages = await fetchHelplineDmMessagesFromRelays({
     actor,
     dmRelays,
@@ -601,6 +624,7 @@ export function subscribeHelplineDmMessages(input: {
       historyLoaded: false,
       closed: false,
       subscription: null,
+      retryTimer: null,
     };
     helplineDmFeeds.set(key, feed);
   }
@@ -628,6 +652,9 @@ export function resetHelplineDmMessageFeedsForTests() {
   for (const feed of helplineDmFeeds.values()) {
     feed.closed = true;
     feed.subscription?.close();
+    if (feed.retryTimer) {
+      globalThis.clearTimeout(feed.retryTimer);
+    }
   }
   helplineDmFeeds.clear();
 }

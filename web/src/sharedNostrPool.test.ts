@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const poolMocks = vi.hoisted(() => ({
-  options: null as null | { allowConnectingToRelay?: (relay: string) => boolean },
+  options: null as null | {
+    allowConnectingToRelay?: (relay: string) => boolean;
+    enablePing?: boolean;
+    enableReconnect?: boolean;
+  },
   webSocketImplementation: null as null | typeof WebSocket,
 }));
 
@@ -84,6 +88,11 @@ describe("sharedNostrPool", () => {
     resetRelayHealthForTests();
     resetSharedNostrPoolForTests();
     getSharedNostrPool();
+
+    expect(poolMocks.options).toMatchObject({
+      enablePing: true,
+      enableReconnect: false,
+    });
 
     expect(poolMocks.options?.allowConnectingToRelay?.(relay)).toBe(true);
 

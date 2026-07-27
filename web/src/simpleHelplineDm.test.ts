@@ -4,6 +4,7 @@ import {
   contentIsQuestionnaireInviteLinkOnly,
   fetchHelplineDmMessages,
   resetHelplineDmMessageFeedsForTests,
+  selectHelplineDmReadRelays,
   sendHelplineDmMessage,
   subscribeHelplineDmMessages,
   type HelplineDmMessage,
@@ -57,6 +58,16 @@ describe("simpleHelplineDm", () => {
       "Questionnaire: https://tidley.github.io/auditable-voting/?role=voter&q=q_public_123",
     )).toBe(false);
     expect(contentIsQuestionnaireInviteLinkOnly("https://example.test/?role=voter")).toBe(false);
+  });
+
+  it("reads every healthy relay that can contain a helpline message", () => {
+    expect(selectHelplineDmReadRelays([
+      "wss://relay-one.example",
+      "wss://relay-two.example",
+      "wss://relay-three.example",
+      "wss://relay-four.example",
+      "wss://relay-five.example",
+    ])).toHaveLength(5);
   });
 
   it("hides received questionnaire-link messages from the helpline inbox", async () => {
@@ -215,7 +226,9 @@ describe("simpleHelplineDm", () => {
       expect(querySync).toHaveBeenCalledTimes(1);
       expect(subscribeMany).toHaveBeenCalledTimes(1);
     });
-    expect(subscribeMany.mock.calls[0]?.[1]).not.toHaveProperty("since");
+    expect(subscribeMany.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      since: expect.any(Number),
+    }));
 
     const liveMessage = nip17.wrapEvent(
       peerSecret,

@@ -1697,7 +1697,8 @@ describe("questionnaireOptionARuntime", () => {
     await coordinator.processPendingBlindRequests();
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === otherNpub)).toBe(true);
 
-    await coordinator.authorizeRequester(otherNpub, { ballotGroup: "2" });
+    const approval = await coordinator.authorizeRequester(otherNpub, { ballotGroup: "2" });
+    expect(approval.deferredVoterGroupMismatchCount).toBe(1);
     expect(coordinator.getSnapshot()?.whitelist[otherNpub]?.ballotGroup).toBe("2");
     expect(voter.getSnapshot()?.credentialReady).toBe(false);
     const blindSigningPublicKey = await coordinator.ensureBlindSigningPublicKey();

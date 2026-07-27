@@ -27,7 +27,7 @@ Open Organiser
 Invite voters
       |
       v
-Publish questionnaire
+Go Live
       |
       v
 Share General invite
@@ -62,7 +62,7 @@ Use these pages:
 
 Open **Organiser**.
 
-If the same people will answer several questionnaires, open **Session** and use **Voters** to add their voter identities first. Use **Invite voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful. Every participant receives later sessions until removed. After the first questionnaire is published, use **Add session** under **Questionnaire** for follow-up questionnaires. It keeps the current setup, generates a fresh Questionnaire ID, shows one action, **Publish to invited voters**, and returns Organiser to **Session** after publishing. Voters still receive a fresh blind ballot credential for each questionnaire.
+If the same people will answer several questionnaires, open **Session** and use **Voters** to add their voter identities first. Use **Results & Voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful. Every participant receives later sessions until removed. After the first questionnaire is published, use **Add session** under **Questionnaire** for follow-up questionnaires. It keeps the current setup, generates a fresh Questionnaire ID, shows one action, **Publish to invited voters**, and returns Organiser to **Session** after publishing. Voters still receive a fresh blind ballot credential for each questionnaire.
 
 Fill in:
 
@@ -77,13 +77,13 @@ The **Readiness checklist** should show:
 - **At least one question added**
 - **Questions complete**
 
-Click **Publish questionnaire**. When the draft is ready and at least one voter is invited, **Publish + apply invited voters** appears so the invited-voter roster can be green-lit immediately for this questionnaire.
+Click **Go Live**. When the draft is ready and at least one voter is invited, **Publish + apply invited voters** appears so the invited-voter roster can be green-lit immediately for this questionnaire.
 
 When it appears, click **Open vote**.
 
 ## Step 2: Share the General invite
 
-In **Organiser**, open **Invite voters**.
+In **Organiser**, open **Results & Voters**.
 
 Use **General invite link**.
 
@@ -177,7 +177,7 @@ At this stage you can check:
 
 Observer can show live verified submissions before the final result is published.
 
-For the final published result, return to **Organiser** and click **Close + publish results** or **Publish results**.
+For the final published result, return to **Organiser** and click **Close & Publish** or **Publish results**.
 
 Open **Observer** again and click **Refresh**.
 

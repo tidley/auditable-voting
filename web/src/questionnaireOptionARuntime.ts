@@ -5084,14 +5084,33 @@ export class QuestionnaireOptionACoordinatorRuntime {
       ? { credentialsPerVoter: options.credentialsPerVoter, ballotGroup: options.ballotGroup }
       : undefined);
     const pendingForVoter = [...(this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub] ?? [])];
-    for (const request of pendingForVoter) {
+    const compatiblePendingRequests = pendingForVoter.filter((request) => {
+      const configuredBallotGroup = this.configuredBallotGroupForRequest(this.state, request);
+      if (configuredBallotGroup === undefined) {
+        return true;
+      }
+      const expectedScopes = allowedScopesForRequiredScope(configuredBallotGroup);
+      const requestedScopes = normaliseQuestionnaireAllowedScopes(
+        request.ballotScope?.allowedScopes,
+        request.ballotScope?.ballotGroup,
+      );
+      return JSON.stringify(expectedScopes) === JSON.stringify(requestedScopes);
+    });
+    for (const request of compatiblePendingRequests) {
       enqueueBlindRequest(request);
+    }
+    if (compatiblePendingRequests.length !== pendingForVoter.length) {
+      optionAFlowLog("coordinator", "blind_request_deferred_voter_group_mismatch", {
+        electionId: this.electionId,
+        invitedNpub: normalizedInvitedNpub || invitedNpub,
+        deferredRequestCount: pendingForVoter.length - compatiblePendingRequests.length,
+      });
     }
     delete this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub];
     delete this.pendingParticipantStatusesByNpub[normalizedInvitedNpub || invitedNpub];
     await this.processPendingBlindRequests();
     const delivered = await this.publishPendingBlindIssuancesToDm({
-      requestIds: pendingForVoter.map((request) => request.requestId),
+      requestIds: compatiblePendingRequests.map((request) => request.requestId),
       minRetryMs: 0,
     });
     optionAFlowLog("coordinator", "authorize_requester_processed", {
@@ -5100,7 +5119,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
       pendingRequestCount: pendingForVoter.length,
       deliveredIssuances: delivered,
     });
-    return this.state;
+    return {
+      state: this.state,
+      deferredVoterGroupMismatchCount: pendingForVoter.length - compatiblePendingRequests.length,
+    };
   }
 
   async sendInvite(invitedNpub: string, meta: { title: string; description: string; voteUrl: string }) {

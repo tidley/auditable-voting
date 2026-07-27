@@ -177,7 +177,9 @@ export function getSharedNostrPool() {
     configureSafeWebSocketImplementation();
     sharedNostrPool = new SimplePool({
       enablePing: true,
-      enableReconnect: true,
+      // The relay backoff gate owns retries. Letting the pool reconnect itself
+      // bypasses that gate and causes browser connection-error storms.
+      enableReconnect: false,
     });
     sharedNostrPool.allowConnectingToRelay = (relay) => {
       const relayUrl = normalizeRelayUrl(relay);

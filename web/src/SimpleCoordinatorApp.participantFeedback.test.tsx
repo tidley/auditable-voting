@@ -254,6 +254,9 @@ describe("organiser participant feedback", () => {
     expect(onCommit).toHaveBeenCalledWith("group_north");
     expect(onSavingChange).not.toHaveBeenCalledWith(false);
 
+    await act(async () => {
+      await Promise.resolve();
+    });
     act(() => frames.shift()?.(0));
     expect(onSavingChange).toHaveBeenLastCalledWith(false);
   });
