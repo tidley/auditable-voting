@@ -892,19 +892,13 @@ async function fetchRecipientNip17Relays(input: {
 }
 
 async function resolveRecipientPublishRelays(recipientHex: string, fallbackRelays: string[]) {
-  const recipientRelays = await fetchRecipientNip17Relays({
-    recipientHex,
-    discoveryRelays: selectHintRelays(fallbackRelays),
-  });
-  return selectPublishRelays(mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays));
+  void recipientHex;
+  return selectPublishRelays(fallbackRelays);
 }
 
 async function resolveRecipientReadRelayCandidates(recipientHex: string, fallbackRelays: string[]) {
-  const recipientRelays = await fetchRecipientNip17Relays({
-    recipientHex,
-    discoveryRelays: selectHintRelays(fallbackRelays),
-  });
-  return mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays);
+  void recipientHex;
+  return fallbackRelays;
 }
 
 async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: string[]) {

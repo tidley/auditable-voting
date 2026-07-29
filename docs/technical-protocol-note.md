@@ -258,7 +258,7 @@ The present web client is built with:
 - **linked invite login and no-service share actions** that open the public questionnaire without scanning old encrypted invite DMs, with roster-free public questionnaire discovery, recent bounded signer DM reads for manual invite checks, and credential-result polling
 - **Android signer routing** that prefers Amber through NIP-46 when available, keeping signer-backed questionnaire DM operations on one signer identity
 - **gateway Nostr Connect helpers** that present login controls in order (`Signer`/`nsec`, then `NOS2X-FOX`/`Amber`, then a single login action), can generate/copy a `nostrconnect://` URL, show it as a QR code, and expose an Amber-compatible `bunker://` (`nsecbunker`) copy path
-- **blind DM relay targeting** so blind request, issuance, and recovery DMs resolve recipient `kind:10050` relay-list hints before the smaller static fallback set; public submission decisions are the normal acceptance signal for protocol-v2 questionnaire responses
+- **blind DM relay targeting** so blind request, issuance, and recovery DMs use the configured private-DM relay set directly, without NIP-65 recipient discovery; public submission decisions are the normal acceptance signal for protocol-v2 questionnaire responses
 - **strict DM delivery confirmation** so blind-request and ballot-submission flows only mark "sent" after at least one relay confirms acceptance, avoiding silent transport failure states
 - **clearer voter ballot progress** that labels the per-questionnaire voting identity separately from the signer account and shows request, credential, and response state
 - **safer voter tab switching** so `Vote` remains available for browsing current and older invited questionnaires and background invite refresh does not force the UI away from Join/Settings
@@ -581,7 +581,7 @@ Benefits:
 - portable client architecture
 - no single relay is supposed to be the whole truth
 
-In this repo, relay selection can optionally use **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe.
+In this repo, non-blind relay selection can optionally use **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe. Blind request, issuance, and recovery traffic does not use those hints.
 
 That path is currently **disabled by default** in the UI, because a tighter curated relay set has been more reliable in practice than always expanding through public relay hints.
 

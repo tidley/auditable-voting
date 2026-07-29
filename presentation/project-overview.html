@@ -582,7 +582,7 @@
           <li>Voter questionnaire submissions now spend RSABSSA blind-signed credentials from a fresh ephemeral response npub; new questionnaires sign credential allowed scopes, and delegated issuers privately plan and bundle a proxy voter's second independent credential with the same scopes</li>
           <li>Voter mailbox reads now key by `request_id` with immutable per-request mailbox bindings, plus read/backfill mailbox consistency diagnostics</li>
           <li>Backup/restore now uses encrypted full-state namespace snapshots for questionnaire definitions, drafts, invites, responses, relay/proxy settings, and actor state</li>
-          <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>
+          <li>Optional NIP-65 inbox/outbox hints for non-blind relay discovery; blind credential DMs use the configured private relay set directly</li>
           <li>Relay diversity instead of one central database</li>
           <li>Portable identities and signed announcements</li>
         </ul>

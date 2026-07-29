@@ -2027,6 +2027,7 @@ async fn main() -> Result<()> {
 
     let mut heartbeat_task = spawn_heartbeat_task(runtime.clone());
     let mut control_task = spawn_control_task(runtime.clone());
+    let mut control_backfill_task = spawn_control_backfill_task(runtime.clone());
     let mut control_blind_request_task =
         spawn_control_blind_request_task(runtime.clone(), control_blind_request_receiver);
     let mut public_task = spawn_public_task(runtime.clone());
@@ -2041,6 +2042,10 @@ async fn main() -> Result<()> {
             result = &mut control_task => {
                 log_task_exit("control plane", result);
                 control_task = spawn_control_task(runtime.clone());
+            },
+            result = &mut control_backfill_task => {
+                log_task_exit("control plane backfill", result);
+                control_backfill_task = spawn_control_backfill_task(runtime.clone());
             },
             result = &mut control_blind_request_task => {
                 log_task_exit("control blind request queue", result);
@@ -2082,6 +2087,18 @@ fn spawn_control_task(runtime: WorkerRuntime) -> JoinHandle<()> {
                     warn!("control plane subscription failed: {error}");
                     sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
                 }
+            }
+        }
+    })
+}
+
+fn spawn_control_backfill_task(runtime: WorkerRuntime) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = interval(Duration::from_secs(runtime.config.poll_seconds));
+        loop {
+            ticker.tick().await;
+            if let Err(error) = runtime.poll_control_plane_events().await {
+                warn!("control DM backfill failed: {error}");
             }
         }
     })
@@ -2920,6 +2937,34 @@ impl WorkerRuntime {
                 _ => {}
             }
         }
+    }
+
+    async fn poll_control_plane_events(&self) -> Result<()> {
+        let filter = Filter::new()
+            .kind(Kind::GiftWrap)
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::P),
+                self.worker_pubkey.to_hex(),
+            )
+            .since(fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS))
+            .limit(500);
+        let relays = self.effective_worker_private_relays().await;
+        self.ensure_relays_connected(&relays).await;
+        let events = self
+            .client
+            .fetch_events_from(
+                relays,
+                filter,
+                Duration::from_secs(WORKER_RELAY_CONNECT_TIMEOUT_SECS),
+            )
+            .await
+            .context("failed to backfill control DMs")?;
+        for event in events.iter() {
+            if let Err(error) = self.process_control_plane_event(event).await {
+                debug!("control DM backfill skipped event {}: {error}", event.id);
+            }
+        }
+        Ok(())
     }
 
     async fn process_control_plane_event(&self, event: &Event) -> Result<()> {

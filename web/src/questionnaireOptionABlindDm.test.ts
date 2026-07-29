@@ -371,7 +371,7 @@ describe("questionnaireOptionABlindDm", () => {
     expect(parseOptionAParticipantStatusDmContent(content)).toBeNull();
   });
 
-  it("mixes recipient NIP-17 relay hints with fallback relays for delivery", async () => {
+  it("uses configured relays for delivery without recipient relay hints", async () => {
     querySync.mockResolvedValue([{
       kind: 10050,
       created_at: 10,
@@ -407,10 +407,10 @@ describe("questionnaireOptionABlindDm", () => {
     });
 
     const relays = publishToRelaysStaggered.mock.calls[0]?.[1] as string[];
-    expect(relays.slice(0, 3)).toEqual([
-      "wss://recipient.one",
-      "wss://recipient.two",
+    expect(relays).toEqual([
       "wss://vm-1734.lnvps.cloud/",
+      "wss://relay.nostr.net",
+      "wss://nos.lol",
     ]);
     expect(relays).not.toContain("wss://relay.nostr.info");
   });
@@ -673,7 +673,7 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedIssuances[0]?.definition).toEqual(definition);
   });
 
-  it("falls back to broader relay reads when the primary issuance scan is empty", async () => {
+  it("does not use recipient relay hints when the configured issuance scan is empty", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);
     const recipientNpub = nip19.npubEncode(recipientHex);
@@ -713,12 +713,11 @@ describe("questionnaireOptionABlindDm", () => {
       limit: 20,
     });
 
-    expect(fetchedIssuances).toHaveLength(1);
-    expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_fallback");
-    expect(querySync).toHaveBeenCalledTimes(2);
+    expect(fetchedIssuances).toHaveLength(0);
+    expect(querySync).toHaveBeenCalledTimes(1);
   });
 
-  it("checks fallback relays when primary relays contain a different issuance", async () => {
+  it("does not use recipient relay hints when configured relays contain another issuance", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);
     const recipientNsec = nip19.nsecEncode(recipientSecret);
@@ -755,8 +754,8 @@ describe("questionnaireOptionABlindDm", () => {
       limit: 20,
     });
 
-    expect(fetchedIssuances.some((issuance) => issuance.issuanceId === "issuance_target")).toBe(true);
-    expect(querySync).toHaveBeenCalledTimes(2);
+    expect(fetchedIssuances.some((issuance) => issuance.issuanceId === "issuance_target")).toBe(false);
+    expect(querySync).toHaveBeenCalledTimes(1);
   });
 
   it("prefers NIP-17 relays that accept p-tag gift-wrap reads", async () => {

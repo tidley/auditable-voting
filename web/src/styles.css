@@ -6156,6 +6156,10 @@ code {
   background: rgba(45, 212, 191, 0.025);
 }
 
+.simple-admitted-private-invite-row .simple-admitted-voter-status.simple-status-indicator.is-voter-whitelisted {
+  color: #fff;
+}
+
 .simple-admitted-voter-cell {
   min-width: 0;
   padding: 10px;

@@ -3286,10 +3286,10 @@ export class QuestionnaireOptionAVoterRuntime {
       const scope = usesScopedBlindCredentials ? withCredentialIndex(ballotGroupScope(activeBallotGroup), credentialIndex) : null;
       const scopeKey = ballotScopeKey(scope);
       const issuance = usesScopedBlindCredentials
-        ? this.state.blindIssuances?.[scopeKey] ?? (credentialIndex === 1 ? this.state.blindIssuance : null)
+        ? this.state.blindIssuances?.[scopeKey] ?? null
         : this.state.blindIssuance;
       const tokenSecret = usesScopedBlindCredentials
-        ? this.state.blindTokenSecrets?.[scopeKey] ?? (credentialIndex === 1 ? this.state.blindTokenSecret : null)
+        ? this.state.blindTokenSecrets?.[scopeKey] ?? null
         : this.state.blindTokenSecret;
       if (!issuance || !tokenSecret) {
         throw new OptionARuntimeError("issuance_failed", "No issued credential is available.");
@@ -3404,7 +3404,7 @@ export class QuestionnaireOptionAVoterRuntime {
       const scope = usesScopedBlindCredentials ? withCredentialIndex(ballotGroupScope(activeBallotGroup), credentialIndex) : null;
       const scopeKey = ballotScopeKey(scope);
       const tokenSecret = usesScopedBlindCredentials
-        ? this.state.blindTokenSecrets?.[scopeKey] ?? (credentialIndex === 1 ? this.state.blindTokenSecret : null)
+        ? this.state.blindTokenSecrets?.[scopeKey] ?? null
         : this.state.blindTokenSecret;
       if (!tokenSecret) {
         throw new OptionARuntimeError("issuance_failed", "No issued credential is available.");

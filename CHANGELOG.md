@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.165] - 2026-07-29
+
+### Fixed
+- Restore delegated blind-ballot issuance by delivering the authenticated delegation DM before the worker configuration and by polling worker control DMs independently of live subscriptions.
+- Keep blind request, issuance, and recovery traffic on the configured private-DM relays instead of using NIP-65 discovery.
+- Match scoped credentials exactly when finalising a private ballot, preventing a credential from another scope from being used as a fallback.
+
+### Changed
+- Show unclaimed private-invite status text in white.
+- Bumped the web app package to `0.1.165` and audit proxy package to `0.1.52`.
+
 ## [0.1.164] - 2026-07-29
 
 ### Fixed

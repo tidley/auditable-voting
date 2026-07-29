@@ -21,11 +21,13 @@ import {
 } from "../src/questionnaireBlindSignature";
 import {
   fetchOptionABlindIssuanceDmsWithNsec,
+  fetchOptionABlindRequestDmsWithNsec,
   fetchOptionAParticipantStatusDmsWithNsec,
   fetchOptionAWorkerElectionConfigDmsWithNsec,
   publishOptionABlindIssuanceAckDm,
   publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
+  publishOptionAWorkerDelegationDm,
   publishOptionAWorkerElectionConfigDm,
   type WorkerElectionConfigSnapshot,
 } from "../src/questionnaireOptionABlindDm";
@@ -70,6 +72,7 @@ import type { SignerService } from "../src/services/signerService";
 import { normalizeRelaysRust } from "../src/wasm/auditableVotingCore";
 
 type HelperElectionState = {
+  capabilities?: string[];
   expected_invitee_count?: number | null;
   seen_blind_request_ids?: string[];
   processed_submission_ids?: string[];
@@ -885,6 +888,24 @@ async function main() {
     );
     assert.equal(visibleDelegation?.workerNpub, worker.npub);
 
+    const publishedDelegationDm = await publishOptionAWorkerDelegationDm({
+      signer: signer(coordinator.npub),
+      recipientNpub: worker.npub,
+      delegation,
+      fallbackNsec: coordinator.nsec,
+      relays: workerDmRelays,
+    });
+    assert(publishedDelegationDm.successes > 0, "expected worker delegation DM publish to succeed on at least one relay");
+    await waitForValue(
+      "worker delegation DM application",
+      async () => getHelperElectionState(await readHelperState(workerStateDir), questionnaireId),
+      (value) => Boolean(value?.capabilities?.includes("issue_blind_tokens")),
+      timeoutMs,
+      intervalMs,
+      undefined,
+      () => workerExit.assertRunning(),
+    );
+
     const configSnapshot: WorkerElectionConfigSnapshot = {
       type: "worker_election_config",
       schemaVersion: 1,
@@ -1306,7 +1327,7 @@ async function main() {
               recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
               request: entry.request,
               fallbackNsec: input.voter.nsec,
-              relays: visibleDelegation?.controlRelays ?? relays,
+              relays: visibleDelegation?.dmRelays ?? workerDmRelays,
             });
             if (publishedBlindRequest.successes === 0) {
               publishFailures.push(`${entry.question.questionId}: zero relay successes`);
@@ -1317,7 +1338,7 @@ async function main() {
               recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
               requests: pendingEntries.map((entry) => entry.request),
               fallbackNsec: input.voter.nsec,
-              relays: visibleDelegation?.controlRelays ?? relays,
+              relays: visibleDelegation?.dmRelays ?? workerDmRelays,
             });
             if (publishedBlindRequest.successes === 0) {
               publishFailures.push("bundle: zero relay successes");
@@ -1441,10 +1462,20 @@ async function main() {
             recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
             request: entry.request,
             fallbackNsec: input.voter.nsec,
-            relays: visibleDelegation?.controlRelays ?? relays,
+            relays: visibleDelegation?.dmRelays ?? workerDmRelays,
           });
           if (publishedBlindRequest.successes === 0) {
             process.stdout.write(`Retryable ${voterLabel} blind request publish failure on attempt ${attempt}/${requestRetryLimit}: zero relay successes\n`);
+          } else {
+            const workerVisibleRequests = await fetchOptionABlindRequestDmsWithNsec({
+              nsec: worker.nsec,
+              electionId: questionnaireId,
+              relays: visibleDelegation?.dmRelays ?? workerDmRelays,
+              limit: 50,
+            });
+            process.stdout.write(
+              `${voterLabel} blind request relay readback attempt ${attempt}/${requestRetryLimit}: ${workerVisibleRequests.some((request) => request.requestId === entry.request.requestId) ? "visible" : "missing"}\n`,
+            );
           }
         } catch (error) {
           process.stdout.write(`Retryable ${voterLabel} blind request publish failure on attempt ${attempt}/${requestRetryLimit}: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1697,7 +1728,7 @@ async function main() {
                 recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
                 request: entry.request,
                 fallbackNsec: voter.nsec,
-                relays: visibleDelegation?.controlRelays ?? relays,
+                relays: visibleDelegation?.dmRelays ?? workerDmRelays,
               });
               if (publishedBlindRequest.successes === 0) {
                 publishFailures.push(`${entry.question.questionId}: zero relay successes`);
@@ -1708,7 +1739,7 @@ async function main() {
                 recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
                 requests: pendingEntries.map((entry) => entry.request),
                 fallbackNsec: voter.nsec,
-                relays: visibleDelegation?.controlRelays ?? relays,
+                relays: visibleDelegation?.dmRelays ?? workerDmRelays,
               });
               if (publishedBlindRequest.successes === 0) {
                 publishFailures.push(`bundle: zero relay successes`);
@@ -1837,10 +1868,20 @@ async function main() {
             recipientNpub: visibleDelegation?.workerNpub ?? coordinator.npub,
             request: entry.request,
             fallbackNsec: voter.nsec,
-            relays: visibleDelegation?.controlRelays ?? relays,
+            relays: visibleDelegation?.dmRelays ?? workerDmRelays,
           });
           if (publishedBlindRequest.successes === 0) {
             process.stdout.write(`Retryable ${voterLabel} blind request publish failure on attempt ${attempt}/${requestRetryLimit}: zero relay successes\n`);
+          } else {
+            const workerVisibleRequests = await fetchOptionABlindRequestDmsWithNsec({
+              nsec: worker.nsec,
+              electionId: questionnaireId,
+              relays: visibleDelegation?.dmRelays ?? workerDmRelays,
+              limit: 50,
+            });
+            process.stdout.write(
+              `${voterLabel} blind request relay readback attempt ${attempt}/${requestRetryLimit}: ${workerVisibleRequests.some((request) => request.requestId === entry.request.requestId) ? "visible" : "missing"}\n`,
+            );
           }
         } catch (error) {
           process.stdout.write(`Retryable ${voterLabel} blind request publish failure on attempt ${attempt}/${requestRetryLimit}: ${error instanceof Error ? error.message : String(error)}\n`);
