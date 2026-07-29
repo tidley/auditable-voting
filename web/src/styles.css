@@ -4699,6 +4699,21 @@ code {
   color: var(--simple-text);
 }
 
+.simple-delegate-status-value.is-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.simple-delegate-status-value.is-active::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--simple-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--simple-green) 16%, transparent);
+  content: "";
+}
+
 .simple-delegate-empty {
   padding: 20px 12px;
   border: 1px dashed var(--simple-border-strong);

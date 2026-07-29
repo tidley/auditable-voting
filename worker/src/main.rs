@@ -12,11 +12,12 @@ use crate::model::{
     BlindBallotRequestEnvelope, BlindIssuanceAck, BlindIssuanceAckEnvelope, BlindTokenProof,
     CompressedBundleEnvelope, ElectionRuntimeState, GeneralInvitePowProof,
     OptionAParticipantStatus, OptionAParticipantStatusEnvelope, OptionAParticipantStatusState,
-    QuestionnaireBlindResponseEvent, QuestionnairePublishedResponseRef,
-    QuestionnaireSubmissionDecisionEvent, WorkerCapability, WorkerDelegationCertificate,
-    WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
-    WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
-    WorkerStatusEnvelope, WorkerStatusSnapshot, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    QuestionnaireBlindPrivateKey, QuestionnaireBlindResponseEvent,
+    QuestionnairePublishedResponseRef, QuestionnaireSubmissionDecisionEvent, WorkerCapability,
+    WorkerDelegationCertificate, WorkerDelegationEnvelope, WorkerDelegationRevocation,
+    WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot, WorkerPersistentState,
+    WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
 };
@@ -662,8 +663,22 @@ fn apply_worker_election_config(
     if let Some(codes) = &snapshot.bearer_invite_codes {
         merge_bearer_invite_codes(election, codes);
     }
+    let blind_key_material_changed = blind_signing_key_material_changed(
+        election.blind_signing_private_key.as_ref(),
+        snapshot.blind_signing_private_key.as_ref(),
+    );
     if snapshot.blind_signing_private_key.is_some() {
         election.blind_signing_private_key = snapshot.blind_signing_private_key.clone();
+    }
+    if blind_key_material_changed {
+        // Credentials issued with different RSA material cannot be replayed or spent.
+        // Permit the voter to resend its unchanged blinded request after a corrected config.
+        election.issued_issuances_by_request_id.clear();
+        election.issued_invited_scope_keys.clear();
+        election.issued_invited_npubs.clear();
+        election.seen_blind_request_ids.clear();
+        election.planned_blind_requests.clear();
+        election.blind_ballot_plans_by_voter.clear();
     }
     if let Some(reference) = &snapshot.definition_reference {
         if let Some(hash) = reference
@@ -829,6 +844,20 @@ fn public_definition_matches_worker_private_key(
         // Older saved configurations did not retain public JWK components. Keep their
         // key-ID check until the organiser publishes a complete configuration again.
         None => true,
+    }
+}
+
+fn blind_signing_key_material_changed(
+    current: Option<&QuestionnaireBlindPrivateKey>,
+    next: Option<&QuestionnaireBlindPrivateKey>,
+) -> bool {
+    match (current, next) {
+        (Some(current), Some(next)) => {
+            current.key_id != next.key_id
+                || current.jwk != next.jwk
+                || current.private_jwk != next.private_jwk
+        }
+        _ => false,
     }
 }
 

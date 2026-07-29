@@ -1037,7 +1037,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.49";
+const WORKER_MINIMUM_VERSION = "0.1.50";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 const WORKER_AUTO_CONFIRM_HEARTBEAT_MAX_AGE_MS = 2 * 60 * 1000;
 
@@ -5849,7 +5849,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Audit proxy status</h4>
                   <div className='simple-delegate-status-grid'>
-                    <p className='simple-voter-note'><strong>Delegation state</strong><span>{delegationStatusLabel}</span></p>
+                    <p className='simple-voter-note'><strong>Delegation state</strong><span className={delegationStatusLabel === "Active" ? "simple-delegate-status-value is-active" : "simple-delegate-status-value"}>{delegationStatusLabel}</span></p>
                     <p className='simple-voter-note'><strong>Audit proxy npub</strong><span>{selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</span></p>
                     <p className='simple-voter-note'><strong>Last heartbeat</strong><span>{formatWorkerTime(selectedWorkerStatus?.heartbeatAt, "Not seen")}</span></p>
                     <p className='simple-voter-note'><strong>Last blind issuance</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastBlindIssuanceAt, "Not reported")}</span></p>

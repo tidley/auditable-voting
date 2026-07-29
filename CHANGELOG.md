@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.162] - 2026-07-29
+
+### Fixed
+- Clear persisted delegated-issuance markers when corrected blind-signing key material arrives, so the original blinded request can be signed again.
+
+### Changed
+- Show a green status mark for active audit-proxy delegations.
+- Bumped the web app package to `0.1.162` and audit proxy package to `0.1.50`.
+
 ## [0.1.161] - 2026-07-29
 
 ### Fixed
