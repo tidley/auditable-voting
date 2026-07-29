@@ -736,11 +736,15 @@ function reconcileVoterCredentialReadyForDefinition(
 }
 
 function voterHasTokenSecretForIssuance(state: VoterElectionLocalState, issuance: BlindBallotIssuance) {
+  const scopeKey = ballotScopeKey(issuance.ballotScope);
+  const scopedRequest = state.blindRequests?.[scopeKey] ?? null;
+  if (scopedRequest?.requestId === issuance.requestId && state.blindTokenSecrets?.[scopeKey]) {
+    return true;
+  }
   return Boolean(
-    state.blindTokenSecrets?.[ballotScopeKey(issuance.ballotScope)]
-    ?? (state.blindRequest?.requestId === issuance.requestId
+    state.blindRequest?.requestId === issuance.requestId
       ? state.blindTokenSecret
-      : null),
+      : null,
   );
 }
 

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.163] - 2026-07-29
+
+### Fixed
+- Require a blind issuance to match its scoped request ID before using its stored token secret, preventing a stale issuance from being unblinded with a later request's factor.
+
+### Changed
+- Bumped the web app package to `0.1.163`.
+
 ## [0.1.162] - 2026-07-29
 
 ### Fixed
