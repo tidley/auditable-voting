@@ -797,6 +797,41 @@ fn definition_value_blind_signing_public_jwk(
     definition.get("blindSigningPublicKey")?.get("jwk")
 }
 
+fn public_jwk_components_match(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+) -> Option<bool> {
+    let left_kty = left.get("kty")?.as_str()?;
+    let left_n = left.get("n")?.as_str()?;
+    let left_e = left.get("e")?.as_str()?;
+    let right_kty = right.get("kty")?.as_str()?;
+    let right_n = right.get("n")?.as_str()?;
+    let right_e = right.get("e")?.as_str()?;
+    Some(left_kty == right_kty && left_n == right_n && left_e == right_e)
+}
+
+fn public_definition_matches_worker_private_key(
+    definition: &serde_json::Value,
+    election: &ElectionRuntimeState,
+) -> bool {
+    let Some(private_key) = election.blind_signing_private_key.as_ref() else {
+        return false;
+    };
+    if definition_value_blind_signing_key_id(definition).as_deref()
+        != Some(private_key.key_id.as_str())
+    {
+        return false;
+    }
+    match definition_value_blind_signing_public_jwk(definition)
+        .and_then(|public_jwk| public_jwk_components_match(public_jwk, &private_key.jwk))
+    {
+        Some(matches) => matches,
+        // Older saved configurations did not retain public JWK components. Keep their
+        // key-ID check until the organiser publishes a complete configuration again.
+        None => true,
+    }
+}
+
 fn public_key_from_jwk(jwk: &serde_json::Value) -> Result<PublicKeySha384PSSDeterministic> {
     let n = parse_jwk_component(jwk, "n")?;
     let e = parse_jwk_component(jwk, "e")?;
@@ -958,18 +993,6 @@ fn definition_blind_signing_key_id(definition: &Option<serde_json::Value>) -> Op
         .and_then(definition_value_blind_signing_key_id)
 }
 
-#[cfg(test)]
-fn public_definition_matches_worker_private_key(
-    definition: &serde_json::Value,
-    election: &ElectionRuntimeState,
-) -> bool {
-    let Some(private_key) = election.blind_signing_private_key.as_ref() else {
-        return false;
-    };
-    definition_value_blind_signing_key_id(definition).as_deref()
-        == Some(private_key.key_id.as_str())
-}
-
 fn worker_election_config_has_blind_key_mismatch(snapshot: &WorkerElectionConfigSnapshot) -> bool {
     let Some(private_key) = snapshot.blind_signing_private_key.as_ref() else {
         return false;
@@ -978,6 +1001,11 @@ fn worker_election_config_has_blind_key_mismatch(snapshot: &WorkerElectionConfig
         return false;
     };
     private_key.key_id != definition_key_id
+        || definition_value_blind_signing_public_jwk(
+            snapshot.definition.as_ref().expect("checked above"),
+        )
+        .and_then(|public_jwk| public_jwk_components_match(public_jwk, &private_key.jwk))
+        .is_some_and(|matches| !matches)
 }
 
 fn completion_was_reopened_by_expected_count_change(
@@ -4251,15 +4279,11 @@ impl WorkerRuntime {
             .blind_signing_private_key
             .clone()
             .expect("checked above");
-        let definition_key_id = definition_blind_signing_key_id(&election.definition);
-        if definition_key_id
-            .as_deref()
-            .is_some_and(|key_id| key_id != private_key.key_id)
-        {
+        let definition = election.definition.as_ref().expect("checked above");
+        if !public_definition_matches_worker_private_key(definition, &election) {
             warn!(
-                "blind request ignored for election {} because public definition key does not match worker private key definition={} worker={}",
+                "blind request ignored for election {} because public definition RSA key does not match worker private key worker={}",
                 request.election_id,
-                definition_key_id.unwrap_or_else(|| "missing".to_string()),
                 private_key.key_id
             );
             return Ok(PreparedBlindIssuance::Handled);
@@ -5574,6 +5598,40 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn matching_blind_key_id_does_not_accept_different_rsa_material() {
+        let (definition, keypair) = test_definition_and_keypair("q_worker_rsa_key_mismatch");
+        let public_jwk = definition
+            .get("blindSigningPublicKey")
+            .and_then(|key| key.get("jwk"))
+            .cloned()
+            .expect("definition public JWK");
+        let election = ElectionRuntimeState {
+            blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                scheme: "rsabssa-sha384-pss-deterministic-v1".to_string(),
+                key_id: "key_test_public".to_string(),
+                jwk: public_jwk,
+                private_jwk: private_jwk_from_keypair(&keypair),
+            }),
+            ..ElectionRuntimeState::default()
+        };
+        assert!(public_definition_matches_worker_private_key(
+            &definition,
+            &election
+        ));
+
+        let mut mismatched_election = election;
+        mismatched_election
+            .blind_signing_private_key
+            .as_mut()
+            .expect("private key")
+            .jwk["n"] = json!("different-modulus");
+        assert!(!public_definition_matches_worker_private_key(
+            &definition,
+            &mismatched_election
+        ));
+    }
+
     #[tokio::test]
     async fn public_definition_event_loads_when_no_expected_hash_is_configured() {
         let coordinator_keys = Keys::generate();
@@ -5942,7 +6000,10 @@ mod tests {
             definition: None,
             sent_at: "2026-07-22T12:00:00.000Z".to_string(),
         };
-        assert!(apply_worker_election_config(&mut election, &initial_snapshot));
+        assert!(apply_worker_election_config(
+            &mut election,
+            &initial_snapshot
+        ));
         assert!(!deferred_blind_request_ready_for_retry(&election, &request));
 
         let approved_snapshot = WorkerElectionConfigSnapshot {
@@ -5956,7 +6017,10 @@ mod tests {
             sent_at: "2026-07-22T12:00:01.000Z".to_string(),
             ..initial_snapshot
         };
-        assert!(apply_worker_election_config(&mut election, &approved_snapshot));
+        assert!(apply_worker_election_config(
+            &mut election,
+            &approved_snapshot
+        ));
 
         assert!(election.whitelist_npubs.contains(&request.invited_npub));
         assert!(election.proxy_voter_npubs.contains(&request.invited_npub));

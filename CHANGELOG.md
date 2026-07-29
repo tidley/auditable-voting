@@ -8,11 +8,12 @@ All notable changes to this project are documented in this file.
 - Repaired scoped private-ballot republication so bundled token proofs retain the active questionnaire ID.
 - Surface final ballot submission failures beside the Submit control and log the original error to the browser console without credential data.
 - Label live accepted responses and coordinator-published result snapshots accurately in the results dashboard.
+- Reject audit-proxy blind-signing material when its RSA public components do not match the published questionnaire key, even if the key IDs match.
 
 ### Changed
 - Refined the coordinator questionnaire editor, navigation rail, results, and voter views.
 - Use solid darker category hues for live accepted result segments.
-- Bumped the web app package to `0.1.161`.
+- Bumped the web app package to `0.1.161` and audit proxy package to `0.1.49`.
 
 ## [0.1.159] - 2026-07-22
 
