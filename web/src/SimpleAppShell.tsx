@@ -331,7 +331,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const isPublicVoterInvite = role === "voter" && hasVoterInviteContextInUrl();
   const voterSectionOptions = useMemo(() => (
     isPublicVoterInvite
-      ? VOTER_SECTION_OPTIONS.filter((option) => option.tab !== "configure" && option.tab !== "settings")
+      ? VOTER_SECTION_OPTIONS.filter((option) => option.tab !== "configure")
       : VOTER_SECTION_OPTIONS
   ), [isPublicVoterInvite]);
 
@@ -940,7 +940,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           {role === "voter" ? (
             <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
               <div
-                className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch'
+                className={`simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch${isPublicVoterInvite ? " is-public-invite" : ""}`}
                 role='tablist'
                 aria-label='Main actions'
               >

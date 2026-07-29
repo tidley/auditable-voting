@@ -7,7 +7,7 @@ import {
   QuestionnaireOptionAVoterRuntime,
 } from "./questionnaireOptionARuntime";
 import type { BallotAcceptanceResult, BallotSubmission } from "./questionnaireOptionA";
-import { reduceCoordinatorEvent } from "./questionnaireOptionA";
+import { reduceCoordinatorEvent, restoreCoordinatorElectionState } from "./questionnaireOptionA";
 import {
   dequeueBlindRequest,
   listBlindRequests,
@@ -899,6 +899,51 @@ describe("questionnaireOptionARuntime", () => {
     expect(recovered.getSnapshot()?.draftResponses).toEqual(submitted?.payload.responses);
   });
 
+  it("republishes an existing scoped submission with its credential bundle", async () => {
+    const retryElectionId = `${electionId}_scoped_republish`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), retryElectionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const { invite } = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), retryElectionId);
+    await voter.loginWithSigner(invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    await voter.submitVote(["q1"]);
+
+    const initial = voter.getSnapshot()?.submission;
+    expect(initial).toBeTruthy();
+    (voter as unknown as { state: unknown }).state = {
+      ...voter.getSnapshot()!,
+      submission: {
+        ...initial!,
+        credentialBundle: [{
+          tokenCommitment: initial!.tokenCommitment,
+          credential: initial!.credential,
+          blindSigningKeyId: initial!.blindSigningKeyId,
+          nullifier: initial!.nullifier,
+          questionId: "q1",
+          ballotScope: { questionId: "q1", slotIndex: 1, version: 1 },
+        }],
+      },
+    };
+
+    vi.mocked(publishQuestionnaireBlindResponsePublic).mockClear();
+    await voter.submitVote(["q1"]);
+
+    expect(publishQuestionnaireBlindResponsePublic).toHaveBeenCalledWith(expect.objectContaining({
+      questionnaireId: retryElectionId,
+      tokenProofs: [expect.objectContaining({ questionnaireId: retryElectionId })],
+      tokenNullifiers: [expect.objectContaining({ questionId: "q1" })],
+    }));
+  });
+
   it("requests and submits a scoped credential bundle for per-question questionnaires", async () => {
     const bundleElectionId = `${electionId}_credential_bundle`;
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), bundleElectionId);
@@ -1753,6 +1798,34 @@ describe("questionnaireOptionARuntime", () => {
     expect(coordinator.getSnapshot()?.whitelist[secondNpub]).toBeUndefined();
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
     expect(listBlindRequests(electionId).some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
+  });
+
+  it("restores a private invite claimant from its whitelist invite-code hash", async () => {
+    const inviteCode = "private-invite-code-recovery";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addBearerInviteCode(inviteCodeHash);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
+    voter.setBearerInviteCode(inviteCode);
+    await voter.loginWithSigner(null);
+    await voter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
+
+    const persisted = structuredClone(coordinator.getSnapshot()!);
+    persisted.bearerInviteCodes[inviteCodeHash] = {
+      ...persisted.bearerInviteCodes[inviteCodeHash],
+      state: "available",
+      redeemedNpub: null,
+      redeemedAt: null,
+    };
+    const restored = restoreCoordinatorElectionState({ persisted });
+
+    expect(restored.bearerInviteCodes[inviteCodeHash]).toEqual(expect.objectContaining({
+      state: "redeemed",
+      redeemedNpub: otherNpub,
+    }));
   });
 
   it("preassigns a custom voter group through a private invite", async () => {
@@ -2644,7 +2717,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: workerNpub,
     }));
-    expect(publishOptionABlindRequestDm).not.toHaveBeenCalledWith(expect.objectContaining({
+    expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: coordinatorNpub,
     }));
   });

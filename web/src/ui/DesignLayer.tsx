@@ -149,6 +149,7 @@ export function UiButton({
   onPress,
   ...props
 }: UiButtonProps) {
+  const ariaLabel = props["aria-label"] ?? (iconOnly ? props.title ?? `${icon || "action"} action` : undefined);
   const iconElement = icon ? <UiIcon name={icon} /> : null;
   const labelElement = children ? <span className='av-ui-button-label'>{children as ReactNode}</span> : null;
   const baseClassName = cx(
@@ -183,8 +184,9 @@ export function UiButton({
   }
 
   return (
-    <AriaButton
-      {...props}
+      <AriaButton
+        {...props}
+        aria-label={ariaLabel}
       onPress={onPress}
       isDisabled={isDisabled ?? disabled}
       className={({ isPressed, isFocusVisible, isDisabled: renderedDisabled }) => cx(
@@ -211,9 +213,11 @@ type UiSwitchProps = Omit<AriaSwitchProps, "className" | "children"> & {
 };
 
 export function UiSwitch({ className, label, ...props }: UiSwitchProps) {
+  const ariaLabel = props["aria-label"] ?? label ?? "Toggle";
   return (
     <AriaSwitch
       {...props}
+      aria-label={ariaLabel}
       className={({ isSelected, isFocusVisible, isDisabled }) => cx(
         "av-ui-switch",
         isSelected && "is-selected",
@@ -255,7 +259,11 @@ export function UiTextField({
   isInvalid,
   ...props
 }: UiTextFieldProps) {
-  const ariaLabel = props["aria-label"] ?? inputProps?.["aria-label"];
+  const ariaLabel = props["aria-label"]
+    ?? inputProps?.["aria-label"]
+    ?? (typeof label === "string" ? label : undefined)
+    ?? inputProps?.placeholder
+    ?? "Text input";
   return (
     <AriaTextField
       {...props}
@@ -288,7 +296,11 @@ export function UiTextArea({
   isInvalid,
   ...props
 }: UiTextAreaProps) {
-  const ariaLabel = props["aria-label"] ?? textAreaProps?.["aria-label"];
+  const ariaLabel = props["aria-label"]
+    ?? textAreaProps?.["aria-label"]
+    ?? (typeof label === "string" ? label : undefined)
+    ?? textAreaProps?.placeholder
+    ?? "Text area";
   return (
     <AriaTextField
       {...props}

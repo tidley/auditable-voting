@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.161] - 2026-07-29
+
+### Fixed
+- Repaired scoped private-ballot republication so bundled token proofs retain the active questionnaire ID.
+- Surface final ballot submission failures beside the Submit control and log the original error to the browser console without credential data.
+- Label live accepted responses and coordinator-published result snapshots accurately in the results dashboard.
+
+### Changed
+- Refined the coordinator questionnaire editor, navigation rail, results, and voter views.
+- Use solid darker category hues for live accepted result segments.
+- Bumped the web app package to `0.1.161`.
+
 ## [0.1.159] - 2026-07-22
 
 ### Fixed

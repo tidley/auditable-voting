@@ -1092,20 +1092,6 @@ export default function SimpleAuditorApp({
           placeholder: 'Filter by questionnaire, organiser, Submission ID, or Submittor identity...',
         }}
       />
-      <UiSelect
-        label='Questionnaire organiser identity'
-        id='simple-auditor-coordinator-npub'
-        fieldClassName='simple-auditor-organiser-field'
-        value={selectedCoordinatorNpub}
-        onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
-      >
-        <option value=''>Any questionnaire organiser</option>
-        {coordinatorSelectOptions.map((coordinatorNpub) => (
-          <option key={coordinatorNpub} value={coordinatorNpub}>
-            {coordinatorNpub}
-          </option>
-        ))}
-      </UiSelect>
       {filteredQuestionnaires.length > 0 ? (
         <UiSelect
           label='Round'
@@ -1129,6 +1115,20 @@ export default function SimpleAuditorApp({
       ) : (
         <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
       )}
+      <UiSelect
+        label='Questionnaire organiser identity'
+        id='simple-auditor-coordinator-npub'
+        fieldClassName='simple-auditor-organiser-field'
+        value={selectedCoordinatorNpub}
+        onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
+      >
+        <option value=''>Any questionnaire organiser</option>
+        {coordinatorSelectOptions.map((coordinatorNpub) => (
+          <option key={coordinatorNpub} value={coordinatorNpub}>
+            {coordinatorNpub}
+          </option>
+        ))}
+      </UiSelect>
       {selectedQuestionnaire ? (
         <div className='simple-auditor-definition-history'>
           <UiSelect
@@ -1153,11 +1153,7 @@ export default function SimpleAuditorApp({
               </option>
             ))}
           </UiSelect>
-          {selectedDefinitionHistory.length > 1 ? (
-            <p className='simple-voter-note'>The selected definition controls the displayed questions and blind-proof verification.</p>
-          ) : (
-            <p className='simple-voter-note'>No other definition variants were discoverable. Currently using definition event {selectedQuestionnaire.eventId}.</p>
-          )}
+          {selectedDefinitionHistory.length > 1 ? <p className='simple-voter-note'>Controls displayed questions and proof verification.</p> : null}
         </div>
       ) : null}
     </div>

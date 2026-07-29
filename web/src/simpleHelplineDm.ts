@@ -23,6 +23,7 @@ const HELPLINE_DM_PUBLISH_MAX_WAIT_MS = 5000;
 const HELPLINE_DM_PUBLISH_STAGGER_MS = 250;
 const HELPLINE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const HELPLINE_DM_RETRY_DELAY_MS = 5_000;
+const HELPLINE_DM_HISTORY_REFRESH_MS = 20_000;
 const HELPLINE_DM_SUBJECT = "Auditable Voting helpline";
 const HELPLINE_DM_SENT_CACHE_PREFIX = "auditableVoting.helpline.sent.v1:";
 const HELPLINE_DM_SENT_CACHE_LIMIT = 100;
@@ -310,6 +311,7 @@ type HelplineDmFeed = {
   closed: boolean;
   subscription: { close: () => void } | null;
   retryTimer: ReturnType<typeof globalThis.setTimeout> | null;
+  historyRefreshTimer: ReturnType<typeof globalThis.setInterval> | null;
 };
 
 const helplineDmFeeds = new Map<string, HelplineDmFeed>();
@@ -370,6 +372,10 @@ function closeFeedIfUnused(feed: HelplineDmFeed) {
     globalThis.clearTimeout(feed.retryTimer);
     feed.retryTimer = null;
   }
+  if (feed.historyRefreshTimer) {
+    globalThis.clearInterval(feed.historyRefreshTimer);
+    feed.historyRefreshTimer = null;
+  }
   helplineDmFeeds.delete(feed.key);
 }
 
@@ -382,6 +388,32 @@ function retryHelplineDmFeed(feed: HelplineDmFeed) {
     feed.started = false;
     startHelplineDmFeed(feed);
   }, HELPLINE_DM_RETRY_DELAY_MS);
+}
+
+async function refreshHelplineDmFeedHistory(feed: HelplineDmFeed, dmRelays: string[]) {
+  try {
+    const fetched = await fetchHelplineDmMessagesFromRelays({
+      actor: feed.actor,
+      dmRelays,
+      limit: feed.limit,
+      hideReceivedQuestionnaireInviteLinks: feed.hideReceivedQuestionnaireInviteLinks,
+    });
+    if (feed.closed) {
+      return;
+    }
+    for (const message of fetched) {
+      feed.messages.set(message.id, message);
+    }
+    for (const message of readSentMessageCache(feed.actor.npub)) {
+      feed.messages.set(message.id, message);
+    }
+    feed.historyLoaded = true;
+    publishFeedMessages(feed);
+  } catch (error) {
+    if (!feed.closed && error instanceof Error) {
+      publishFeedError(feed, error);
+    }
+  }
 }
 
 async function fetchHelplineDmMessagesFromRelays(input: {
@@ -450,28 +482,11 @@ function startHelplineDmFeed(feed: HelplineDmFeed) {
       },
     });
 
-    try {
-      const fetched = await fetchHelplineDmMessagesFromRelays({
-        actor: feed.actor,
-        dmRelays,
-        limit: feed.limit,
-        hideReceivedQuestionnaireInviteLinks: feed.hideReceivedQuestionnaireInviteLinks,
-      });
-      if (feed.closed) {
-        return;
-      }
-      for (const message of fetched) {
-        feed.messages.set(message.id, message);
-      }
-      for (const message of readSentMessageCache(feed.actor.npub)) {
-        feed.messages.set(message.id, message);
-      }
-      feed.historyLoaded = true;
-      publishFeedMessages(feed);
-    } catch (error) {
-      if (!feed.closed && error instanceof Error) {
-        publishFeedError(feed, error);
-      }
+    await refreshHelplineDmFeedHistory(feed, dmRelays);
+    if (!feed.closed && !feed.historyRefreshTimer) {
+      feed.historyRefreshTimer = globalThis.setInterval(() => {
+        void refreshHelplineDmFeedHistory(feed, dmRelays);
+      }, HELPLINE_DM_HISTORY_REFRESH_MS);
     }
   }).catch((error) => {
     if (!feed.closed && error instanceof Error) {
@@ -625,6 +640,7 @@ export function subscribeHelplineDmMessages(input: {
       closed: false,
       subscription: null,
       retryTimer: null,
+      historyRefreshTimer: null,
     };
     helplineDmFeeds.set(key, feed);
   }
@@ -654,6 +670,9 @@ export function resetHelplineDmMessageFeedsForTests() {
     feed.subscription?.close();
     if (feed.retryTimer) {
       globalThis.clearTimeout(feed.retryTimer);
+    }
+    if (feed.historyRefreshTimer) {
+      globalThis.clearInterval(feed.historyRefreshTimer);
     }
   }
   helplineDmFeeds.clear();

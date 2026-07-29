@@ -406,8 +406,9 @@ export default function QuestionnaireResultsDashboard({
   const visibleAcceptedPercent = visibleTotalCount > 0
     ? Math.round((visibleAcceptedCount / visibleTotalCount) * 100)
     : 0;
+  const submittedAcceptedCount = Math.max(0, visibleAcceptedCount - pendingLiveAcceptedCount);
   const visibleProgressLabel = pendingLiveTotalCount > 0
-    ? `${visibleAcceptedCount}/${visibleTotalCount || 0} accepted (${visibleAcceptedPercent}%) · ${pendingLiveTotalCount} live`
+    ? `${visibleAcceptedCount}/${visibleTotalCount || 0} accepted (${visibleAcceptedPercent}%) · ${submittedAcceptedCount} published · ${pendingLiveAcceptedCount} live`
     : publishedTotalsAvailable
       ? publishedProgressLabel
       : loadedProgressLabel;
@@ -822,6 +823,12 @@ export default function QuestionnaireResultsDashboard({
             {isSessionVariant && questionnaireDescription ? (
               <p className='simple-session-questionnaire-description'>{questionnaireDescription}</p>
             ) : null}
+            {isSessionVariant ? (
+              <div className='simple-session-result-legend' aria-label='Vote status legend'>
+                <span><i className='is-submitted' aria-hidden='true' />Published results</span>
+                <span><i className='is-live' aria-hidden='true' />Live accepted votes</span>
+              </div>
+            ) : null}
             {!isSessionVariant && (actions || (canExportResults && onExportResults)) ? (
               <div className='simple-auditor-results-hero'>
                 {actions ?? (canExportResults && onExportResults ? (
@@ -1105,8 +1112,11 @@ function YesNoSummaryCard({
   }));
   const total = rows.reduce((sum, row) => sum + row.layers.totalValue, 0);
   const sortedRows = [...rows].sort((left, right) => {
-    if (right.layers.totalValue !== left.layers.totalValue) {
-      return right.layers.totalValue - left.layers.totalValue;
+    if (right.layers.finalValue !== left.layers.finalValue) {
+      return right.layers.finalValue - left.layers.finalValue;
+    }
+    if (right.layers.pendingValue !== left.layers.pendingValue) {
+      return right.layers.pendingValue - left.layers.pendingValue;
     }
     return left.label === "Yes" ? -1 : 1;
   });
@@ -1118,7 +1128,7 @@ function YesNoSummaryCard({
           <div key={row.label} className={`simple-auditor-option-bar-row simple-auditor-boolean-bar-row ${row.className}`}>
             <div className='simple-auditor-option-bar-label'>
               <span>{row.label}</span>
-              <strong>{formatBooleanVoteShare(row.layers.totalValue, percent, row.layers.pendingValue)}</strong>
+              <strong>{formatBooleanVoteShare(row.layers.finalValue, row.layers.pendingValue, percent)}</strong>
             </div>
             <StackedResultBar
               finalValue={row.layers.finalValue}
@@ -1165,11 +1175,18 @@ function MultipleChoiceSummaryCard({
             ? question.options.find((option) => option.optionId === row.optionId)?.label ?? row.optionId
             : row.optionId;
           const percentOfResponses = totalResponses > 0 ? (row.layers.totalValue / totalResponses) * 100 : 0;
-          return (
+          return { label, percentOfResponses, row };
+        })
+        .sort((left, right) => (
+          right.row.layers.finalValue - left.row.layers.finalValue
+          || right.row.layers.pendingValue - left.row.layers.pendingValue
+          || left.label.localeCompare(right.label)
+        ))
+        .map(({ label, percentOfResponses, row }) => (
             <div key={row.optionId} className='simple-auditor-option-bar-row'>
               <div className='simple-auditor-option-bar-label'>
                 <span>{label}</span>
-                <strong>{formatVoteShare(row.layers.totalValue, percentOfResponses, row.layers.pendingValue)}</strong>
+                <strong>{formatVoteShare(row.layers.finalValue, row.layers.pendingValue, percentOfResponses)}</strong>
               </div>
               <StackedResultBar
                 finalValue={row.layers.finalValue}
@@ -1177,8 +1194,7 @@ function MultipleChoiceSummaryCard({
                 maxValue={maxCount}
               />
             </div>
-          );
-        })}
+        ))}
     </div>
   );
 }
@@ -1211,7 +1227,9 @@ function RankSummaryCard({
       return { optionId, layers, firstChoiceLayers };
     })
     .sort((left, right) => (
-      right.layers.totalValue - left.layers.totalValue || left.optionId.localeCompare(right.optionId)
+      right.layers.finalValue - left.layers.finalValue
+      || right.layers.pendingValue - left.layers.pendingValue
+      || left.optionId.localeCompare(right.optionId)
     ));
   const bestScore = Math.max(1, ...rows.map((row) => row.layers.totalValue));
   return (
@@ -1307,12 +1325,13 @@ function formatFreeTextAnswer(text: string) {
   return text || "(empty)";
 }
 
-function formatVoteShare(count: number, percent: number, livePendingCount = 0) {
-  return `${percent.toFixed(0)}% ${count} ${count === 1 ? "VOTE" : "VOTES"}${livePendingCount > 0 ? ` · ${livePendingCount} live` : ""}`;
+function formatVoteShare(finalCount: number, liveCount: number, percent: number) {
+  const total = finalCount + liveCount;
+  return `${percent.toFixed(0)}% ${total} ${total === 1 ? "VOTE" : "VOTES"} · ${finalCount} published${liveCount > 0 ? ` · ${liveCount} live` : ""}`;
 }
 
-function formatBooleanVoteShare(count: number, percent: number, livePendingCount = 0) {
-  return formatVoteShare(count, percent, livePendingCount);
+function formatBooleanVoteShare(finalCount: number, liveCount: number, percent: number) {
+  return formatVoteShare(finalCount, liveCount, percent);
 }
 
 function formatRankShare(score: number, firstChoices: number, livePendingScore: number) {

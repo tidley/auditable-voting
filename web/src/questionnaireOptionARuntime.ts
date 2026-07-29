@@ -2896,6 +2896,16 @@ export class QuestionnaireOptionAVoterRuntime {
         relays: workerNpub ? relays : this.getPreferredDmRelays(),
       });
       this.rememberPrivateRelaySuccesses(result);
+      if (workerNpub && request.inviteCodeHash && coordinatorNpub !== workerNpub) {
+        // The worker issues the credential; the organiser observes this copy to redeem a private invite.
+        void publishOptionABlindRequestDm({
+          signer: this.signer,
+          recipientNpub: coordinatorNpub,
+          request,
+          fallbackNsec: this.fallbackNsec,
+          relays: this.getPreferredDmRelays(),
+        }).catch(() => null);
+      }
       return result;
     } catch {
       return null;
@@ -2931,6 +2941,26 @@ export class QuestionnaireOptionAVoterRuntime {
         relays: workerNpub ? relays : this.getPreferredDmRelays(),
       });
       this.rememberPrivateRelaySuccesses(result);
+      const privateRequests = requests.filter((entry) => Boolean(entry.inviteCodeHash));
+      if (workerNpub && privateRequests.length > 0 && coordinatorNpub !== workerNpub) {
+        // The worker issues the credentials; the organiser observes this copy to redeem private invites.
+        const publishPrivateRequestCopy = privateRequests.length === 1
+          ? publishOptionABlindRequestDm({
+            signer: this.signer,
+            recipientNpub: coordinatorNpub,
+            request: privateRequests[0],
+            fallbackNsec: this.fallbackNsec,
+            relays: this.getPreferredDmRelays(),
+          })
+          : publishOptionABlindRequestBundleDm({
+            signer: this.signer,
+            recipientNpub: coordinatorNpub,
+            requests: privateRequests,
+            fallbackNsec: this.fallbackNsec,
+            relays: this.getPreferredDmRelays(),
+          });
+        void publishPrivateRequestCopy.catch(() => null);
+      }
       return result;
     } catch {
       return null;
@@ -3508,12 +3538,14 @@ export class QuestionnaireOptionAVoterRuntime {
           tokenCommitment: this.state.submission.tokenCommitment,
           questionnaireId: this.electionId,
           signature: this.state.submission.credential,
+          blindSigningKeyId: this.state.submission.blindSigningKeyId,
           ballotScope: existingCredentialBundle[0]?.ballotScope ?? null,
         },
         tokenProofs: includeExistingCredentialBundle ? existingCredentialBundle.map((proof) => ({
           tokenCommitment: proof.tokenCommitment,
-          questionnaireId: submission.electionId,
+          questionnaireId: this.state.electionId,
           signature: proof.credential,
+          blindSigningKeyId: proof.blindSigningKeyId,
           questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
           ballotScope: proof.ballotScope ?? null,
         })) : undefined,
@@ -3620,14 +3652,16 @@ export class QuestionnaireOptionAVoterRuntime {
         tokenCommitment: submission.tokenCommitment,
         questionnaireId: this.state.electionId,
         signature: submission.credential,
+        blindSigningKeyId: submission.blindSigningKeyId,
         ballotScope: primaryCredential.ballotScope ?? null,
       },
         tokenProofs: includeCredentialBundle ? credentialBundle.map((proof) => ({
           tokenCommitment: proof.tokenCommitment,
           questionnaireId: submission.electionId,
-        signature: proof.credential,
-        questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
-        ballotScope: proof.ballotScope ?? null,
+          signature: proof.credential,
+          blindSigningKeyId: proof.blindSigningKeyId,
+          questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
+          ballotScope: proof.ballotScope ?? null,
       })) : undefined,
       answers: toQuestionnaireResponseAnswers(submission.payload.responses, {
         coordinatorNpub: this.state.coordinatorNpub,
@@ -5080,12 +5114,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }) {
     const normalizedInvitedNpub = toNpub(invitedNpub);
     optionAFlowLog("coordinator", "authorize_requester", { electionId: this.electionId, invitedNpub: normalizedInvitedNpub || invitedNpub });
-    this.addWhitelistNpub(normalizedInvitedNpub || invitedNpub, options?.credentialsPerVoter !== undefined || options?.ballotGroup !== undefined
+    const state = this.addWhitelistNpub(normalizedInvitedNpub || invitedNpub, options?.credentialsPerVoter !== undefined || options?.ballotGroup !== undefined
       ? { credentialsPerVoter: options.credentialsPerVoter, ballotGroup: options.ballotGroup }
       : undefined);
     const pendingForVoter = [...(this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub] ?? [])];
     const compatiblePendingRequests = pendingForVoter.filter((request) => {
-      const configuredBallotGroup = this.configuredBallotGroupForRequest(this.state, request);
+      const configuredBallotGroup = this.configuredBallotGroupForRequest(state, request);
       if (configuredBallotGroup === undefined) {
         return true;
       }
@@ -5948,7 +5982,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       const credentialBundle = responseProofs.map((proof, proofIndex): BallotCredentialProof => ({
         questionId: proof.questionId ?? proof.ballotScope?.questionId ?? responseNullifiers[proofIndex]?.questionId ?? null,
         tokenCommitment: proof.tokenCommitment,
-        blindSigningKeyId: publicKey?.keyId ?? "",
+        blindSigningKeyId: proof.blindSigningKeyId ?? publicKey?.keyId ?? "",
         credential: proof.signature,
         nullifier: responseNullifiers[proofIndex]?.tokenNullifier ?? entry.response.tokenNullifier,
         ballotScope: proof.ballotScope ?? responseNullifiers[proofIndex]?.ballotScope ?? null,
@@ -5960,7 +5994,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         });
         continue;
       }
-      const blindSigningKeyId = publicKey.keyId;
+      const blindSigningKeyId = credentialBundle[0]?.blindSigningKeyId ?? publicKey.keyId;
       const syntheticSubmission: BallotSubmission = {
         type: "ballot_submission",
         schemaVersion: 1,

@@ -1,4 +1,4 @@
-import { generateSecretKey, getPublicKey as getPublicKeyFromSecret } from "nostr-tools";
+import { generateSecretKey, getPublicKey as getPublicKeyFromSecret, verifyEvent } from "nostr-tools";
 
 export type SignerErrorCode = "unavailable" | "rejected" | "wrong_account" | "sign_failed";
 
@@ -293,6 +293,12 @@ function toSignerError(error: unknown, fallback: string): SignerServiceError {
   if (normalized.includes("reject") || normalized.includes("denied") || normalized.includes("cancel")) {
     return new SignerServiceError("rejected", message);
   }
+  if (normalized.includes("invalid signature")) {
+    return new SignerServiceError(
+      "sign_failed",
+      "Browser signer could not produce a valid event signature. Select a different signer or use a local voter nsec.",
+    );
+  }
   return new SignerServiceError("sign_failed", message);
 }
 
@@ -419,6 +425,12 @@ export function createSignerService(): SignerService {
         const signed = await signEvent.call(owner, event);
         if (!signed || typeof signed !== "object") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid signed event.");
+        }
+        if (!verifyEvent(signed as Parameters<typeof verifyEvent>[0])) {
+          throw new SignerServiceError(
+            "sign_failed",
+            "Browser signer returned an invalid event signature. Select a different signer or use a local voter nsec.",
+          );
         }
         return signed as T & { id?: string; sig?: string; pubkey?: string };
       } catch (error) {

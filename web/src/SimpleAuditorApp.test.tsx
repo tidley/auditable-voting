@@ -279,7 +279,7 @@ describe("SimpleAuditorApp", () => {
 
     render(<SimpleAuditorApp />);
 
-    expect(await screen.findByText(/No other definition variants were discoverable.*definition_q_first/i)).toBeTruthy();
+    expect(screen.queryByText(/No other definition variants were discoverable/i)).toBeNull();
   });
 
   it("lists same-ID definitions separately and pins verification to the selected organiser variant", async () => {

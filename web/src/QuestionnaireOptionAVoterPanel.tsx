@@ -836,6 +836,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
   const [submitInFlight, setSubmitInFlight] = useState(false);
+  const [finalSubmissionPublishedElectionId, setFinalSubmissionPublishedElectionId] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [manualResendClockMs, setManualResendClockMs] = useState(() => Date.now());
   const [voterMenuActionsMount, setVoterMenuActionsMount] = useState<HTMLElement | null>(null);
@@ -1454,6 +1455,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
     void (async () => {
       try {
+        // This path can run immediately after a new runtime mounts. Set the
+        // fragment-derived code here as well as in the setup effect so the
+        // first blind request cannot lose its private eligibility proof.
+        runtime.setBearerInviteCode(inviteContext.inviteCode, {
+          credentialsPerVoter: inviteContext.credentialsPerVoter,
+          ballotGroup: inviteContext.ballotGroup,
+        });
         const publicInvite = await buildPublicQuestionnaireInvite(localVoterNpub);
         const coordinatorNpub = publicInvite?.coordinatorNpub?.trim()
           || inviteContext.coordinatorNpub?.trim()
@@ -1528,7 +1536,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           setActiveInvite(null);
           setStatus(inviteStatus.claimedByThisDevice
             ? "Invite already claimed by this device/account."
-            : formatBlindRequestStatus("sent"));
+            : null);
           setRefreshNonce((value) => value + 1);
         } finally {
           delete autoRequestInFlightForRef.current[requestKey];
@@ -2696,9 +2704,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setActiveInvite(null);
       setStatus(wasAlreadyWaiting
         ? formatBlindRequestStatus("resent")
-        : claimedByThisDevice
-          ? "Invite already claimed by this device/account."
-          : formatBlindRequestStatus("sent")
+          : claimedByThisDevice
+            ? "Invite already claimed by this device/account."
+            : null
       );
       setRefreshNonce((value) => value + 1);
       return true;
@@ -2895,6 +2903,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     setSubmitInFlight(true);
+    if (options?.submitAllQuestions) {
+      setFinalSubmissionPublishedElectionId(currentQuestionnaireId);
+    }
     try {
       await nextPaint();
       const submitQuestionIds = perQuestionMode
@@ -2943,7 +2954,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         submitRequiredQuestionIds,
         submitQuestionIds.length > 0
           ? { questionIds: submitQuestionIds, credentialIndex: activeCredentialIndex }
-          : undefined,
+        : undefined,
       );
       if (perQuestionMode) {
         if (moveToNextProxyCredentialIfNeeded(submitQuestionIds)) {
@@ -2962,6 +2973,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
       setRefreshNonce((value) => value + 1);
     } catch (error) {
+      console.error("Questionnaire ballot submission failed", {
+        questionnaireId: currentQuestionnaireId || electionId,
+        submitAllQuestions: Boolean(options?.submitAllQuestions),
+        error,
+      });
+      if (options?.submitAllQuestions) {
+        setFinalSubmissionPublishedElectionId(null);
+      }
       setStatus(error instanceof Error ? error.message : "Submit failed.");
     } finally {
       setSubmitInFlight(false);
@@ -3035,7 +3054,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus(formatBlindRequestStatus("sent"));
+        setStatus(null);
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Request failed.");
@@ -3283,7 +3302,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus(formatBlindRequestStatus("sent"));
+        setStatus(null);
         setRefreshNonce((value) => value + 1);
       })().catch((error) => {
         setStatus(error instanceof Error ? error.message : "Could not send blind ballot request.");
@@ -3731,6 +3750,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ? allQuestionCredentialsReadyForQuestionnaire
     : Boolean(snapshotForAction?.credentialReady);
   useEffect(() => {
+    if (questionnaireCredentialReady && /invalid signature|browser signer could not produce/i.test(status ?? "")) {
+      setStatus(null);
+    }
+  }, [questionnaireCredentialReady, status]);
+  useEffect(() => {
     props.onBallotReceivedChange?.(questionnaireCredentialReady);
   }, [props.onBallotReceivedChange, questionnaireCredentialReady]);
   useEffect(() => () => {
@@ -3755,6 +3779,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const canViewResults = perQuestionMode
     ? allQuestionResponsesSubmitted
     : Boolean(snapshot?.submission);
+  const finalSubmissionPublished = finalSubmissionPublishedElectionId === currentQuestionnaireId;
   const previousQuestionIndex = findAdjacentQuestionIndex(activeQuestionIndex, -1);
   const nextQuestionIndex = findAdjacentQuestionIndex(activeQuestionIndex, 1);
   const hasAdjacentQuestion = previousQuestionIndex >= 0 || nextQuestionIndex >= 0;
@@ -3762,20 +3787,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && hasAdjacentQuestion
     && nextQuestionIndex < 0;
   const showSubmitFromQuestionNav = isLastQuestionInQuestionNav
-    && !allQuestionResponsesSubmitted;
-  const showViewResultsFromQuestionNav = isLastQuestionInQuestionNav && canViewResults;
+    && !allQuestionResponsesSubmitted
+    && !finalSubmissionPublished;
+  const showViewResultsFromQuestionNav = isLastQuestionInQuestionNav && (canViewResults || finalSubmissionPublished);
   const canSubmitFromQuestionNav = showSubmitFromQuestionNav
     && canSubmitNow
     && questionnaireCredentialReady;
-  const submitBlockedMessage = showSubmitFromQuestionNav && !showViewResultsFromQuestionNav && !canSubmitFromQuestionNav
-    ? !questionnaireCredentialReady
-      ? "Your ballot is still being prepared. Keep this page open or resend the ballot request from the menu."
+  const submitFromQuestionNavLabel = firstMissingRequiredQuestionIndex >= 0
+    ? `Answer question ${firstMissingRequiredQuestionIndex + 1}`
+    : !questionnaireCredentialReady
+      ? "Waiting for ballot credential"
       : !snapshotForAction?.loginVerified
-        ? "Log in before submitting your vote."
-        : !canSubmitNow
-          ? "This vote is not ready to submit yet. Check that every required answer is complete."
-          : "This vote cannot be submitted yet."
-    : "";
+        ? "Log in to submit"
+        : submitInFlight
+          ? "Submitting..."
+          : "Submit";
   const hasGroupSpecificQuestions = Boolean(currentDefinition?.questions.some((question) => questionRequiredScope(question)));
   const showMainOnlyScopeWarning = questionnaireCredentialReady
     && (!activeBallotGroup || activeBallotGroup === "0")
@@ -4771,10 +4797,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 </span>
               </UiButton>
               <UiButton
-                icon={showViewResultsFromQuestionNav ? "view" : showSubmitFromQuestionNav ? submitInFlight ? "spinner" : "send" : "chevronRight"}
+                icon={submitInFlight ? "spinner" : showViewResultsFromQuestionNav ? "view" : showSubmitFromQuestionNav ? "send" : "chevronRight"}
                 iconPosition={showViewResultsFromQuestionNav || showSubmitFromQuestionNav ? "start" : "end"}
                 className={`simple-voter-secondary simple-questionnaire-stepper-button simple-questionnaire-stepper-button-next${questionNavForwardHighlighted ? " is-ready" : ""}${showSubmitFromQuestionNav || showViewResultsFromQuestionNav ? " is-submit" : ""}`}
-                isDisabled={showViewResultsFromQuestionNav ? false : showSubmitFromQuestionNav ? submitInFlight || (!canSubmitFromQuestionNav && firstMissingRequiredQuestionIndex < 0) : nextQuestionIndex < 0}
+                isDisabled={submitInFlight || (showViewResultsFromQuestionNav ? false : showSubmitFromQuestionNav ? !canSubmitFromQuestionNav && firstMissingRequiredQuestionIndex < 0 : nextQuestionIndex < 0)}
                 onPress={() => {
                   if (showViewResultsFromQuestionNav) {
                     viewResults();
@@ -4796,16 +4822,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 }}
               >
                 <span className='simple-questionnaire-stepper-copy'>
-                  <strong>{showViewResultsFromQuestionNav ? "View results" : showSubmitFromQuestionNav ? submitInFlight ? "Submitting..." : "Submit" : "Next"}</strong>
+                  <strong>{submitInFlight ? "Submitting..." : showViewResultsFromQuestionNav ? "View results" : showSubmitFromQuestionNav ? submitFromQuestionNavLabel : "Next"}</strong>
                   {showViewResultsFromQuestionNav || showSubmitFromQuestionNav ? null : (
                     <small>{nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
                   )}
                 </span>
               </UiButton>
+              {status ? (
+                <p className='simple-voter-note simple-questionnaire-submit-status' role='status' aria-live='polite'>
+                  {status}
+                </p>
+              ) : null}
             </div>
-          ) : null}
-          {submitBlockedMessage ? (
-            <p className='simple-voter-note' role='status'>{submitBlockedMessage}</p>
           ) : null}
         </div>
       )}
@@ -4869,7 +4897,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ) : null}
       </div>
       ) : null}
-      {!showQuestionnaireLanding && status ? (
+      {!showQuestionnaireLanding && status && !showQuestionNavigation ? (
         <p className='simple-voter-note' role='status' aria-live='polite'>{status}</p>
       ) : null}
       {displaySubmission ? (

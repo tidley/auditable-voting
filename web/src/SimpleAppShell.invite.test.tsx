@@ -482,7 +482,7 @@ describe("SimpleAppShell invite-link login", () => {
     await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
 
     expect(screen.queryByRole("tab", { name: "Find organiser" })).toBeNull();
-    expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Settings" })).toBeTruthy();
     expect(screen.queryByText("Identity")).toBeNull();
     expect(screen.getByRole("tab", { name: "Vote" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Messages" })).toBeTruthy();

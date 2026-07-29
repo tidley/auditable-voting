@@ -154,11 +154,14 @@ describe("QuestionnaireResultsDashboard", () => {
     );
 
     expect(screen.queryByText("0% · 0 votes")).toBeNull();
-    expect(screen.getAllByText("0% 0 VOTES")).toHaveLength(4);
+    expect(screen.getAllByText("0% 0 VOTES · 0 published")).toHaveLength(4);
 
-    const yesLabel = screen.getByText("Yes");
-    const noLabel = screen.getByText("No");
-    expect(Boolean(yesLabel.compareDocumentPosition(noLabel) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    const optionLabels = [...container.querySelectorAll<HTMLSpanElement>(".simple-auditor-option-bar-label > span")];
+    const yesLabel = optionLabels.find((label) => label.textContent === "Yes");
+    const noLabel = optionLabels.find((label) => label.textContent === "No");
+    expect(yesLabel).toBeTruthy();
+    expect(noLabel).toBeTruthy();
+    expect(Boolean(yesLabel?.compareDocumentPosition(noLabel!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("filters result cards instantly by question and option text", async () => {
@@ -349,9 +352,15 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getByText("2/2 accepted (100%) · 1 live")).toBeTruthy();
-    expect(screen.getByText("50% 1 VOTE · 1 live")).toBeTruthy();
+    expect(screen.getByText("2/2 accepted (100%) · 1 published · 1 live")).toBeTruthy();
+    expect(screen.getByText("50% 1 VOTE · 0 published · 1 live")).toBeTruthy();
     expect(container.querySelector(".simple-auditor-results-progress-live")).toBeTruthy();
+    const optionLabels = [...container.querySelectorAll<HTMLSpanElement>(".simple-auditor-option-bar-label > span")];
+    const yesLabel = optionLabels.find((label) => label.textContent === "Yes");
+    const noLabel = optionLabels.find((label) => label.textContent === "No");
+    expect(yesLabel).toBeTruthy();
+    expect(noLabel).toBeTruthy();
+    expect(Boolean(yesLabel?.compareDocumentPosition(noLabel!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("shows provisional per-question votes before final submissions exist", () => {
@@ -394,7 +403,7 @@ describe("QuestionnaireResultsDashboard", () => {
     );
 
     expect(screen.getAllByText("Q1. Ready?").length).toBeGreaterThan(0);
-    expect(screen.getByText("100% 1 VOTE · 1 live")).toBeTruthy();
+    expect(screen.getByText("100% 1 VOTE · 0 published · 1 live")).toBeTruthy();
   });
 
   it("replaces provisional votes from the same anonymous author", () => {
@@ -448,7 +457,7 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(container.textContent).toMatch(/No[\s\S]*100% 1 VOTE · 1 live/);
+    expect(container.textContent).toMatch(/No[\s\S]*100% 1 VOTE · 0 published · 1 live/);
     expect(container.textContent).toMatch(/Yes[\s\S]*0% 0 VOTES/);
     expect(container.textContent).not.toContain("2 live");
   });

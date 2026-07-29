@@ -214,7 +214,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
   it("uses the standard coordinator questionnaire form even when option_a is requested", () => {
     render(<QuestionnaireCoordinatorPanel />);
-    expect(screen.getByText("Draft")).toBeTruthy();
+    expect(screen.getByRole("option", { name: / \[Draft\]$/ })).toBeTruthy();
     expect(screen.getByLabelText("Name")).toBeTruthy();
     expect(screen.getByLabelText("Questionnaire ID")).toBeTruthy();
     expect(screen.getByText("Generate ID")).toBeTruthy();
@@ -312,14 +312,14 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const workerNpubInput = screen.getByLabelText("Audit proxy npub") as HTMLInputElement;
     const previousId = idInput.value;
 
-    expect(screen.queryByLabelText("Generated audit proxy nsec (store securely)")).toBeNull();
+    expect(screen.queryByLabelText("Private key")).toBeNull();
     expect(workerNpubInput.value).toBe("");
 
     fireEvent(window, new Event("auditable-voting:coordinator-new"));
 
     expect(idInput.value).toMatch(/^q_\d{6}_\d{6}$/);
     expect(idInput.value).not.toBe(previousId);
-    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
+    const workerNsecInput = await screen.findByLabelText("Private key") as HTMLTextAreaElement;
     await waitFor(() => {
       expect(workerNsecInput.value).toMatch(/^nsec1/);
       expect(workerNpubInput.value).toMatch(/^npub1/);
@@ -358,7 +358,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     await waitFor(() => {
       expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(liveWorkerNpub);
     });
-    expect(screen.queryByLabelText("Generated audit proxy nsec (store securely)")).toBeNull();
+    expect(screen.queryByLabelText("Private key")).toBeNull();
     expect((document.querySelector("#delegated-worker-relays") as HTMLTextAreaElement | null)?.value).toContain("wss://relay.nostr.net");
   });
 
@@ -396,20 +396,16 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     );
 
     const workerNpubInput = await screen.findByLabelText("Audit proxy npub") as HTMLInputElement;
-    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
+    const workerNsecInput = await screen.findByLabelText("Private key") as HTMLTextAreaElement;
     await waitFor(() => {
       expect(workerNpubInput.value).toMatch(/^npub1/);
       expect(workerNpubInput.value).not.toBe(staleWorkerNpub);
       expect(workerNsecInput.value).toMatch(/^nsec1/);
     });
 
-    const quickStart = screen.getByLabelText("Quick start command") as HTMLTextAreaElement;
-    expect(quickStart.value).toContain(workerNsecInput.value);
-    expect(quickStart.value).toContain("AUDITABLE_VOTING_WORKER_STATE_DIR:-./.worker-state/");
-    expect(quickStart.value).toContain(workerNpubInput.value);
-    expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net');
+    expect(screen.getByRole("button", { name: "Copy quick start" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "Confirm configuration" }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByText(/Press confirm at any time/i)).toBeTruthy();
+    expect(screen.getByText("Not confirmed automatically?")).toBeTruthy();
   });
 
   it("does not replace the generated setup account with an older proxy heartbeat", async () => {
@@ -442,10 +438,9 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     await waitFor(() => expect(fetchOptionAWorkerStatusDmsWithNsec).toHaveBeenCalled());
     await new Promise((resolve) => window.setTimeout(resolve, 25));
     const generatedWorkerNpub = (screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value;
-    const quickStart = screen.getByLabelText("Quick start command") as HTMLTextAreaElement;
     expect(generatedWorkerNpub).toMatch(/^npub1/);
     expect(generatedWorkerNpub).not.toBe(oldWorkerNpub);
-    expect(quickStart.value).toContain(generatedWorkerNpub);
+    expect(screen.getByRole("button", { name: "Copy quick start" })).toBeTruthy();
   });
 
   it("reuses a generated proxy account when the setup page is reopened", async () => {
@@ -454,9 +449,9 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
     render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate new account" }));
+    fireEvent.click(screen.getByRole("button", { name: "New account" }));
 
-    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
+    const workerNsecInput = await screen.findByLabelText("Private key") as HTMLTextAreaElement;
     const workerNpubInput = screen.getByLabelText("Audit proxy npub") as HTMLInputElement;
     const generatedWorkerNsec = workerNsecInput.value;
     const generatedWorkerNpub = workerNpubInput.value;
@@ -471,7 +466,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     cleanup();
     render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
 
-    const restoredWorkerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
+    const restoredWorkerNsecInput = await screen.findByLabelText("Private key") as HTMLTextAreaElement;
     await waitFor(() => {
       expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toMatch(/^npub1/);
       expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(generatedWorkerNpub);
@@ -531,9 +526,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
 
-    const quickStart = await screen.findByLabelText("Quick start command") as HTMLTextAreaElement;
-    expect(quickStart.value).toContain('WORKER_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://relay.damus.io,wss://relay.primal.net"');
-    expect(quickStart.value).toContain('WORKER_DM_RELAYS="wss://vm-1734.lnvps.cloud/,wss://relay.nostr.net,wss://nos.lol,wss://relay.primal.net"');
+    expect(await screen.findByRole("button", { name: "Copy quick start" })).toBeTruthy();
     expect(screen.queryByText("Audit proxy downloads")).toBeNull();
     expect(screen.queryByLabelText("Direct command-line launch")).toBeNull();
   });
@@ -588,7 +581,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     await waitFor(() => {
       const optionText = [...selector.options].map((option) => option.textContent ?? "");
       expect(optionText).toEqual([
-        "1. First local questionnaire - q_first_local",
+        "1. First local questionnaire - q_first_local [Draft]",
         "2. Second local questionnaire - q_second_local",
       ]);
       expect(optionText.some((text) => text.includes("Other organiser questionnaire"))).toBe(false);
@@ -870,18 +863,18 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
 
     await waitFor(() => {
-      expect(selector.options[0]?.textContent).toBe("1. Live draft - q_live_draft");
+      expect(selector.options[0]?.textContent).toBe("1. Live draft - q_live_draft [Draft]");
     });
 
     fireEvent.change(titleInput, { target: { value: "Edited live draft" } });
     await waitFor(() => {
-      expect(selector.options[0]?.textContent).toBe("1. Edited live draft - q_live_draft");
+      expect(selector.options[0]?.textContent).toBe("1. Edited live draft - q_live_draft [Draft]");
     });
 
     fireEvent.change(questionnaireIdInput, { target: { value: "q_edited_live" } });
     await waitFor(() => {
       expect([...selector.options].map((option) => option.value)).toEqual(["q_edited_live"]);
-      expect(selector.options[0]?.textContent).toBe("1. Edited live draft - q_edited_live");
+      expect(selector.options[0]?.textContent).toBe("1. Edited live draft - q_edited_live [Draft]");
     });
   });
 
@@ -994,7 +987,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     expect(titleInput.matches(":disabled")).toBe(false);
     expect(questionnaireIdInput.matches(":disabled")).toBe(false);
-    expect(screen.getByRole("heading", { name: /Add session/i })).toBeTruthy();
+    expect(screen.getByRole("option", { name: / \[Draft\]$/ })).toBeTruthy();
   });
 
   it("keeps locally cached drafts editable until they have a published signal", async () => {
@@ -1094,7 +1087,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       complete: false,
     });
     expect(latestReadiness.find((item: { id: string }) => item.id === "answers")).toMatchObject({
-      label: "Questions Complete",
+      label: "Add a Question",
       group: "questionnaire",
       action: "setup_questions",
       stageLabel: "2",
@@ -1109,6 +1102,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(latestReadiness.find((item: { id: string }) => item.id === "proxy")).toMatchObject({
       label: "Set Up Proxy",
       group: "session",
+      action: "setup_proxy",
+      disabled: true,
       optional: true,
       stageLabel: "3a",
       complete: false,
@@ -1117,6 +1112,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       label: "Results & Voters",
       group: "session",
       action: "invite_voters",
+      disabled: true,
       stageLabel: "4",
       complete: false,
     });
@@ -1242,6 +1238,15 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       coordinatorNpub,
       electionId: definition.questionnaireId,
     })?.blindSigningPrivateKey?.keyId).toBe(definition?.blindSigningPublicKey?.keyId);
+  });
+
+  it("marks incomplete question prompts as missing", () => {
+    render(<QuestionnaireCoordinatorPanel />);
+
+    const prompt = screen.getByPlaceholderText("Question prompt");
+    expect(prompt.getAttribute("aria-invalid")).toBe("true");
+    expect(prompt.className).toContain("is-missing");
+    expect(prompt.closest(".simple-questionnaire-question-card")?.className).toContain("is-incomplete");
   });
 
   it("does not configure the audit proxy when the local blind private key does not match the published vote key", async () => {
@@ -1835,7 +1840,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const confirmButton = await screen.findByRole("button", { name: "Confirm configuration" });
     await waitFor(() => {
       expect(sharedNostrPoolMocks.querySync).toHaveBeenCalled();
-      expect(screen.getByText("Ended: Proxy config resend")).toBeTruthy();
+      expect(screen.getByRole("option", { name: / \[Ended\]$/ })).toBeTruthy();
     });
     sharedNostrPoolMocks.querySync.mockClear();
     sharedNostrPoolMocks.querySync.mockImplementation(() => new Promise(() => undefined));

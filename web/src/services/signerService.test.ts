@@ -76,6 +76,20 @@ describe("signerService", () => {
     expect(pubkey).toBe("c".repeat(64));
   });
 
+  it("identifies an invalid browser event signature", async () => {
+    const target = globalThis as typeof globalThis & { nostr?: unknown };
+    target.nostr = {
+      async signEvent<T extends Record<string, unknown>>(event: T) {
+        return { ...event, pubkey: "c".repeat(64), id: "id", sig: "sig" };
+      },
+    };
+
+    const signer = createSignerService();
+    await expect(signer.signEvent({ kind: 1, created_at: 1, tags: [], content: "" })).rejects.toThrow(
+      "Browser signer returned an invalid event signature",
+    );
+  });
+
   it("returns unavailable when no browser signer exists", async () => {
     const signer = createSignerService();
     await expect(signer.getPublicKey()).rejects.toSatisfy((error) => {

@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { deriveIdentityWords } from "./identityWords";
+import { buildPrivateInviteCreationFeedback } from "./simpleCoordinatorFeedback";
 import {
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleDmAcknowledgements,
@@ -412,9 +413,9 @@ function scheduleAfterNextPaint(callback: () => void) {
 const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
 const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
-  { id: "answers", label: "Questions Complete", shortLabel: "Done", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
+  { id: "answers", label: "Add a Question", shortLabel: "Questions", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
   { id: "publish", label: "Published", shortLabel: "Pub", complete: false, stageLabel: "3", group: "session" },
-  { id: "proxy", label: "Set Up Proxy", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session" },
+  { id: "proxy", label: "Set Up Proxy", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session", action: "setup_proxy" },
   { id: "invite", label: "Results & Voters", shortLabel: "Voters", complete: false, stageLabel: "4", group: "session", action: "invite_voters" },
 ];
 
@@ -423,43 +424,6 @@ function questionnaireReadinessStatusLabel(item: QuestionnaireReadinessItem) {
     return "Optional";
   }
   return item.complete ? "Complete" : "Pending";
-}
-
-function questionnaireReadinessSubtitle(item: QuestionnaireReadinessItem) {
-  if (item.id === "basics") {
-    return "Edit the basic information";
-  }
-  if (item.id === "answers") {
-    return item.complete ? "All questions added" : "Add questions";
-  }
-  if (item.id === "publish") {
-    return item.complete ? "Questionnaire is published" : "Go Live";
-  }
-  if (item.id === "proxy") {
-    return item.complete ? "Proxy is configured" : "Configure proxy";
-  }
-  if (item.id === "invite") {
-    return item.complete ? "Voters have access" : "Results & Voters";
-  }
-  return questionnaireReadinessStatusLabel(item);
-}
-
-function QuestionnaireReadinessIcon({
-  item,
-  index,
-}: {
-  item: QuestionnaireReadinessItem;
-  index: number;
-}) {
-  return (
-    <span
-      className={`simple-sidebar-readiness-icon${item.complete ? " is-complete" : " is-pending"}`}
-      data-stage={item.id}
-      aria-hidden='true'
-    >
-      {item.complete ? <UiIcon name='check' /> : item.stageLabel ?? index + 1}
-    </span>
-  );
 }
 
 function questionnaireReadinessGroupIcon(group: QuestionnaireReadinessItem["group"] | "profile"): UiIconName {
@@ -1274,24 +1238,6 @@ type InviteQrButtonProps = {
 
 type InviteQrPreview = Pick<InviteQrButtonProps, "value" | "label" | "title">;
 
-export function buildPrivateInviteCreationFeedback(input: {
-  inviteUrl: string;
-  credentialsPerVoter: 1 | 2;
-  copied: boolean;
-}) {
-  const isProxy = input.credentialsPerVoter === 2;
-  return {
-    preview: {
-      value: input.inviteUrl,
-      label: isProxy ? "proxy private invite link" : "private invite link",
-      title: isProxy ? "Proxy private invite link" : "Private invite link",
-    } satisfies InviteQrPreview,
-    status: input.copied
-      ? (isProxy ? "Proxy private link copied." : "Private link copied.")
-      : (isProxy ? "Proxy private link created and QR shown." : "Private link created and QR shown."),
-  };
-}
-
 const inviteQrSrcCache = new Map<string, string>();
 
 function useInviteQrSrc(value: string) {
@@ -1773,9 +1719,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [privateInviteLinksByHash, setPrivateInviteLinksByHash] = useState<Record<string, string>>({});
   const [privateInviteDraftBallotGroup, setPrivateInviteDraftBallotGroup] = useState("");
   const [privateInviteCreateCopied, setPrivateInviteCreateCopied] = useState(false);
+  const [privateInviteCreateInFlight, setPrivateInviteCreateInFlight] = useState(false);
   const [expandedInviteQr, setExpandedInviteQr] = useState<InviteQrPreview | null>(null);
   const closeExpandedInviteQr = useCallback(() => setExpandedInviteQr(null), []);
   const privateInviteCreateCopiedTimerRef = useRef<number | null>(null);
+  const privateInviteCreateInFlightRef = useRef(false);
   const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
@@ -1795,6 +1743,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   ] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const activeCoordinatorNpub = signerNpub.trim() || keypair?.npub?.trim() || "";
+  const previousCoordinatorNpubRef = useRef(activeCoordinatorNpub);
   const hasUnreadMessages = useHelplineUnreadIndicator({
     actorNsec: signerNpub ? "" : (keypair?.nsec ?? ""),
     suppressUnread: activeTab === "messages",
@@ -1884,6 +1833,19 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     setParticipantBallotGroupFocusId(null);
     setPendingParticipantSettingsByNpub({});
   }, [activeCoordinatorNpub, optionAElectionId]);
+  useEffect(() => {
+    if (previousCoordinatorNpubRef.current && previousCoordinatorNpubRef.current !== activeCoordinatorNpub) {
+      setQuestionnaireRosterAnnouncement({ questionnaireId: "", state: null });
+      setDraftQuestionnaireId("");
+      setSelectedVotingId("");
+      setNewRoundMode(false);
+      setQuestionnaireReadinessItems(DEFAULT_QUESTIONNAIRE_READINESS_ITEMS);
+      setQuestionnairePrimaryPublishAction(null);
+      setActiveReadinessItemId("basics");
+      setSelectedActiveWorkerDelegation(null);
+    }
+    previousCoordinatorNpubRef.current = activeCoordinatorNpub;
+  }, [activeCoordinatorNpub]);
   const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
   const optionACoordinatorRuntime = useMemo(() => (
     optionAElectionId
@@ -2184,11 +2146,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }
       row.admittedEntry = admittedEntryByNpub.get(row.npub) ?? null;
     };
-    const privateInviteRowKey = (entry: BearerInviteCodeEntry) => {
-      const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
-      return redeemedNpub || `private-invite:${entry.codeHash}`;
-    };
-
     for (const entry of visibleOptionAKnownVoters) {
       const row = ensureRow(entry.invitedNpub);
       if (row) {
@@ -2203,6 +2160,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         row.pendingAuthorization = entry;
       }
     }
+    const claimantNpubByInviteHash = new Map(
+      visibleOptionAKnownVoters.flatMap((entry) => {
+        const inviteCodeHash = entry.inviteCodeHash?.trim().toLowerCase();
+        return inviteCodeHash ? [[inviteCodeHash, entry.invitedNpub] as const] : [];
+      }),
+    );
+    const privateInviteRowKey = (entry: BearerInviteCodeEntry) => {
+      const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+      return redeemedNpub || claimantNpubByInviteHash.get(entry.codeHash.trim().toLowerCase()) || `private-invite:${entry.codeHash}`;
+    };
     for (const entry of privateInviteCodeEntries) {
       const row = ensureRow(privateInviteRowKey(entry));
       if (row && !row.privateInviteEntry) {
@@ -2410,7 +2377,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const responseIdentityNpub = submissionEntry?.submission.responseNpub?.trim()
         || responseDetail?.response.authorPubkey?.trim()
         || "";
-      const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
+      const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim()
+        || (privateInviteEntry
+          && currentQuestionnaireEntry?.inviteCodeHash?.trim().toLowerCase() === privateInviteEntry.codeHash.trim().toLowerCase()
+          ? currentQuestionnaireEntry.invitedNpub
+          : "");
       const isUnclaimedPrivateInvite = Boolean(privateInviteEntry && !privateInviteRedeemedNpub);
       const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
       const privateInviteActive = privateInviteEntry?.state === "available";
@@ -5093,6 +5064,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     setSubmittedVotes([]);
     setNewRoundMode(false);
     setDraftQuestionnaireId(nextQuestionnaireId);
+    setQuestionnaireRosterAnnouncement({ questionnaireId: "", state: null });
+    setQuestionnaireReadinessItems(DEFAULT_QUESTIONNAIRE_READINESS_ITEMS);
+    setQuestionnairePrimaryPublishAction(null);
+    setActiveReadinessItemId("basics");
+    setSelectedActiveWorkerDelegation(null);
     setActiveTab("configure");
     sentFollowAckStateRef.current = {};
     sentRosterStateRef.current = {};
@@ -5902,7 +5878,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 return publishWorkerElectionConfig(config, { force, approvedVoterNpub });
               }
               lastWorkerConfigSyncSkipReasonRef.current = "config_unavailable";
-              console.info("[worker-config] sync skipped", { electionId, reason: "config_unavailable", force });
               return false;
             },
           };
@@ -6025,6 +6000,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       setAdmittedVoterStatus("Publish or open a vote first.");
       return;
     }
+    if (privateInviteCreateInFlightRef.current) {
+      return;
+    }
+    privateInviteCreateInFlightRef.current = true;
+    setPrivateInviteCreateInFlight(true);
+    setAdmittedVoterStatus("Creating private link...");
     try {
       const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
       const publishedBlindKeyId = cachedDefinition?.blindSigningPublicKey?.keyId?.trim() ?? "";
@@ -6035,13 +6016,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       if (!publishedBlindKeyId) {
         await optionACoordinatorRuntime.ensureBlindSigningPublicKey();
       }
-      const publicDelegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+      void fetchQuestionnaireActiveWorkerDelegationForCapability({
         questionnaireId: electionId,
         capability: "issue_blind_tokens",
         coordinatorNpub: activeCoordinatorNpub.trim(),
         relays: cachedDefinition?.questionnaireRelays,
-      }).catch(() => null);
-      if (publicDelegation) {
+      }).then((publicDelegation) => {
+        if (!publicDelegation) {
+          return;
+        }
         upsertStoredWorkerDelegation({
           electionId,
           mode: "delegated_worker",
@@ -6050,27 +6033,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           lastUpdatedAt: new Date().toISOString(),
         });
         setSelectedActiveWorkerDelegation(publicDelegation);
-      }
-      const knownWorkerRouting = loadElectionSummary(electionId)?.issueBlindTokensWorker ?? null;
-      const knownWorkerRoutingActive = Boolean(
-        knownWorkerRouting?.workerNpub?.trim()
-        && Date.parse(knownWorkerRouting.expiresAt ?? "") > Date.now(),
-      );
-      if (knownWorkerRoutingActive && !loadStoredWorkerDelegation(electionId)?.activeDelegation) {
-        throw new Error("Could not recover the active audit proxy configuration. Check the relay connection and try again before creating a private link.");
-      }
+      }).catch(() => {
+        // Worker discovery is best-effort and must not delay link creation.
+      });
       const credentialsPerVoter = options?.credentialsPerVoter === 2 ? 2 : 1;
       const ballotGroup = normaliseQuestionnaireBallotGroup(options?.ballotGroup);
       const inviteCode = generateQuestionnaireInviteCode();
       const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
       optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash, { credentialsPerVoter, ballotGroup });
       const workerConfigRequired = buildActiveWorkerElectionConfigSnapshot(electionId) !== null;
-      const workerConfigSynced = await syncActiveWorkerElectionConfig(electionId).catch(() => false);
-      if (workerConfigRequired && !workerConfigSynced) {
-        optionACoordinatorRuntime.revokeBearerInviteCode(inviteCodeHash);
-        setKnownVoterInviteRefreshNonce((value) => value + 1);
-        throw new Error("Could not make the private link available to the audit proxy. Check the relay connection and try again.");
-      }
       const inviteUrl = buildQuestionnaireInviteUrl({
         electionId,
         coordinatorNpub: activeCoordinatorNpub.trim() || undefined,
@@ -6087,8 +6058,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         [inviteCodeHash]: inviteUrl,
       }));
       const copied = await tryWriteClipboard(inviteUrl);
-      const feedback = buildPrivateInviteCreationFeedback({ inviteUrl, credentialsPerVoter, copied });
-      setExpandedInviteQr(feedback.preview);
+      const feedback = buildPrivateInviteCreationFeedback({ credentialsPerVoter, copied });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       if (copied) {
         showPrivateInviteCreateCopied();
@@ -6096,8 +6066,20 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         setPrivateInviteCreateCopied(false);
       }
       setAdmittedVoterStatus(feedback.status);
+      if (workerConfigRequired) {
+        void syncActiveWorkerElectionConfig(electionId).then((synced) => {
+          if (!synced) {
+            setAdmittedVoterStatus("Private link created, but the audit proxy configuration is still pending. The voter request will be held until it arrives.");
+          }
+        }).catch(() => {
+          setAdmittedVoterStatus("Private link created, but the audit proxy configuration is still pending. The voter request will be held until it arrives.");
+        });
+      }
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not create private link.");
+    } finally {
+      privateInviteCreateInFlightRef.current = false;
+      setPrivateInviteCreateInFlight(false);
     }
   }
 
@@ -8783,7 +8765,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   ]);
 
   const questionnaireReadinessRequiredItems = questionnaireReadinessItems.filter((item) => !item.optional);
-  const questionnaireReadinessCompleteCount = questionnaireReadinessRequiredItems.filter((item) => item.complete).length;
   const questionnaireSetupReadinessItems = questionnaireReadinessItems.filter((item) => item.group === "questionnaire");
   const sessionReadinessItems = questionnaireReadinessItems.filter((item) => item.group !== "questionnaire");
 
@@ -8794,21 +8775,20 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       || (item.id === "publish" && (activeTab === "configure" || activeTab === "participants"))
     );
     const isPrimaryPublishAction = item.id === "publish" && questionnairePrimaryPublishAction;
-    const className = `simple-sidebar-readiness-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${(item.action || isPrimaryPublishAction) ? " is-action" : ""}${isActive ? " is-active" : ""}`;
+    const isDisabled = item.disabled || (isPrimaryPublishAction ? questionnairePrimaryPublishAction.disabled : false);
+    const className = `simple-sidebar-readiness-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${isDisabled ? " is-disabled" : ""}${(item.action || isPrimaryPublishAction) && !isDisabled ? " is-action" : ""}${isActive ? " is-active" : ""}`;
     const label = isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
     const content = (
       <>
         <span className='simple-sidebar-readiness-entry-main'>
-          <span className='simple-sidebar-readiness-entry-icon' aria-hidden='true'>
+          <span className={`simple-sidebar-readiness-entry-icon${item.complete ? " is-complete" : " is-pending"}`} aria-hidden='true'>
             <UiIcon name={questionnaireReadinessEntryIcon(item)} />
           </span>
           <span className='simple-sidebar-readiness-copy'>
             <span className='simple-sidebar-readiness-label'>{isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : item.label}</span>
-            <span className='simple-sidebar-readiness-description'>{isPrimaryPublishAction ? "Publish the questionnaire or its results" : questionnaireReadinessSubtitle(item)}</span>
           </span>
         </span>
         <span className='simple-sidebar-readiness-status'>
-          <QuestionnaireReadinessIcon item={item} index={index} />
           <UiIcon name='chevronRight' className='simple-sidebar-readiness-chevron' />
         </span>
       </>
@@ -8820,7 +8800,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         className={className}
         aria-current={isActive ? "page" : undefined}
         aria-label={label}
-        isDisabled={isPrimaryPublishAction ? questionnairePrimaryPublishAction.disabled : undefined}
+        isDisabled={isDisabled}
         onPress={() => isPrimaryPublishAction
           ? (setActiveReadinessItemId(item.id), setPrimaryPublishActionSignal((current) => current + 1))
           : handleReadinessAction(item)}
@@ -8846,9 +8826,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       || (item.id === "publish" && (activeTab === "configure" || activeTab === "participants"))
     );
     const isPrimaryPublishAction = item.id === "publish" && questionnairePrimaryPublishAction;
-    const className = `simple-sidebar-readiness-compact-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${(item.action || isPrimaryPublishAction) ? " is-action" : ""}${item.group === "questionnaire" ? " is-questionnaire" : ""}${isActive ? " is-active" : ""}`;
+    const isDisabled = item.disabled || (isPrimaryPublishAction ? questionnairePrimaryPublishAction.disabled : false);
+    const className = `simple-sidebar-readiness-compact-button${item.complete ? " is-complete" : " is-pending"}${item.optional ? " is-optional" : ""}${isDisabled ? " is-disabled" : ""}${(item.action || isPrimaryPublishAction) && !isDisabled ? " is-action" : ""}${item.group === "questionnaire" ? " is-questionnaire" : ""}${isActive ? " is-active" : ""}`;
     const label = isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : `${item.label}: ${questionnaireReadinessStatusLabel(item)}`;
-    const content = <QuestionnaireReadinessIcon item={item} index={index} />;
+    const content = (
+      <span className={`simple-sidebar-readiness-entry-icon${item.complete ? " is-complete" : " is-pending"}`} aria-hidden='true'>
+        <UiIcon name={questionnaireReadinessEntryIcon(item)} />
+      </span>
+    );
     return item.action || isPrimaryPublishAction ? (
       <UiButton
         key={item.id}
@@ -8857,7 +8842,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         aria-current={isActive ? "page" : undefined}
         title={isPrimaryPublishAction ? questionnairePrimaryPublishAction.label : `${item.shortLabel}: ${questionnaireReadinessStatusLabel(item)}`}
         aria-label={label}
-        isDisabled={isPrimaryPublishAction ? questionnairePrimaryPublishAction.disabled : undefined}
+        isDisabled={isDisabled}
         onPress={() => isPrimaryPublishAction
           ? (setActiveReadinessItemId(item.id), setPrimaryPublishActionSignal((current) => current + 1))
           : handleReadinessAction(item)}
@@ -8905,6 +8890,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     <main className={`simple-voter-shell simple-coordinator-shell${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}>
       <aside className='simple-coordinator-sidebar' aria-label='Organiser navigation'>
         <div className='simple-coordinator-sidebar-top'>
+          <UiButton
+            icon={sidebarCollapsed ? "chevronRight" : "chevronLeft"}
+            iconOnly
+            className='simple-coordinator-sidebar-collapse'
+            aria-label={sidebarCollapsed ? "Expand organiser menu" : "Collapse organiser menu"}
+            aria-pressed={sidebarCollapsed}
+            onPress={() => setSidebarCollapsed((current) => !current)}
+          />
           <div className='simple-coordinator-sidebar-menu-slot'>
             {accountMenu ?? (
               <UiButton
@@ -8920,20 +8913,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               </UiButton>
             )}
           </div>
-          <UiButton
-            icon={sidebarCollapsed ? "chevronRight" : "chevronLeft"}
-            iconOnly
-            className='simple-coordinator-sidebar-collapse'
-            aria-label={sidebarCollapsed ? "Expand organiser menu" : "Collapse organiser menu"}
-            aria-pressed={sidebarCollapsed}
-            onPress={() => setSidebarCollapsed((current) => !current)}
-          />
         </div>
         <section className='simple-coordinator-sidebar-readiness' aria-label='Readiness checklist'>
           <div className='simple-sidebar-readiness-expanded'>
-            <div className='simple-sidebar-readiness-head'>
-              <span>{questionnaireReadinessCompleteCount}/{questionnaireReadinessRequiredItems.length}</span>
-            </div>
             <div className='simple-sidebar-readiness-list'>
               <div className='simple-sidebar-readiness-group'>
                 <span className='simple-sidebar-readiness-group-label'>
@@ -8953,7 +8935,19 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             </div>
           </div>
           <div className='simple-sidebar-readiness-compact' aria-label='Readiness stages'>
-            {questionnaireReadinessItems.map((item, index) => renderCompactReadinessItem(item, index))}
+            <div className='simple-sidebar-readiness-group'>
+              <span className='simple-sidebar-readiness-compact-group-icon' aria-hidden='true'>
+                <UiIcon name={questionnaireReadinessGroupIcon("questionnaire")} />
+              </span>
+              {questionnaireSetupReadinessItems.map((item) => renderCompactReadinessItem(item, questionnaireReadinessItems.indexOf(item)))}
+            </div>
+            <div className='simple-sidebar-readiness-divider' aria-hidden='true' />
+            <div className='simple-sidebar-readiness-group'>
+              <span className='simple-sidebar-readiness-compact-group-icon' aria-hidden='true'>
+                <UiIcon name={questionnaireReadinessGroupIcon("session")} />
+              </span>
+              {sessionReadinessItems.map((item) => renderCompactReadinessItem(item, questionnaireReadinessItems.indexOf(item)))}
+            </div>
           </div>
         </section>
         <div className='simple-coordinator-sidebar-nav'>
@@ -8982,7 +8976,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   </span>
                   <span className='simple-sidebar-readiness-copy'>
                     <span className='simple-coordinator-nav-label'>Messages</span>
-                    <span className='simple-sidebar-readiness-description'>View your messages</span>
                   </span>
                 </span>
                 <span className='simple-sidebar-readiness-status simple-coordinator-nav-status'>
@@ -9003,7 +8996,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   </span>
                   <span className='simple-sidebar-readiness-copy'>
                     <span className='simple-coordinator-nav-label'>Settings</span>
-                    <span className='simple-sidebar-readiness-description'>Manage your preferences</span>
                   </span>
                 </span>
                 <span className='simple-sidebar-readiness-status simple-coordinator-nav-status'>
@@ -9033,6 +9025,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             aria-label='Setup'
           >
             <QuestionnaireCoordinatorPanel
+              key={`${activeCoordinatorNpub}:configure`}
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={optionAKnownVoterCount}
@@ -9072,6 +9065,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             aria-label='Audit proxy'
           >
             <QuestionnaireCoordinatorPanel
+              key={`${activeCoordinatorNpub}:proxy`}
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={optionAKnownVoterCount}
@@ -9112,6 +9106,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             aria-label='Voting'
           >
             <QuestionnaireCoordinatorPanel
+              key={`${activeCoordinatorNpub}:participants`}
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={optionAKnownVoterCount}
@@ -9148,10 +9143,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                       <div className='simple-invite-share-copy'>
                         <h3 className='simple-voter-question'>Participants</h3>
                       </div>
-                      <p className='simple-auditor-question-response-count simple-participants-shown-count'>
-                        <ParticipantsShownIcon />
-                        <span>{participantRosterVisibleCount}/{participantRosterTotalCount} shown</span>
-                      </p>
                   </div>
                   <UiTextField
                     inputClassName='simple-voter-input'
@@ -9182,7 +9173,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                  <div className='simple-invite-share-panel simple-invite-share-panel-combined' aria-label='Invite voters'>
 	                    <div className='simple-invite-share-heading simple-admitted-voters-heading'>
 	                      <div className='simple-invite-share-copy'>
-	                        <h3 className='simple-voter-question'>Invite voters</h3>
+	                        <h3 className='simple-voter-question simple-invite-section-title'>
+	                          <UiIcon name='invite' />
+	                          <span>Invite voters</span>
+	                        </h3>
 	                      </div>
 	                      <UiButton
 	                        icon={knownVoterContactsLoading ? "spinner" : "users"}
@@ -9285,21 +9279,40 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                    {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
 	                    {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
 	                    {optionAElectionId ? (
+	                      <>
 	                      <div className='simple-general-invite-block' aria-label='Share questionnaire link'>
 	                        <div className='simple-invite-share-heading simple-general-invite-heading'>
 	                          <div className='simple-invite-share-copy'>
-	                            <h3 className='simple-voter-question'>General invite</h3>
+	                            <h3 className='simple-voter-question simple-invite-section-title'>
+	                              <UiIcon name='share' />
+	                              <span>General invite</span>
+	                            </h3>
 	                          </div>
-	                          <InviteQrButton
-	                            value={publicQuestionnaireInviteUrl}
-	                            label='general invite link'
-	                            title='General invite link'
-	                            onExpand={setExpandedInviteQr}
-	                          />
+	                          <div className='simple-general-invite-controls'>
+	                            <UiButton
+	                              icon={isCopyLabelActive("public-questionnaire-invite") ? "check" : "copy"}
+	                              iconOnly
+	                              className='simple-voter-secondary'
+	                              aria-label={isCopyLabelActive("public-questionnaire-invite") ? "Copied general invite link" : "Copy general invite link"}
+	                              title={isCopyLabelActive("public-questionnaire-invite") ? "Copied" : "Copy general invite link"}
+	                              onPress={() => void copyPublicQuestionnaireInviteLink()}
+	                              isDisabled={!publicQuestionnaireInviteUrl}
+	                            />
+	                            <InviteQrButton
+	                              value={publicQuestionnaireInviteUrl}
+	                              label='general invite link'
+	                              title='General invite link'
+	                              onExpand={setExpandedInviteQr}
+	                            />
+	                          </div>
 	                        </div>
-	                        <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
-	                        <label className='simple-voter-field simple-private-invite-group-field'>
-	                          <span className='simple-voter-label'>Voter group for new private invite</span>
+	                      </div>
+	                      <section className='simple-private-invite-section' aria-label='Private invites'>
+	                        <div className='simple-private-invite-section-heading'>
+	                          <h3 className='simple-voter-question simple-invite-section-title'>
+	                            <UiIcon name='key' />
+	                            <span>Private invites</span>
+	                          </h3>
 	                          <UiSelect
 	                            selectClassName='simple-voter-input'
 	                            aria-label='Voter group for new private invite'
@@ -9310,34 +9323,27 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                              <option key={option.value || 'main'} value={option.value}>{option.label}</option>
 	                            ))}
 	                          </UiSelect>
-	                        </label>
-	                        <div className='simple-invite-share-actions'>
+	                        </div>
+	                        <div className='simple-private-invite-action-grid'>
 	                          <UiButton
-	                            icon={isCopyLabelActive("public-questionnaire-invite") ? "check" : "copy"}
+	                            icon={privateInviteCreateInFlight ? "spinner" : privateInviteCreateCopied ? "check" : "key"}
 	                            className='simple-voter-secondary'
-	                            onPress={() => void copyPublicQuestionnaireInviteLink()}
-	                            isDisabled={!publicQuestionnaireInviteUrl}
+	                            onPress={() => void createPrivateInviteCodeLink({ ballotGroup: privateInviteDraftBallotGroup })}
+	                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime || privateInviteCreateInFlight}
 	                          >
-	                            <span>{isCopyLabelActive("public-questionnaire-invite") ? "Copied" : "Copy link"}</span>
+	                            <span>{privateInviteCreateInFlight ? "Creating private link..." : privateInviteCreateCopied ? "Copied" : "Create private invite link"}</span>
 	                          </UiButton>
-		                          <UiButton
-		                            icon={privateInviteCreateCopied ? "check" : "key"}
-		                            className='simple-voter-secondary'
-		                            onPress={() => void createPrivateInviteCodeLink({ ballotGroup: privateInviteDraftBallotGroup })}
-		                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
-		                          >
-		                            <span>{privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}</span>
-		                          </UiButton>
-		                          <UiButton
-		                            icon={privateInviteCreateCopied ? "check" : "key"}
-		                            className='simple-voter-secondary'
-		                            onPress={() => void createPrivateInviteCodeLink({ credentialsPerVoter: 2, ballotGroup: privateInviteDraftBallotGroup })}
-		                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
-		                          >
-		                            <span>{privateInviteCreateCopied ? "Copied" : "Create proxy invite link"}</span>
-		                          </UiButton>
-		                        </div>
-	                      </div>
+	                          <UiButton
+	                            icon={privateInviteCreateInFlight ? "spinner" : privateInviteCreateCopied ? "check" : "key"}
+	                            className='simple-voter-secondary'
+	                            onPress={() => void createPrivateInviteCodeLink({ credentialsPerVoter: 2, ballotGroup: privateInviteDraftBallotGroup })}
+	                            isDisabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime || privateInviteCreateInFlight}
+	                          >
+	                            <span>{privateInviteCreateInFlight ? "Creating private link..." : privateInviteCreateCopied ? "Copied" : "Create proxy invite link"}</span>
+	                          </UiButton>
+	                        </div>
+	                      </section>
+	                      </>
 	                    ) : null}
 	                  </div>
 	                </div>

@@ -11,7 +11,6 @@ vi.mock("qrcode", () => ({
 }));
 
 import {
-  buildPrivateInviteCreationFeedback,
   hasAcknowledgedBlindIssuanceForNpub,
   InviteQrButton,
   InviteQrOverlay,
@@ -21,6 +20,7 @@ import {
   settleWorkerConfigSyncEntries,
   voterApprovalWorkerConfigSyncOptions,
 } from "./SimpleCoordinatorApp";
+import { buildPrivateInviteCreationFeedback } from "./simpleCoordinatorFeedback";
 import { storeBlindIssuanceAckRecord } from "./questionnaireOptionAStorage";
 
 afterEach(() => {
@@ -55,27 +55,17 @@ describe("organiser participant feedback", () => {
     expect(onFailure).toHaveBeenCalledWith("q_rejected", expect.any(Error));
   });
 
-  it("builds the generated private invite preview and reports clipboard failure accurately", () => {
-    const inviteUrl = "https://example.test/vote?q=q_private&invite=secret";
-
+  it("builds private invite feedback without opening a QR preview", () => {
     expect(buildPrivateInviteCreationFeedback({
-      inviteUrl,
       credentialsPerVoter: 1,
       copied: false,
     })).toEqual({
-      preview: {
-        value: inviteUrl,
-        label: "private invite link",
-        title: "Private invite link",
-      },
-      status: "Private link created and QR shown.",
+      status: "Private link created. Use Copy link from the participant row.",
     });
     expect(buildPrivateInviteCreationFeedback({
-      inviteUrl,
       credentialsPerVoter: 2,
       copied: true,
     })).toMatchObject({
-      preview: { value: inviteUrl, title: "Proxy private invite link" },
       status: "Proxy private link copied.",
     });
   });

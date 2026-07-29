@@ -19,6 +19,7 @@ import {
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PROVISIONAL,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
 } from "./questionnaireProtocolConstants";
+import type { QuestionnaireBlindTokenScope } from "./questionnaireBlindToken";
 
 export const QUESTIONNAIRE_RESPONSE_BLIND_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND;
 export const QUESTIONNAIRE_RESPONSE_PROVISIONAL_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PROVISIONAL;
@@ -28,14 +29,9 @@ export type BlindTokenProof = {
   tokenCommitment: string;
   questionnaireId: string;
   signature: string;
+  blindSigningKeyId?: string;
   questionId?: string | null;
-  ballotScope?: {
-    questionId?: string | null;
-    slotId?: string | null;
-    slotIndex?: number | null;
-    version?: number | null;
-    credentialIndex?: number | null;
-  } | null;
+  ballotScope?: QuestionnaireBlindTokenScope | null;
 };
 
 export type BlindTokenNullifier = {

@@ -2683,7 +2683,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await userEvent.click(nav().getByRole("button", { name: /Next/ }));
     expect(await screen.findByText("Question 3 of 3")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "No" }));
-    const blockedSubmitButton = nav().getByRole("button", { name: /Submit/ }) as HTMLButtonElement;
+    const blockedSubmitButton = nav().getByRole("button", { name: "Answer question 2" }) as HTMLButtonElement;
     expect(blockedSubmitButton.disabled).toBe(false);
     await userEvent.click(blockedSubmitButton);
     expect(await screen.findByText("Question 2 of 3")).toBeTruthy();
@@ -3194,8 +3194,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Start" }));
     expect(await screen.findByText("Question 2 of 2")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Submit" })).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain("not ready to submit yet");
+    expect(screen.getByRole("button", { name: "Answer question 2" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "All answered" })).toBeNull();
   });
 

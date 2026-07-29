@@ -1,4 +1,4 @@
-import { gunzipSync, strFromU8, strToU8 } from "fflate";
+import { gzipSync, gunzipSync, strFromU8, strToU8 } from "fflate";
 import { finalizeEvent, nip19 } from "nostr-tools";
 import type {
   QuestionnairePublishedResponseRef,
@@ -93,7 +93,35 @@ export async function uploadQuestionnaireResultPack(input: {
   }
 
   if (uploads.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
-    throw new Error(`Blossom CSV result-pack upload failed: ${errors.join("; ")}`);
+    const compressed = gzipSync(strToU8(JSON.stringify(pack)));
+    const payloadSha256 = await sha256HexBytes(compressed);
+    const wrapped = buildJsonWrappedResultPack(compressed, payloadSha256);
+    const wrappedSha256 = await sha256HexBytes(wrapped);
+    for (const server of servers) {
+      if (uploads.some((upload) => upload.server === server)) {
+        continue;
+      }
+      try {
+        uploads.push(await uploadPackBodyToBlossom({
+          nsec: input.publisherNsec,
+          server,
+          body: wrapped,
+          sha256: wrappedSha256,
+          contentType: BLOSSOM_JSON_UPLOAD_CONTENT_TYPE,
+          uploadEncoding: RESULT_PACK_WRAPPED_UPLOAD_ENCODING,
+          payloadSha256,
+          payloadSize: compressed.length,
+        }));
+        if (uploads.length >= BLOSSOM_TARGET_UPLOAD_COUNT) {
+          break;
+        }
+      } catch (error) {
+        errors.push(`${server}: JSON fallback ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (uploads.length < BLOSSOM_TARGET_UPLOAD_COUNT) {
+      throw new Error(`Blossom result-pack upload failed: ${errors.join("; ")}`);
+    }
   }
 
   return buildMirroredResultPackReference(uploads);

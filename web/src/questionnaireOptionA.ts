@@ -1372,6 +1372,17 @@ export function restoreCoordinatorElectionState(input: {
   }
 
   for (const entry of Object.values(merged.whitelist)) {
+    const inviteCodeHash = entry.inviteCodeHash?.trim().toLowerCase();
+    if (inviteCodeHash) {
+      const bearerInvite = Object.values(merged.bearerInviteCodes).find((candidate) => (
+        candidate.codeHash.trim().toLowerCase() === inviteCodeHash
+      ));
+      if (bearerInvite && (!bearerInvite.redeemedNpub || bearerInvite.redeemedNpub === entry.invitedNpub)) {
+        bearerInvite.state = "redeemed";
+        bearerInvite.redeemedNpub = entry.invitedNpub;
+        bearerInvite.redeemedAt = entry.inviteCodeRedeemedAt ?? bearerInvite.redeemedAt ?? entry.addedAt;
+      }
+    }
     const issuance = findIssuanceByNpub(merged.issuedBlindResponses, entry.invitedNpub);
     if (issuance) {
       entry.issuanceId = issuance.issuanceId;
