@@ -1019,6 +1019,20 @@ export function reduceVoterEvent(
       ...(next.blindIssuances ?? {}),
       [issuanceScopeKey]: issuance,
     };
+    if (
+      !next.blindTokenSecrets?.[issuanceScopeKey]
+      && next.blindRequest?.requestId === issuance.requestId
+      && sameBallotScope(next.blindRequest.ballotScope, issuance.ballotScope)
+      && next.blindTokenSecret
+    ) {
+      next.blindTokenSecrets = {
+        ...(next.blindTokenSecrets ?? {}),
+        [issuanceScopeKey]: {
+          ...next.blindTokenSecret,
+          ballotScope: next.blindTokenSecret.ballotScope ?? issuance.ballotScope,
+        },
+      };
+    }
     next.credentialReady = true;
     next.lastUpdatedAt = issuance.issuedAt;
     return { state: next, ok: true };

@@ -1831,20 +1831,29 @@ describe("questionnaireOptionARuntime", () => {
   it("preassigns a custom voter group through a private invite", async () => {
     const inviteCode = "private-invite-code-north";
     const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const groupVoterNpub = "npub1privategroupcoderuntime0000000000000000000000000000";
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addBearerInviteCode(inviteCodeHash, { ballotGroup: "group_north" });
 
-    const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(groupVoterNpub), electionId);
     voter.setBearerInviteCode(inviteCode, { ballotGroup: "group_north" });
     await voter.loginWithSigner(null);
+    expect(voter.getSnapshot()?.privateInviteBallotGroup).toBe("group_north");
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
     await voter.requestBlindBallot();
+    expect(Object.keys(voter.getSnapshot()?.blindTokenSecrets ?? {})).toEqual(["scopes:group_north:questionnaire"]);
     await coordinator.processPendingBlindRequests();
 
     expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]?.state).toBe("redeemed");
-    expect(coordinator.getSnapshot()?.whitelist[otherNpub]?.ballotGroup).toBe("group_north");
+    expect(coordinator.getSnapshot()?.whitelist[groupVoterNpub]?.ballotGroup).toBe("group_north");
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.blindIssuance?.ballotScope?.allowedScopes).toEqual(["0", "group_north"]);
+    expect(Object.keys(voter.getSnapshot()?.blindIssuances ?? {})).toEqual(["scopes:group_north:questionnaire"]);
+    expect(Object.keys(voter.getSnapshot()?.blindTokenSecrets ?? {})).toEqual(["scopes:group_north:questionnaire"]);
+    expect(voter.getSnapshot()?.privateInviteBallotGroup).toBe("group_north");
+    await voter.submitVote(["q1"]);
+    expect(voter.getSnapshot()?.submission).not.toBeNull();
   });
 
   it("does not redeem a private invite when its voter group is altered", async () => {
