@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.164] - 2026-07-29
+
+### Fixed
+- Use a direct raw RSA private operation for delegated blind-signature issuance, matching the browser blind-RSA implementation.
+
+### Changed
+- Bumped the web app package to `0.1.164` and audit proxy package to `0.1.51`.
+
 ## [0.1.163] - 2026-07-29
 
 ### Fixed

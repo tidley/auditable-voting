@@ -25,9 +25,7 @@ use crate::store::WorkerStore;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use blind_rsa_signatures::{
-    PublicKeySha384PSSDeterministic, SecretKeySha384PSSDeterministic, Signature,
-};
+use blind_rsa_signatures::{DefaultRng, PublicKeySha384PSSDeterministic, Signature};
 use chrono::Utc;
 use crypto_bigint::BoxedUint;
 use flate2::read::GzDecoder;
@@ -35,6 +33,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use nostr_sdk::prelude::*;
 use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
+use rsa::hazmat::rsa_decrypt;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -153,15 +152,16 @@ fn sign_blinded_message(blinded_hex: &str, private_jwk: &serde_json::Value) -> R
         .context("unable to construct RSA private key from JWK")?;
     key.validate().context("invalid RSA private key")?;
     key.precompute().context("unable to precompute RSA key")?;
-    let signing_key = SecretKeySha384PSSDeterministic::new(key);
-    let signature = signing_key
-        .blind_sign(&blinded_bytes)
-        .context("blind signing failed")?;
-    Ok(signature
-        .0
-        .iter()
-        .map(|byte| format!("{:02x}", byte))
-        .collect::<String>())
+    let blinded = BoxedUint::from_be_slice_vartime(&blinded_bytes);
+    let signature =
+        rsa_decrypt::<DefaultRng>(None, &key, &blinded).context("raw blind signing failed")?;
+    let mut bytes = signature.to_be_bytes().into_vec();
+    if bytes.len() < blinded_bytes.len() {
+        let mut padded = vec![0; blinded_bytes.len() - bytes.len()];
+        padded.append(&mut bytes);
+        bytes = padded;
+    }
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn canonical_json(value: &serde_json::Value) -> String {
