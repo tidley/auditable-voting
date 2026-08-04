@@ -272,21 +272,22 @@ export default function QuestionnaireResultsDashboard({
     return new Map(summaries.map((summary) => [summary.questionId, summary]));
   }, [questionnaire?.questions, responseDetails]);
   const provisionalDeltaQuestionSummaryById = useMemo(() => {
+    if (publishedTotalsAvailable) {
+      return new Map<string, QuestionnaireResultQuestionSummary>();
+    }
     return buildPendingProvisionalQuestionSummaries(
       questionnaire?.questions ?? [],
       provisionalResponseDetails,
       acceptedQuestionResponseCountById,
       acceptedQuestionLatestAtById,
     );
-  }, [acceptedQuestionLatestAtById, acceptedQuestionResponseCountById, provisionalResponseDetails, questionnaire?.questions]);
+  }, [acceptedQuestionLatestAtById, acceptedQuestionResponseCountById, provisionalResponseDetails, publishedTotalsAvailable, questionnaire?.questions]);
   const provisionalPendingResponseCount = useMemo(
     () => sumQuestionSummaryResponseCounts([...provisionalDeltaQuestionSummaryById.values()]),
     [provisionalDeltaQuestionSummaryById],
   );
   const pendingFinalResponseDetails = useMemo(
-    () => responseDetails.filter((entry) => (
-      publishedTotalsAvailable ? entry.includedInLatestPublish === false : true
-    )),
+    () => publishedTotalsAvailable ? [] : responseDetails,
     [publishedTotalsAvailable, responseDetails],
   );
   const pendingFinalAcceptedCount = useMemo(
@@ -805,7 +806,7 @@ export default function QuestionnaireResultsDashboard({
         ) : null}
         {isSessionVariant ? (
           <div className='simple-session-results-heading'>
-            <h2 className='simple-voter-section-title'>Live Results</h2>
+          <h2 className='simple-voter-section-title'>{publishedTotalsAvailable ? "Published Results" : "Live Results"}</h2>
             <div className='simple-session-live-status' aria-label='Live status'>
               <span className='simple-session-live-status-value'>
                 {pendingLiveTotalCount > 0 ? visibleProgressLabel : publishedTotalsAvailable ? publishedProgressLabel : loadedResponsesLabel}
@@ -826,7 +827,7 @@ export default function QuestionnaireResultsDashboard({
             {isSessionVariant ? (
               <div className='simple-session-result-legend' aria-label='Vote status legend'>
                 <span><i className='is-submitted' aria-hidden='true' />Published results</span>
-                <span><i className='is-live' aria-hidden='true' />Live accepted votes</span>
+                {!publishedTotalsAvailable ? <span><i className='is-live' aria-hidden='true' />Live accepted votes</span> : null}
               </div>
             ) : null}
             {!isSessionVariant && (actions || (canExportResults && onExportResults)) ? (

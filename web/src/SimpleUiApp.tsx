@@ -3396,7 +3396,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
           hidden={activeTab !== 'vote'}
           aria-hidden={activeTab !== 'vote'}
         >
-            <QuestionnaireVoterPanel
+            {identityReady ? <QuestionnaireVoterPanel
               onContextChange={handleQuestionnaireContextChange}
               participationHistory={questionnaireParticipationHistory}
               onParticipationHistoryChange={setQuestionnaireParticipationHistory}
@@ -3411,7 +3411,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               onBallotReceivedChange={props.onBallotReceivedChange}
               onMessageOrganiser={openOrganiserMessages}
               onBackToJoin={() => setActiveTab("configure")}
-            />
+            /> : null}
             {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
             effectiveLiveVoteSession ? (
               <>
@@ -3672,7 +3672,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               localStateProtected={Boolean(storagePassphrase)}
               localStateMessage={storageStatus}
             />
-            {questionnaireModeActive ? (
+            {questionnaireModeActive && identityReady ? (
               <QuestionnaireVoterPanel
                 displayMode='settings'
                 announcedQuestionnaireIds={readyAnnouncedQuestionnaireIds}

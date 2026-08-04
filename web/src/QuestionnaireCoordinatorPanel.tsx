@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPublicKey, generateSecretKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireParticipantCount, publishQuestionnaireResultSummary, publishQuestionnaireState, queryQuestionnaireEvents, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEventKinds } from "./questionnaireNostr";
-import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, parseQuestionnaireResultSummaryEvent, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
+import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, parseQuestionnaireResultSummaryEvent, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
   calculateRankQuestionScores,
@@ -32,7 +32,7 @@ import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition, 
 import { buildQuestionnaireDefinitionReference, questionnaireDefinitionEventHash, selectNewestMatchingQuestionnaireDefinition } from "./questionnaireDefinitionReference";
 import { tryWriteClipboard } from "./clipboard";
 import { uploadQuestionnaireResultPack } from "./questionnaireResultPack";
-import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireBlindResponses, fetchQuestionnaireProvisionalResponses } from "./questionnaireTransport";
+import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireBlindResponses, fetchQuestionnaireProvisionalResponses, fetchQuestionnaireResultSummary } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions, verifyQuestionnaireBlindResponseProofs } from "./questionnaireTransport";
 import {
   decryptQuestionnaireBlindResponseAnswers,
@@ -55,7 +55,7 @@ import {
 } from "./questionnaireRelays";
 import { createSignerService } from "./services/signerService";
 import { findCoordinatorBlindSigningPrivateKey, listElectionSummaries, loadCoordinatorState, loadElectionSummary, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
-import { UiButton, UiSelect, UiSwitch, UiTextArea, UiTextField } from "./ui/DesignLayer";
+import { UiButton, UiIcon, UiSelect, UiSwitch, UiTextArea, UiTextField } from "./ui/DesignLayer";
 import {
   type WorkerElectionConfigSnapshot,
   fetchOptionAWorkerStatusDmsWithNsec,
@@ -1679,6 +1679,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [lastResponseSeenEventId, setLastResponseSeenEventId] = useState<string | null>(null);
   const [lastResponseRejectReason, setLastResponseRejectReason] = useState<string | null>(null);
   const [latestResultAcceptedCount, setLatestResultAcceptedCount] = useState<number | null>(null);
+  const [latestResultSummary, setLatestResultSummary] = useState<QuestionnaireResultSummary | null>(null);
   const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
   const [availableQuestionnaireTitles, setAvailableQuestionnaireTitles] = useState<Record<string, string>>({});
   const [availablePublishedQuestionnaireIds, setAvailablePublishedQuestionnaireIds] = useState<string[]>([]);
@@ -1755,6 +1756,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setLastResponseSeenEventId(null);
     setLastResponseRejectReason(null);
     setLatestResultAcceptedCount(null);
+    setLatestResultSummary(null);
     setDefinitionEventCount(0);
     setStateEventCount(0);
     setResponseEventCount(0);
@@ -2106,8 +2108,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const parsed = parseQuestionnaireDefinitionEvent(event);
       return Boolean(
         parsed
-        && parsed.questionnaireId === activeQuestionnaireId
-        && (!activeCoordinatorNpub || parsed.coordinatorPubkey === activeCoordinatorNpub),
+        && parsed.questionnaireId === activeQuestionnaireId,
       );
     });
     const stateEvents = input.stateEvents.filter((event) => {
@@ -2122,8 +2123,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const parsed = parseQuestionnaireResultSummaryEvent(event);
       return Boolean(
         parsed
-        && parsed.questionnaireId === activeQuestionnaireId
-        && (!activeCoordinatorNpub || parsed.coordinatorPubkey === activeCoordinatorNpub),
+        && parsed.questionnaireId === activeQuestionnaireId,
       );
     });
 
@@ -2131,7 +2131,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
     const definition = selectLatestQuestionnaireDefinition(definitionEvents);
     const state = selectLatestQuestionnaireState(stateEvents);
-    const resultSummary = selectLatestQuestionnaireResultSummary(resultEvents);
+    const resultSummary = [...resultEvents]
+      .sort((left, right) => right.created_at - left.created_at)
+      .map((event) => parseQuestionnaireResultSummaryEvent(event))
+      .find((summary) => Boolean(summary))
+      ?? null;
     const publicResponseEntries = (input.publicResponseEntries ?? [])
       .filter((entry) => entry.response.questionnaireId === activeQuestionnaireId);
     const provisionalResponseEntries = (input.provisionalResponseEntries ?? [])
@@ -2160,6 +2164,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setLatestStateCreatedAt(state?.createdAt ?? null);
     setLatestState(effectiveState);
     setLatestResultAcceptedCount(resultSummary?.acceptedResponseCount ?? null);
+    setLatestResultSummary(resultSummary);
     setLatestProvisionalResponses(provisionalEntriesToDashboardDetails(provisionalResponseEntries));
     const summaryState = electionSummaryStateFromQuestionnaireState(effectiveState);
     if (definition && summaryState) {
@@ -2205,7 +2210,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         }))
         .filter((entry): entry is QuestionnaireAcceptedResponse => Boolean(entry));
       const accepted = mergeAcceptedResponsesForCoordinator([...acceptedFromSubmissions, ...acceptedFromSummary]);
-      setLatestAcceptedCount(Math.max(
+      setLatestAcceptedCount((current) => Math.max(
+        current,
         admissions.accepted.length,
         accepted.length,
         resultSummary?.acceptedResponseCount ?? 0,
@@ -2214,7 +2220,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         admissions.rejected.length,
         resultSummary?.rejectedResponseCount ?? 0,
       ));
-      setLatestAcceptedResponses(accepted);
+      setLatestAcceptedResponses((current) => mergeAcceptedResponsesForCoordinator([...current, ...accepted]));
       setLastResponseRejectReason(admissions.rejected.at(-1)?.rejectionReason ?? null);
     } else if (definition && coordinatorNsec.trim()) {
       const processed = processQuestionnaireResponses({
@@ -2222,9 +2228,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         responseEvents: input.responseEvents,
         coordinatorNsec,
       });
-      setLatestAcceptedCount(processed.accepted.length);
+      setLatestAcceptedCount((current) => Math.max(current, processed.accepted.length));
       setLatestRejectedCount(processed.rejected.length);
-      setLatestAcceptedResponses(processed.accepted);
+      setLatestAcceptedResponses((current) => mergeAcceptedResponsesForCoordinator([...current, ...processed.accepted]));
       setLastResponseRejectReason(processed.rejected.at(-1)?.reason ?? null);
     } else {
       setLatestAcceptedCount(0);
@@ -2295,19 +2301,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
           relays: questionnaireRelayPublishHints,
         }).catch(() => []),
-        fetchQuestionnaireEventsWithFallback({
+        fetchQuestionnaireResultSummary({
           questionnaireId: id,
-          kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
-          parseQuestionnaireIdFromEvent: (event) => {
-            try {
-              const parsed = JSON.parse(event.content) as { questionnaireId?: string };
-              return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
-            } catch {
-              return null;
-            }
-          },
           relays: questionnaireRelayPublishHints,
-        }),
+          limit: 50,
+          readRelayLimit: 5,
+          preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
+        }).then((entries) => ({
+          events: entries.map((entry) => entry.event),
+          diagnostics: {
+            mode: "kind_only_fallback" as const,
+            filteredCount: 0,
+            kindOnlyCount: entries.length,
+          },
+        })),
       ]);
       const latestDefinitionForVerification = [...definitionFetch.events]
         .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
@@ -3375,6 +3384,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     ])
   ), [latestAcceptedResponses, props.optionAAcceptedResponses]);
   const displayAcceptedCount = Math.max(acceptedResponsesForDisplay.length, props.optionAAcceptedCount ?? 0);
+  // Keep the coordinator display in step with the observer: a published total is
+  // authoritative only once it covers every response currently loaded locally.
+  const latestResultSummaryMatchesLoadedResponses = latestResultSummary
+    ? latestResultSummary.acceptedResponseCount + latestResultSummary.rejectedResponseCount > 0
+      && latestResultSummary.acceptedResponseCount >= displayAcceptedCount
+      && latestResultSummary.rejectedResponseCount >= latestRejectedCount
+    : false;
   const knownVoterCount = props.knownVoterCount ?? 0;
   const buildStateLabel = !publishedDefinition
     ? "Draft"
@@ -3418,7 +3434,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "proxy",
-      label: "Set Up Proxy",
+      label: "Proxy Setup",
       shortLabel: "Proxy",
       complete: Boolean(activeWorkerDelegation),
       disabled: !publishedDefinition,
@@ -3450,8 +3466,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       )),
       ...(currentQuestionnaireId ? [currentQuestionnaireId] : []),
     ]))
-    : availableQuestionnaireIds.length > 0
-      ? availableQuestionnaireIds
+    : availablePublishedQuestionnaireIds.length > 0
+      ? availablePublishedQuestionnaireIds
       : (currentQuestionnaireId ? [currentQuestionnaireId] : []);
   const questionnaireOptionLabel = (id: string) => {
     const selectedId = questionnaireId.trim();
@@ -3477,13 +3493,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     if (!activePublishedDefinition) {
       return [];
     }
+    if (latestResultSummaryMatchesLoadedResponses && latestResultSummary?.questionSummaries.length) {
+      return latestResultSummary.questionSummaries;
+    }
     return buildQuestionnaireResultSummary({
       definition: activePublishedDefinition,
       coordinatorPubkey: coordinatorNpub.trim(),
       acceptedResponses: acceptedResponsesForDisplay,
       rejectedResponses: [],
     }).questionSummaries;
-  }, [acceptedResponsesForDisplay, activePublishedDefinition, coordinatorNpub]);
+  }, [acceptedResponsesForDisplay, activePublishedDefinition, coordinatorNpub, latestResultSummary, latestResultSummaryMatchesLoadedResponses]);
   const coordinatorResponseDetails = useMemo<QuestionnaireResultsDashboardResponseDetail[]>(() => (
     acceptedResponsesForDisplay.map((response) => ({
       event: {
@@ -3656,7 +3675,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         disabled: closeAndPublishButtonDisabled,
       }
       : null;
-  const showPrimaryPublishActionInToolbar = !props.onPrimaryPublishActionChange;
+  const showPrimaryPublishActionInToolbar = view !== "build" && !props.onPrimaryPublishActionChange;
   useEffect(() => {
     props.onPrimaryPublishActionChange?.(primaryPublishAction);
   }, [primaryPublishAction, props.onPrimaryPublishActionChange]);
@@ -5107,8 +5126,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           questionSummaries={coordinatorQuestionSummaries}
           responseDetails={coordinatorResponseDetails}
           provisionalResponseDetails={latestProvisionalResponses}
-          displayValidCount={displayAcceptedCount}
-          displayInvalidCount={latestRejectedCount}
+          displayValidCount={latestResultSummaryMatchesLoadedResponses
+            ? latestResultSummary?.acceptedResponseCount ?? displayAcceptedCount
+            : displayAcceptedCount}
+          displayInvalidCount={latestResultSummaryMatchesLoadedResponses
+            ? latestResultSummary?.rejectedResponseCount ?? latestRejectedCount
+            : latestRejectedCount}
+          publishedTotalsAvailable={latestResultSummaryMatchesLoadedResponses}
           showSubmittedVotes={false}
           coordinatorLabel={dashboardCoordinatorIdentity.label}
           coordinatorText={dashboardCoordinatorIdentity.text}
@@ -5130,22 +5154,25 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
 	  return (
 	    <>
 	      <section className={`simple-voter-section simple-questionnaire-build-section${isProxyBuildPage ? " is-proxy-page" : ""}`}>
-	        <div className={`simple-questionnaire-build-toolbar ${questionnaireToolbarClassName}`}>
-	          {questionnaireTopControls}
-	        </div>
+        <div className={`simple-questionnaire-build-toolbar ${questionnaireToolbarClassName}`}>
+          {questionnaireTopControls}
+        </div>
         {isProxyBuildPage ? <h2 className='simple-voter-section-title'>Audit proxy</h2> : null}
         <div className='simple-questionnaire-build-grid'>
           <div className='simple-questionnaire-build-main'>
+              {!isProxyBuildPage ? (
+                <header className='simple-questionnaire-editor-title'>
+                  <h1>{title.trim() || "Untitled questionnaire"}</h1>
+                  <span>{publishedDefinition ? buildStateLabel : "Draft"}</span>
+                </header>
+              ) : null}
               <fieldset className='simple-questionnaire-editor-fieldset' disabled={questionnaireEditorLocked}>
       <section className='simple-questionnaire-editor-section'>
-        <div className='simple-questionnaire-questions-head'>
-          <h4 className='simple-voter-section-title simple-questionnaire-questions-title'>Basic information</h4>
-        </div>
         <section id='questionnaire-basic-section' className='simple-questionnaire-build-cardlet'>
       <div className='simple-questionnaire-identity-grid'>
         <div className='simple-questionnaire-form-field'>
           <UiTextField
-            label='Name'
+            label='Title'
             inputClassName='simple-voter-input'
             inputProps={{
               id: 'questionnaire-title',
@@ -5319,11 +5346,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         <section className='simple-questionnaire-build-cardlet simple-questionnaire-voter-groups'>
         <div className='simple-questionnaire-voter-group-add'>
           <UiTextField
-            label='New voter group'
+            aria-label='Add voter group'
             inputClassName='simple-voter-input'
             inputProps={{
               value: newVoterGroupLabel,
-              placeholder: 'For example, North district',
+              placeholder: 'Enter group',
               maxLength: 80,
               onChange: (event) => setNewVoterGroupLabel(event.target.value),
               onKeyDown: (event) => {
@@ -5353,7 +5380,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       onChange: (event) => updateVoterGroupLabel(group.id, event.target.value),
                     }}
                   />
-                  <code>{group.id}</code>
                   <UiButton
                     variant='danger'
                     icon='delete'
@@ -5713,6 +5739,21 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         Add Question
       </UiButton>
               </fieldset>
+              {!isProxyBuildPage && !publishedDefinition ? (
+                <section className='simple-questionnaire-publish-summary' aria-label='Questionnaire summary'>
+                  <h3>Questionnaire summary</h3>
+                  <ul>
+                    <li className={titleReady ? "is-ready" : ""}><UiIcon name='check' />Title</li>
+                    <li className={description.trim() ? "is-ready" : ""}><UiIcon name='check' />Description</li>
+                    <li className={questions.length > 0 && questions.every(isQuestionDraftValid) ? "is-ready" : ""}><UiIcon name='check' />{questions.length} {questions.length === 1 ? "Question" : "Questions"}</li>
+                    <li className={voterGroups.length > 0 ? "is-ready" : ""}><UiIcon name='check' />{voterGroups.length} {voterGroups.length === 1 ? "Voter Group" : "Voter Groups"}</li>
+                    <li className={canPublishDraft ? "is-ready" : ""}><UiIcon name='check' />Ready to publish</li>
+                  </ul>
+                  <UiButton icon='uploadLine' className='simple-voter-primary' isDisabled={!canPublishDraft || isDefinitionPublishInFlight} onPress={() => void publishDefinition()}>
+                    {isDefinitionPublishInFlight ? "Going live..." : "Go Live"}
+                  </UiButton>
+                </section>
+              ) : null}
 
 	          </div>
 	          {hasBuildSideActions ? (

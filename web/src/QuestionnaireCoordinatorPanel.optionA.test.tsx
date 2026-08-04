@@ -215,7 +215,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
   it("uses the standard coordinator questionnaire form even when option_a is requested", () => {
     render(<QuestionnaireCoordinatorPanel />);
     expect(screen.getByRole("option", { name: / \[Draft\]$/ })).toBeTruthy();
-    expect(screen.getByLabelText("Name")).toBeTruthy();
+    expect(screen.getByLabelText("Title")).toBeTruthy();
     expect(screen.getByLabelText("Questionnaire ID")).toBeTruthy();
     expect(screen.getByText("Generate ID")).toBeTruthy();
     expect(screen.queryByText("Show invite link")).toBeNull();
@@ -279,7 +279,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
   it("defines a named voter group and assigns it to a question", async () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    fireEvent.change(screen.getByLabelText("New voter group"), { target: { value: "North district" } });
+    fireEvent.change(screen.getByLabelText("Add voter group"), { target: { value: "North district" } });
     fireEvent.click(screen.getByRole("button", { name: "Add group" }));
 
     const groupSelect = screen.getByLabelText("Question 1 voter group") as HTMLSelectElement;
@@ -531,7 +531,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.queryByLabelText("Direct command-line launch")).toBeNull();
   });
 
-  it("shows locally known organiser questionnaires in the live status selector", async () => {
+  it("shows the current and published organiser questionnaires in the live status selector", async () => {
     const coordinatorNpub = "npub1organiser";
     upsertElectionSummary({
       electionId: "q_first_local",
@@ -582,7 +582,6 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       const optionText = [...selector.options].map((option) => option.textContent ?? "");
       expect(optionText).toEqual([
         "1. First local questionnaire - q_first_local [Draft]",
-        "2. Second local questionnaire - q_second_local",
       ]);
       expect(optionText.some((text) => text.includes("Other organiser questionnaire"))).toBe(false);
       expect(optionText.some((text) => text.includes("Stale mismatched questionnaire"))).toBe(false);
@@ -859,7 +858,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
 
     const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
-    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const titleInput = screen.getByLabelText("Title") as HTMLInputElement;
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
 
     await waitFor(() => {
@@ -918,7 +917,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect([...selector.options].map((option) => option.value)).toEqual(["q_published_readonly"]);
     });
 
-    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const titleInput = screen.getByLabelText("Title") as HTMLInputElement;
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
     await waitFor(() => {
       expect(titleInput.value).toBe("Published readonly questionnaire");
@@ -965,7 +964,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const { rerender } = render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
 
-    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const titleInput = screen.getByLabelText("Title") as HTMLInputElement;
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
     await waitFor(() => {
       expect(questionnaireIdInput.value).toBe("q_published_before_new_round");
@@ -1016,7 +1015,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
 
-    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const titleInput = screen.getByLabelText("Title") as HTMLInputElement;
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
     await waitFor(() => {
       expect(titleInput.value).toBe("Cached local draft");
@@ -1064,7 +1063,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       />,
     );
 
-    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const titleInput = screen.getByLabelText("Title") as HTMLInputElement;
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
     const generateIdButton = screen.getByRole("button", { name: "Generate ID" });
     await waitFor(() => {
@@ -1100,7 +1099,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       complete: false,
     });
     expect(latestReadiness.find((item: { id: string }) => item.id === "proxy")).toMatchObject({
-      label: "Set Up Proxy",
+      label: "Proxy Setup",
       group: "session",
       action: "setup_proxy",
       disabled: true,
@@ -1220,7 +1219,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     render(<QuestionnaireCoordinatorPanel coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New delegated questionnaire" } });
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New delegated questionnaire" } });
     fireEvent.change(screen.getByPlaceholderText("Question prompt"), { target: { value: "Proceed?" } });
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
     fireEvent.change(screen.getByLabelText("Audit proxy npub"), { target: { value: workerNpub } });

@@ -415,7 +415,7 @@ const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
   { id: "answers", label: "Add a Question", shortLabel: "Questions", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
   { id: "publish", label: "Published", shortLabel: "Pub", complete: false, stageLabel: "3", group: "session" },
-  { id: "proxy", label: "Set Up Proxy", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session", action: "setup_proxy" },
+  { id: "proxy", label: "Proxy Setup", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session", action: "setup_proxy" },
   { id: "invite", label: "Results & Voters", shortLabel: "Voters", complete: false, stageLabel: "4", group: "session", action: "invite_voters" },
 ];
 
@@ -1645,6 +1645,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
+  const [participantNavSection, setParticipantNavSection] = useState<"voters" | "results">("results");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const isMobileCoordinatorViewport = useCallback(() => (
     typeof window !== "undefined"
@@ -1974,8 +1975,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!delegation) {
       return "";
     }
-    const whitelistKey = visibleOptionAKnownVoters
-      .map((entry) => `${entry.invitedNpub.trim()}:${entry.claimState}`)
+    const whitelistKey = Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {})
+      .map((entry) => `${entry.invitedNpub.trim()}:${entry.credentialsPerVoter === 2 ? "proxy" : "single"}:${entry.ballotGroup ?? ""}`)
       .filter((entry) => entry.length > 1)
       .sort()
       .join("|");
@@ -1984,7 +1985,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       .sort()
       .join("|");
     return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}:${admittedVoterWorkerConfigKey}`;
-  }, [admittedVoterWorkerConfigKey, optionAElectionId, privateInviteCodeEntries, selectedActiveWorkerDelegation, visibleOptionAKnownVoters]);
+  }, [admittedVoterWorkerConfigKey, knownVoterInviteRefreshNonce, optionACoordinatorRuntime, optionAElectionId, privateInviteCodeEntries, selectedActiveWorkerDelegation]);
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec?.trim() ?? "";
     const coordinatorNpub = activeCoordinatorNpub.trim();
@@ -7570,8 +7571,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (newRoundMode) {
       setNewRoundMode(false);
       setDraftQuestionnaireId("");
-      selectTab("participants");
     }
+    selectTab("proxy");
   }
 
   function openInviteVotersSection() {
@@ -8914,97 +8915,20 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             )}
           </div>
         </div>
-        <section className='simple-coordinator-sidebar-readiness' aria-label='Readiness checklist'>
-          <div className='simple-sidebar-readiness-expanded'>
-            <div className='simple-sidebar-readiness-list'>
-              <div className='simple-sidebar-readiness-group'>
-                <span className='simple-sidebar-readiness-group-label'>
-                  <UiIcon name={questionnaireReadinessGroupIcon("questionnaire")} />
-                  <span>Edit Questionnaire</span>
-                </span>
-                {questionnaireSetupReadinessItems.map((item) => renderReadinessRow(item, questionnaireReadinessItems.indexOf(item)))}
-              </div>
-              <div className='simple-sidebar-readiness-divider' aria-hidden='true' />
-              <div className='simple-sidebar-readiness-group'>
-                <span className='simple-sidebar-readiness-group-label'>
-                  <UiIcon name={questionnaireReadinessGroupIcon("session")} />
-                  <span>Manage Questionnaire</span>
-                </span>
-                {sessionReadinessItems.map((item) => renderReadinessRow(item, questionnaireReadinessItems.indexOf(item)))}
-              </div>
-            </div>
-          </div>
-          <div className='simple-sidebar-readiness-compact' aria-label='Readiness stages'>
-            <div className='simple-sidebar-readiness-group'>
-              <span className='simple-sidebar-readiness-compact-group-icon' aria-hidden='true'>
-                <UiIcon name={questionnaireReadinessGroupIcon("questionnaire")} />
-              </span>
-              {questionnaireSetupReadinessItems.map((item) => renderCompactReadinessItem(item, questionnaireReadinessItems.indexOf(item)))}
-            </div>
-            <div className='simple-sidebar-readiness-divider' aria-hidden='true' />
-            <div className='simple-sidebar-readiness-group'>
-              <span className='simple-sidebar-readiness-compact-group-icon' aria-hidden='true'>
-                <UiIcon name={questionnaireReadinessGroupIcon("session")} />
-              </span>
-              {sessionReadinessItems.map((item) => renderCompactReadinessItem(item, questionnaireReadinessItems.indexOf(item)))}
-            </div>
-          </div>
-        </section>
-        <div className='simple-coordinator-sidebar-nav'>
-          <div className='simple-sidebar-readiness-group simple-sidebar-profile-group'>
-            <span className='simple-sidebar-readiness-group-label'>
-              <UiIcon name={questionnaireReadinessGroupIcon("profile")} />
-              <span>Profile</span>
-            </span>
-            <div
-              className='simple-coordinator-sidebar-tabs'
-              role='tablist'
-              aria-label='Profile sections'
-            >
-              <UiButton
-                icon={false}
-                role='tab'
-                aria-selected={activeTab === 'messages'}
-                aria-label={hasUnreadMessages ? "Messages, new message" : "Messages"}
-                className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}${hasUnreadMessages ? ' has-unread-message' : ''}`}
-                onPress={() => selectTab('messages')}
-              >
-                <span className='simple-sidebar-readiness-entry-main'>
-                  <span className='simple-sidebar-readiness-entry-icon simple-coordinator-message-icon' aria-hidden='true'>
-                    <UiIcon name='message' />
-                    {hasUnreadMessages ? <span className='simple-message-unread-dot simple-coordinator-message-unread-dot' /> : null}
-                  </span>
-                  <span className='simple-sidebar-readiness-copy'>
-                    <span className='simple-coordinator-nav-label'>Messages</span>
-                  </span>
-                </span>
-                <span className='simple-sidebar-readiness-status simple-coordinator-nav-status'>
-                  <UiIcon name='chevronRight' className='simple-sidebar-readiness-chevron' />
-                </span>
-              </UiButton>
-              <UiButton
-                icon={false}
-                role='tab'
-                aria-selected={activeTab === 'settings'}
-                aria-label='Settings'
-                className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
-                onPress={() => selectTab('settings')}
-              >
-                <span className='simple-sidebar-readiness-entry-main'>
-                  <span className='simple-sidebar-readiness-entry-icon' aria-hidden='true'>
-                    <UiIcon name='settings' />
-                  </span>
-                  <span className='simple-sidebar-readiness-copy'>
-                    <span className='simple-coordinator-nav-label'>Settings</span>
-                  </span>
-                </span>
-                <span className='simple-sidebar-readiness-status simple-coordinator-nav-status'>
-                  <UiIcon name='chevronRight' className='simple-sidebar-readiness-chevron' />
-                </span>
-              </UiButton>
-            </div>
-          </div>
-        </div>
+        <nav className='simple-coordinator-sidebar-readiness simple-coordinator-sidebar-tabs' aria-label='Questionnaire navigation'>
+          <UiButton icon='edit' className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`} onPress={() => selectTab('configure')}>Edit</UiButton>
+          <UiButton icon='users' className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'voters' ? ' is-active' : ''}`} onPress={() => {
+            setParticipantNavSection('voters');
+            selectTab('participants');
+            scheduleAfterNextPaint(() => document.getElementById('coordinator-invite-voters-section')?.scrollIntoView({ block: 'start' }));
+          }}>Voters</UiButton>
+          <UiButton icon='view' className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'results' ? ' is-active' : ''}`} onPress={() => {
+            setParticipantNavSection('results');
+            selectTab('participants');
+          }}>Results</UiButton>
+          <UiButton icon='message' aria-label={hasUnreadMessages ? "Messages, new message" : "Messages"} className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}${hasUnreadMessages ? ' has-unread-message' : ''}`} onPress={() => selectTab('messages')}>Messages</UiButton>
+          <UiButton icon='settings' className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`} onPress={() => selectTab('settings')}>Settings</UiButton>
+        </nav>
       </aside>
       {!sidebarCollapsed ? (
         <button

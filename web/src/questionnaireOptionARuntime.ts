@@ -410,12 +410,58 @@ function shouldThrottleBlindRequestPublish(params: {
   return false;
 }
 
-const voterBlindRequestInflightByKey = new Map<string, Promise<VoterElectionLocalState>>();
+const voterBlindRequestInflightByKey = new Map<string, {
+  promise: Promise<VoterElectionLocalState>;
+  settledAt: number | null;
+  expiresAt: number;
+}>();
+
+const VOTER_BLIND_REQUEST_RESERVATION_PREFIX = "auditable-voting:voter-blind-request:";
 
 function voterBlindRequestInflightKey(state: VoterElectionLocalState | null | undefined) {
   const electionId = state?.electionId?.trim() ?? "";
   const invitedNpub = state?.invitedNpub?.trim() ?? "";
   return electionId && invitedNpub ? `${electionId}:${invitedNpub}` : "";
+}
+
+function voterBlindRequestReservationKey(state: VoterElectionLocalState | null | undefined) {
+  const key = voterBlindRequestInflightKey(state);
+  return key ? `${VOTER_BLIND_REQUEST_RESERVATION_PREFIX}${key}` : "";
+}
+
+function reserveVoterBlindRequest(state: VoterElectionLocalState | null | undefined) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const key = voterBlindRequestReservationKey(state);
+  if (!key) {
+    return false;
+  }
+  try {
+    const reservedAt = Number(window.localStorage.getItem(key));
+    if (Number.isFinite(reservedAt) && Date.now() - reservedAt < OPTION_A_BLIND_REQUEST_RETRY_MS) {
+      return true;
+    }
+    window.localStorage.setItem(key, String(Date.now()));
+  } catch {
+    // The in-memory guard remains available when browser storage is unavailable.
+  }
+  return false;
+}
+
+function releaseVoterBlindRequestReservation(state: VoterElectionLocalState | null | undefined) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const key = voterBlindRequestReservationKey(state);
+  if (!key) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore unavailable browser storage.
+  }
 }
 
 function hasCompatibleBlindRequestKey(
@@ -1234,6 +1280,8 @@ export class QuestionnaireOptionAVoterRuntime {
       previousIssuanceId: state.blindIssuance?.issuanceId ?? null,
     });
 
+    releaseVoterBlindRequestReservation(state);
+
     return {
       ...state,
       blindRequest: null,
@@ -1646,14 +1694,35 @@ export class QuestionnaireOptionAVoterRuntime {
       return false;
     }
     const wasCredentialReady = this.state.credentialReady;
-    const received = reduceVoterEvent(this.state, {
+    const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
+      inviteMessage: this.state.inviteMessage ?? null,
+      summary: loadElectionSummary(this.state.electionId),
+      cachedDefinition: readCachedQuestionnaireDefinition(this.state.electionId),
+    });
+    const state = this.mergePersistedVoterCredentialState({
+      state: this.state,
+      blindSigningPublicKey,
+    });
+    const received = reduceVoterEvent(state, {
       type: "BLIND_ISSUANCE_RECEIVED",
       issuance,
     });
     if (!received.ok) {
+      optionAFlowLog("voter", "blind_issuance_rejected", {
+        electionId: issuance.electionId,
+        requestId: issuance.requestId,
+        scope: ballotScopeKey(issuance.ballotScope),
+        knownRequestScopes: Object.keys(state.blindRequests ?? {}),
+      });
       return false;
     }
     if (!voterHasTokenSecretForIssuance(received.state, issuance)) {
+      optionAFlowLog("voter", "blind_issuance_secret_missing", {
+        electionId: issuance.electionId,
+        requestId: issuance.requestId,
+        scope: ballotScopeKey(issuance.ballotScope),
+        knownSecretScopes: Object.keys(received.state.blindTokenSecrets ?? {}),
+      });
       return false;
     }
     storeBlindIssuance(issuance);
@@ -1966,6 +2035,7 @@ export class QuestionnaireOptionAVoterRuntime {
 
     let next = voterState;
     if (invite) {
+      releaseVoterBlindRequestReservation(next);
       if (invite.definition) {
         cacheQuestionnaireDefinitionForRuntime(invite.definition);
       }
@@ -2294,12 +2364,19 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     const sharedInflightKey = voterBlindRequestInflightKey(this.state);
     const sharedInflight = sharedInflightKey ? voterBlindRequestInflightByKey.get(sharedInflightKey) : null;
-    if (sharedInflight) {
+    if (sharedInflight && sharedInflight.expiresAt <= Date.now()) {
+      voterBlindRequestInflightByKey.delete(sharedInflightKey);
+    }
+    const stateUpdatedAt = Date.parse(this.state?.lastUpdatedAt ?? "");
+    const hasStaleState = sharedInflight?.settledAt === null
+      || !Number.isFinite(stateUpdatedAt)
+      || stateUpdatedAt <= (sharedInflight?.settledAt ?? 0);
+    if (sharedInflight && sharedInflight.expiresAt > Date.now() && !this.state?.blindRequest && hasStaleState) {
       optionAFlowLog("voter", "blind_request_shared_inflight_reused", {
         electionId: this.state?.electionId ?? this.electionId,
         invitedNpub: this.state?.invitedNpub ?? null,
       });
-      const result = await sharedInflight;
+      const result = await sharedInflight.promise;
       const latest = this.state
         ? loadVoterState({
           voterNpub: this.state.invitedNpub,
@@ -2312,17 +2389,51 @@ export class QuestionnaireOptionAVoterRuntime {
       this.notifyStateChanged();
       return this.state;
     }
+    if (!this.state?.blindRequest && reserveVoterBlindRequest(this.state)) {
+      const latest = this.state
+        ? loadVoterState({
+          voterNpub: this.state.invitedNpub,
+          electionId: this.state.electionId,
+          coordinatorNpub: this.state.coordinatorNpub,
+        })
+        : null;
+      if (latest) {
+        this.state = latest;
+        this.startVoterDmSubscriptions();
+        this.notifyStateChanged();
+      }
+      optionAFlowLog("voter", "blind_request_reservation_reused", {
+        electionId: this.state?.electionId ?? this.electionId,
+        invitedNpub: this.state?.invitedNpub ?? null,
+      });
+      return this.state!;
+    }
     const inflight = this.requestBlindBallotInternal(options);
     this.requestBlindBallotInflight = inflight;
     if (sharedInflightKey) {
-      voterBlindRequestInflightByKey.set(sharedInflightKey, inflight);
+      voterBlindRequestInflightByKey.set(sharedInflightKey, {
+        promise: inflight,
+        settledAt: null,
+        expiresAt: Date.now() + OPTION_A_BLIND_REQUEST_RETRY_MS,
+      });
     }
     try {
-      return await this.requestBlindBallotInflight;
-    } finally {
-      if (sharedInflightKey && voterBlindRequestInflightByKey.get(sharedInflightKey) === inflight) {
+      const result = await this.requestBlindBallotInflight;
+      if (sharedInflightKey) {
+        const shared = voterBlindRequestInflightByKey.get(sharedInflightKey);
+        if (shared?.promise === inflight) {
+          shared.settledAt = Date.now();
+          shared.expiresAt = shared.settledAt + OPTION_A_BLIND_REQUEST_RETRY_MS;
+        }
+      }
+      return result;
+    } catch (error) {
+      if (sharedInflightKey && voterBlindRequestInflightByKey.get(sharedInflightKey)?.promise === inflight) {
         voterBlindRequestInflightByKey.delete(sharedInflightKey);
       }
+      releaseVoterBlindRequestReservation(this.state);
+      throw error;
+    } finally {
       this.requestBlindBallotInflight = null;
     }
   }
@@ -2691,14 +2802,10 @@ export class QuestionnaireOptionAVoterRuntime {
         continue;
       }
       if (existingIssuance && !existingTokenSecret) {
-        const blindIssuances = { ...(next.blindIssuances ?? {}) };
-        delete blindIssuances[scopeKey];
-        next = {
-          ...next,
-          blindIssuance: next.blindIssuance?.issuanceId === existingIssuance.issuanceId ? null : next.blindIssuance,
-          blindIssuances,
-          credentialReady: false,
-        };
+        throw new OptionARuntimeError(
+          "issuance_failed",
+          "An issued credential is missing its local recovery secret. Reopen the original voter session; do not request another ballot.",
+        );
       }
       let request = next.blindRequests?.[scopeKey] ?? null;
       let tokenSecretEntry = next.blindTokenSecrets?.[scopeKey] ?? null;
@@ -2708,7 +2815,24 @@ export class QuestionnaireOptionAVoterRuntime {
         request ??= next.blindRequest ?? null;
         tokenSecretEntry ??= next.blindTokenSecret ?? null;
       }
+      // Self-recovery snapshots omit scoped secrets, but retain the original
+      // legacy entry. Restore it only when it belongs to this exact request.
+      if (
+        request
+        && !tokenSecretEntry
+        && next.blindRequest?.requestId === request.requestId
+        && next.blindTokenSecret
+        && sameBallotScope(next.blindTokenSecret.ballotScope, scope)
+      ) {
+        tokenSecretEntry = next.blindTokenSecret;
+      }
       if (!request || !tokenSecretEntry) {
+        if (request || tokenSecretEntry) {
+          throw new OptionARuntimeError(
+            "issuance_failed",
+            "A pending ballot request is missing its local recovery secret. Reopen the original voter session; do not request another ballot.",
+          );
+        }
         const tokenSecret = makeTokenSecret();
         const tokenCommitment = await sha256Hex(tokenSecret);
         const message = buildQuestionnaireBlindTokenSignedMessage({
@@ -2828,6 +2952,12 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     this.state = next;
+    optionAFlowLog("voter", "blind_request_bundle_state_saved", {
+      electionId: this.state.electionId,
+      requestScopes: Object.keys(this.state.blindRequests ?? {}),
+      secretScopes: Object.keys(this.state.blindTokenSecrets ?? {}),
+      hasLegacySecret: Boolean(this.state.blindTokenSecret),
+    });
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_bundle_pre_publish" });
     this.startVoterDmSubscriptions();
@@ -2853,8 +2983,15 @@ export class QuestionnaireOptionAVoterRuntime {
       }
       this.state = {
         ...this.state,
-        blindRequest: this.state.blindRequest ?? scopedRequests[0] ?? null,
+        // Relay publication is asynchronous. Preserve the factor generated
+        // before it began if an older recovery snapshot arrived meanwhile.
+        blindRequest: this.state.blindRequest ?? next.blindRequest ?? scopedRequests[0] ?? null,
         blindRequests: nextRequests,
+        blindTokenSecret: this.state.blindTokenSecret ?? next.blindTokenSecret ?? null,
+        blindTokenSecrets: {
+          ...(next.blindTokenSecrets ?? {}),
+          ...(this.state.blindTokenSecrets ?? {}),
+        },
         blindRequestSent: true,
         blindRequestSentAt: sentAt,
         lastUpdatedAt: sentAt,

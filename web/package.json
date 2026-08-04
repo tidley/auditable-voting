@@ -1,7 +1,7 @@
 {
   "name": "auditable-voting-web",
   "private": true,
-  "version": "0.1.165",
+  "version": "0.1.166",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -18,6 +18,7 @@
     "pretest:live-questionnaire-scale": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest:live-delegate-coordinator": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest:live-rust-helper": "node scripts/ensure-wasm-artifacts.mjs",
+    "pretest:live-ui-rust-worker": "node scripts/ensure-wasm-artifacts.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
@@ -32,6 +33,7 @@
     "test:live-questionnaire-scale": "tsx scripts/live-questionnaire-scale-public.ts",
     "test:live-delegate-coordinator": "tsx scripts/live-delegate-coordinator-smoke.ts",
     "test:live-rust-helper": "tsx scripts/live-rust-helper-smoke.ts",
+    "test:live-ui-rust-worker": "tsx scripts/live-ui-rust-worker-smoke.ts",
     "test:scoped-ballot-load": "tsx scripts/scoped-ballot-load-sim.ts"
   },
   "dependencies": {

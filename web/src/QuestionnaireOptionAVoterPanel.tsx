@@ -1436,6 +1436,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!targetElectionId) {
       return;
     }
+    const existingSnapshot = runtime.getSnapshot();
+    if (
+      existingSnapshot?.invitedNpub === localVoterNpub
+      && (existingSnapshot.blindRequestSent || existingSnapshot.credentialReady || existingSnapshot.submission)
+    ) {
+      return;
+    }
     const key = `${targetElectionId}:${localVoterNpub}:${inviteContext.inviteCode}`;
     if (bearerInviteBootstrapForRef.current[key]) {
       return;
@@ -1526,7 +1533,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         autoRequestInFlightForRef.current[requestKey] = true;
         autoRequestLastAttemptAtRef.current[requestKey] = Date.now();
         try {
-          await runtime.requestBlindBallot({ forceResend: true });
+          await runtime.requestBlindBallot();
           if (cancelled) {
             return;
           }
@@ -2402,7 +2409,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const waitingForCredential = Boolean(next.blindRequestSent && !next.credentialReady && !next.submission);
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
       if (requestAfterLogin && !next.credentialReady && !next.submission) {
-        await voterRuntime.requestBlindBallot(waitingForCredential ? { forceResend: true } : undefined);
+        const requestKey = `${next.electionId}:${next.invitedNpub}`;
+        autoRequestInFlightForRef.current[requestKey] = true;
+        autoRequestLastAttemptAtRef.current[requestKey] = Date.now();
+        try {
+          await voterRuntime.requestBlindBallot(waitingForCredential ? { forceResend: true } : undefined);
+          autoRequestSentForRef.current[requestKey] = true;
+        } finally {
+          delete autoRequestInFlightForRef.current[requestKey];
+        }
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setStatus("Opened " + (invite.title || invite.electionId) + (

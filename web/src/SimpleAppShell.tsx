@@ -959,7 +959,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       setAccountMenuOpen(false);
                     }}
                   >
-                    {option.tab === "messages" && voterMessagesUnread ? <span className='simple-message-unread-dot' /> : null}
                     <span>{option.label}</span>
                   </UiButton>
                 ))}

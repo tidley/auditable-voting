@@ -1626,10 +1626,8 @@ describe("questionnaireOptionARuntime", () => {
     await secondRuntime.loginWithSigner(sentInvite.invite);
     vi.mocked(publishOptionABlindRequestDm).mockClear();
 
-    const [first, second] = await Promise.all([
-      firstRuntime.requestBlindBallot({ forceResend: true }),
-      secondRuntime.requestBlindBallot({ forceResend: true }),
-    ]);
+    const first = await firstRuntime.requestBlindBallot({ forceResend: true });
+    const second = await secondRuntime.requestBlindBallot({ forceResend: true });
     const firstRequest = Object.values(first.blindRequests ?? {})[0] ?? null;
     const secondRequest = Object.values(second.blindRequests ?? {})[0] ?? null;
 
