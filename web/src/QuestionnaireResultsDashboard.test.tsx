@@ -154,7 +154,7 @@ describe("QuestionnaireResultsDashboard", () => {
     );
 
     expect(screen.queryByText("0% · 0 votes")).toBeNull();
-    expect(screen.getAllByText("0% 0 VOTES · 0 published")).toHaveLength(4);
+    expect(screen.getAllByText("0% (0)")).toHaveLength(4);
 
     const optionLabels = [...container.querySelectorAll<HTMLSpanElement>(".simple-auditor-option-bar-label > span")];
     const yesLabel = optionLabels.find((label) => label.textContent === "Yes");
@@ -215,17 +215,17 @@ describe("QuestionnaireResultsDashboard", () => {
     );
 
     const search = screen.getByLabelText("Filter results");
-    expect(screen.getByText("Q1. Prefer tea?")).toBeTruthy();
-    expect(screen.getByText("Q2. Pick fruit")).toBeTruthy();
+    expect(screen.getByText("Prefer tea?")).toBeTruthy();
+    expect(screen.getByText("Pick fruit")).toBeTruthy();
 
     await user.type(search, "banana");
-    expect(screen.queryByText("Q1. Prefer tea?")).toBeNull();
-    expect(screen.getByText("Q2. Pick fruit")).toBeTruthy();
+    expect(screen.queryByText("Prefer tea?")).toBeNull();
+    expect(screen.getByText("Pick fruit")).toBeTruthy();
 
     await user.clear(search);
     await user.type(search, "tea");
-    expect(screen.getByText("Q1. Prefer tea?")).toBeTruthy();
-    expect(screen.queryByText("Q2. Pick fruit")).toBeNull();
+    expect(screen.getByText("Prefer tea?")).toBeTruthy();
+    expect(screen.queryByText("Pick fruit")).toBeNull();
   });
 
   it("shows session live status in the title bar without a separate tile", () => {
@@ -263,6 +263,8 @@ describe("QuestionnaireResultsDashboard", () => {
 
     expect(screen.queryByText("Live status")).toBeNull();
     expect(screen.getByLabelText("Live status").textContent).toContain("2/3 accepted (67%)");
+    expect(screen.getByText("Q1")).toBeTruthy();
+    expect(screen.getByText("Single choice")).toBeTruthy();
     expect(container.querySelector(".simple-session-live-status")).toBeTruthy();
     expect(container.querySelector(".simple-session-live-card")).toBeNull();
   });
@@ -287,7 +289,7 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getByText("Responses")).toBeTruthy();
+    expect(screen.getByLabelText("Questionnaire result summary").textContent).toContain("Responses");
     expect(screen.getByText("1200/1200 accepted (100%)")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Loaded: 400 (33%)");
     expect(document.body.textContent).not.toContain("Accepted: 400 (100%)");
@@ -352,7 +354,7 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getByText("50% 1 VOTE · 0 published · 1 live")).toBeTruthy();
+    expect(screen.getByText("50% (1) · 1 live")).toBeTruthy();
     expect(container.querySelector(".simple-auditor-results-progress-live")).toBeTruthy();
     const optionLabels = [...container.querySelectorAll<HTMLSpanElement>(".simple-auditor-option-bar-label > span")];
     const yesLabel = optionLabels.find((label) => label.textContent === "Yes");
@@ -391,7 +393,7 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getByText("100% 1 VOTE · 1 published")).toBeTruthy();
+    expect(screen.getByText("100% (1)")).toBeTruthy();
   });
 
   it("shows provisional per-question votes before final submissions exist", () => {
@@ -433,8 +435,8 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getAllByText("Q1. Ready?").length).toBeGreaterThan(0);
-    expect(screen.getByText("100% 1 VOTE · 0 published · 1 live")).toBeTruthy();
+    expect(screen.getAllByText("Ready?").length).toBeGreaterThan(0);
+    expect(screen.getByText("100% (1) · 1 live")).toBeTruthy();
   });
 
   it("replaces provisional votes from the same anonymous author", () => {
@@ -488,8 +490,8 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(container.textContent).toMatch(/No[\s\S]*100% 1 VOTE · 0 published · 1 live/);
-    expect(container.textContent).toMatch(/Yes[\s\S]*0% 0 VOTES/);
+    expect(container.textContent).toMatch(/No[\s\S]*100% \(1\) · 1 live/);
+    expect(container.textContent).toMatch(/Yes[\s\S]*0% \(0\)/);
     expect(container.textContent).not.toContain("2 live");
   });
 
@@ -564,7 +566,7 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getAllByText("Q1. Ready?").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Ready?").length).toBeGreaterThan(0);
     expect(screen.getByText("1 response")).toBeTruthy();
     expect(document.body.textContent).not.toContain("live");
     expect(document.body.textContent).not.toContain("2/2 accepted");

@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,700;1,400;1,700&display=swap");
+
 :root {
   color-scheme: light;
   --bg: #f3efe3;
@@ -51,7 +53,13 @@ body {
     radial-gradient(circle at bottom right, rgba(180, 112, 70, 0.18), transparent 28%),
     linear-gradient(135deg, var(--bg), #f8f4eb 46%, var(--bg-accent));
   color: var(--text);
-  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "Roboto", sans-serif;
+  font-synthesis: none;
+}
+
+/* One readable typeface keeps operational views visually coherent. */
+body * {
+  font-family: inherit;
 }
 
 body.simple-page {
@@ -71,7 +79,7 @@ textarea {
 }
 
 code {
-  font-family: "SFMono-Regular", "JetBrains Mono", monospace;
+  font-family: inherit;
 }
 
 #root {
@@ -138,7 +146,7 @@ code {
 .hero-card h1,
 .panel h2 {
   margin: 0;
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
   font-weight: 700;
   line-height: 1.05;
 }
@@ -662,7 +670,7 @@ code {
   margin: 0 0 4px;
   color: var(--simple-teal);
   font-size: 0.72rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -671,7 +679,7 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: clamp(1.55rem, 4vw, 2rem);
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.05;
 }
 
@@ -770,10 +778,10 @@ code {
   margin: 0 0 0 auto;
   overflow: hidden;
   color: var(--simple-muted);
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: inherit;
   font-variant-numeric: slashed-zero tabular-nums;
   font-size: 0.95rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
   text-align: right;
   text-overflow: ellipsis;
@@ -791,7 +799,7 @@ code {
   overflow: hidden;
   color: var(--simple-soft);
   font-size: 1.15rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
   text-align: right;
   text-overflow: ellipsis;
@@ -847,7 +855,7 @@ code {
 
 .simple-account-menu-trigger-text {
   min-width: 0;
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: inherit;
   font-variant-numeric: slashed-zero tabular-nums;
 }
 
@@ -1132,7 +1140,7 @@ code {
   margin: 0;
   color: var(--simple-muted);
   font-size: 0.88rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -1218,7 +1226,7 @@ code {
   margin: 0;
   color: var(--simple-teal);
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1228,7 +1236,7 @@ code {
   margin: -2px 40px -2px;
   color: var(--simple-text);
   font-size: 1.55rem;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1.15;
   cursor: help;
 }
@@ -1256,7 +1264,7 @@ code {
   color: var(--simple-teal);
   font: inherit;
   font-size: 0.92rem;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.02em;
   cursor: pointer;
 }
@@ -1288,7 +1296,7 @@ code {
   background: rgba(45, 212, 191, 0.04);
   color: var(--simple-teal);
   font-size: 0.76rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
@@ -1656,7 +1664,7 @@ code {
 .simple-account-menu .simple-role-switch-button,
 .simple-account-menu .simple-account-menu-button {
   font-size: 0.92rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -1770,7 +1778,7 @@ code {
   background: rgba(8, 143, 141, 0.12);
   color: var(--simple-text);
   font: inherit;
-  font-weight: 900;
+  font-weight: 700;
   cursor: pointer;
   transition: border-color 180ms ease, background 180ms ease, color 180ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1844,7 +1852,7 @@ code {
   overflow: hidden;
   color: var(--simple-text);
   font-size: 0.98rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1871,16 +1879,16 @@ code {
 .simple-account-profile-title {
   color: var(--simple-text);
   font-size: 1.15rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.1;
 }
 
 .simple-account-profile-npub {
   min-width: 0;
   color: var(--simple-muted);
-  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: inherit;
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: 700;
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1955,7 +1963,7 @@ code {
   gap: 8px;
   color: var(--simple-text);
   font-size: 0.84rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -1995,7 +2003,7 @@ code {
   padding: 0 4px 2px;
   color: var(--simple-teal);
   font-size: 0.76rem;
-  font-weight: 950;
+  font-weight: 700;
   letter-spacing: 0.15em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -2118,7 +2126,7 @@ code {
   overflow: hidden;
   color: var(--simple-text);
   font-size: 0.98rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2205,7 +2213,7 @@ code {
   color: var(--simple-muted);
   font: inherit;
   font-size: 0.96rem;
-  font-weight: 800;
+  font-weight: 700;
   text-align: left;
   cursor: pointer;
   transition:
@@ -2257,7 +2265,7 @@ code {
   width: 30px;
   height: 30px;
   color: var(--simple-teal);
-  font-weight: 900;
+  font-weight: 700;
   font-size: 0;
   line-height: 1;
 }
@@ -2353,7 +2361,7 @@ code {
   overflow: hidden;
   color: var(--simple-text);
   font-size: 0.98rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2620,7 +2628,7 @@ code {
   gap: 10px;
   margin: 0;
   color: var(--simple-soft);
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -2797,7 +2805,7 @@ code {
   margin: 0;
   color: var(--simple-soft);
   font-size: 0.84rem;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1.2;
 }
@@ -2839,7 +2847,7 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: 1rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -2858,7 +2866,7 @@ code {
   gap: 10px;
   margin: 0;
   font-size: inherit;
-  font-weight: 800;
+  font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
   color: var(--simple-soft);
@@ -2930,7 +2938,7 @@ code {
 .simple-questionnaire-close-timer-minutes .simple-voter-label {
   margin: 0;
   font-size: inherit;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-questionnaire-close-timer-input {
@@ -2991,7 +2999,7 @@ code {
   border-radius: 8px;
   color: var(--simple-muted);
   font-size: inherit;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
   transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
@@ -3109,7 +3117,7 @@ code {
 
 .simple-questionnaire-question-title {
   color: var(--simple-text);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-questionnaire-question-controls {
@@ -3163,7 +3171,7 @@ code {
   background: rgba(2, 6, 23, 0.22);
   color: var(--simple-soft);
   font-size: 0.9rem;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -3535,7 +3543,7 @@ code {
 .simple-questionnaire-questions-head span {
   color: var(--simple-muted);
   font-size: 0.86rem;
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -3674,7 +3682,7 @@ code {
   background: rgba(12, 19, 25, 0.42);
   color: var(--simple-soft);
   font: inherit;
-  font-weight: 850;
+  font-weight: 700;
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
 }
@@ -3905,7 +3913,7 @@ code {
 .simple-voter-title,
 .simple-voter-section-title {
   margin: 0;
-  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-family: inherit;
   font-weight: 700;
   letter-spacing: 0;
 }
@@ -4013,7 +4021,7 @@ code {
   text-decoration: none;
   font: inherit;
   font-size: 0.92rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
   box-shadow: none;
@@ -4073,7 +4081,7 @@ code {
   text-decoration: none;
   font: inherit;
   font-size: 0.92rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
   transition: border-color 150ms ease, background 150ms ease, color 150ms ease, opacity 150ms ease;
@@ -4123,7 +4131,7 @@ code {
   color: var(--simple-text);
   font: inherit;
   font-size: 0.92rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.18;
   cursor: pointer;
   transition: border-color 150ms ease, background 150ms ease, color 150ms ease, opacity 150ms ease;
@@ -4210,7 +4218,7 @@ code {
   min-height: 34px;
   color: var(--simple-soft);
   font-size: 0.9rem;
-  font-weight: 750;
+  font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -4276,7 +4284,7 @@ code {
 .av-ui-label {
   color: var(--simple-soft);
   font-size: 0.78rem;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.02em;
 }
 
@@ -4365,7 +4373,7 @@ code {
   border-radius: 6px;
   color: var(--simple-soft);
   font-size: 0.92rem;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
   outline: none;
 }
@@ -4413,7 +4421,7 @@ code {
   background: #111b29;
   color: var(--simple-muted);
   font-size: 0.7rem;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.06em;
   line-height: 1.2;
   text-transform: uppercase;
@@ -4666,7 +4674,7 @@ code {
   resize: vertical;
   background: var(--simple-bg);
   color: var(--simple-green);
-  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: inherit;
   font-size: 0.86rem;
   line-height: 1.45;
   overflow-x: auto;
@@ -4690,7 +4698,7 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: 1rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-delegate-confirm-button {
@@ -4784,7 +4792,7 @@ code {
 .simple-delegate-status-grid .simple-voter-note strong {
   color: var(--simple-text);
   font-size: 0.78rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.2;
 }
 
@@ -4920,7 +4928,7 @@ code {
   background: transparent;
   color: var(--simple-text);
   font: inherit;
-  font-weight: 800;
+  font-weight: 700;
   text-align: left;
   cursor: pointer;
 }
@@ -5101,7 +5109,7 @@ code {
   color: var(--simple-muted);
   font-size: 0.8rem;
   line-height: 1.2;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: none;
 }
@@ -5114,7 +5122,7 @@ code {
 
 .simple-auditor-questionnaire-label span:last-child {
   min-width: 0;
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: inherit;
   font-variant-numeric: slashed-zero tabular-nums;
   overflow-wrap: anywhere;
 }
@@ -5288,7 +5296,7 @@ code {
 .simple-session-live-status-value {
   color: var(--simple-text);
   font-size: 1.18rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.15;
 }
 
@@ -5320,6 +5328,45 @@ code {
   overflow-wrap: anywhere;
 }
 
+.simple-session-results-summary {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0 18px 16px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: #0c1621;
+}
+
+.simple-session-results-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 56px;
+  padding: 12px 22px;
+  color: var(--simple-muted);
+  font-size: 0.78rem;
+}
+
+.simple-session-results-summary span + span {
+  border-left: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.simple-session-results-summary strong {
+  color: var(--simple-text);
+  font-size: 1rem;
+}
+
+.simple-session-results-summary svg {
+  width: 17px;
+  height: 17px;
+  color: var(--simple-teal);
+}
+
+.simple-session-results-summary small {
+  color: var(--simple-muted);
+  font-size: 0.78rem;
+}
+
 .simple-auditor-results-hero {
   display: flex;
   align-items: flex-start;
@@ -5332,7 +5379,7 @@ code {
   margin: 0 0 6px;
   color: var(--simple-muted);
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -5475,7 +5522,7 @@ code {
 }
 
 .simple-auditor-summary-island-head .simple-voter-section-title {
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: inherit;
   font-variant-numeric: slashed-zero tabular-nums;
   font-size: 1.12rem;
   line-height: 1.18;
@@ -5584,7 +5631,7 @@ code {
   margin: 0;
   color: var(--simple-teal);
   font-size: 0.8rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1.2;
 }
@@ -5601,7 +5648,7 @@ code {
   margin: 0;
   color: var(--simple-teal);
   font-size: 0.8rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1.2;
   text-transform: none;
@@ -5618,7 +5665,7 @@ code {
   color: var(--simple-text);
   font-size: clamp(0.9rem, 1.8vw, 1.1rem);
   line-height: 1.2;
-  font-weight: 800;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
@@ -5643,7 +5690,7 @@ code {
   align-self: center;
   color: var(--simple-teal);
   font-size: 0.8rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: none;
 }
@@ -5729,7 +5776,7 @@ code {
 .simple-auditor-result-pack-links a {
   color: var(--simple-teal);
   font-size: 0.84rem;
-  font-weight: 800;
+  font-weight: 700;
   text-decoration: none;
 }
 
@@ -5854,9 +5901,9 @@ code {
 }
 
 .simple-session-question-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  margin: 0;
+  margin: 0 18px 18px;
 }
 
 .simple-auditor-question-card {
@@ -5872,23 +5919,111 @@ code {
   box-shadow: none;
 }
 
-.simple-session-results-dashboard .simple-auditor-question-card {
-  align-self: start;
-  align-content: start;
-  padding: 14px 16px;
+.simple-auditor-question-card.simple-session-question-card {
+  grid-template-columns: 116px minmax(0, 1fr);
+  align-items: start;
+  min-height: 108px;
+  padding: 16px;
   border: 1px solid var(--simple-border);
-  border-radius: 14px;
+  border-radius: 8px;
   gap: 12px;
   background: #0c1621;
   box-shadow: none;
 }
 
-.simple-session-results-dashboard .simple-auditor-question-card-head .simple-voter-question {
-  font-size: 0.96rem;
+.simple-session-question-card .simple-auditor-question-card-head {
+  display: grid;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: stretch;
+  align-content: start;
+  gap: 5px;
+  padding: 0 14px 0 0;
+  border-right: 1px solid rgba(148, 163, 184, 0.14);
 }
 
-.simple-session-results-dashboard .simple-auditor-question-response-count {
-  font-size: 0.78rem;
+.simple-session-question-number,
+.simple-session-question-type {
+  margin: 0;
+}
+
+.simple-session-question-number {
+  color: var(--simple-teal);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.simple-session-question-type {
+  color: var(--simple-muted);
+  font-size: 0.7rem;
+  line-height: 1.25;
+}
+
+.simple-session-question-card .simple-auditor-question-response-count {
+  margin-top: 12px;
+  font-size: 0.72rem;
+}
+
+.simple-session-question-card .simple-auditor-question-card-head .simple-voter-question {
+  grid-column: auto;
+  grid-row: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simple-auditor-question-card-content {
+  display: contents;
+}
+
+.simple-session-question-card .simple-voter-question {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.simple-session-question-card .simple-auditor-option-bars,
+.simple-session-question-card .simple-auditor-free-text-cardlet {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+}
+
+.simple-session-question-card .simple-auditor-option-bar-row {
+  grid-template-columns: 56px minmax(0, 1fr) 80px;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.simple-session-question-card .simple-auditor-option-bar-label {
+  display: contents;
+}
+
+.simple-session-question-card .simple-auditor-option-bar-label > span {
+  grid-column: 1;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.simple-session-question-card .simple-auditor-option-bar-label > strong {
+  grid-column: 3;
+  font-size: 0.72rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.simple-session-question-card .simple-auditor-option-bar-row > .simple-auditor-results-progress {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.simple-session-question-card .simple-auditor-option-bar-row + .simple-auditor-option-bar-row {
+  margin-top: 10px;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .simple-auditor-question-card-head {
@@ -5942,15 +6077,21 @@ code {
 }
 
 .simple-auditor-boolean-bar-row.is-no .simple-auditor-results-progress-stacked .simple-auditor-results-progress-live {
-  background: color-mix(in srgb, var(--simple-coral) 58%, #02070d);
+  border-color: color-mix(in srgb, var(--simple-coral) 82%, white);
+  background: transparent;
 }
 
 .simple-auditor-boolean-bar-row.is-yes .simple-auditor-results-progress span {
   background: var(--simple-green);
 }
 
+.simple-auditor-option-bar-row.is-leading .simple-auditor-results-progress-final {
+  background: var(--simple-teal);
+}
+
 .simple-auditor-boolean-bar-row.is-yes .simple-auditor-results-progress-stacked .simple-auditor-results-progress-live {
-  background: color-mix(in srgb, var(--simple-green) 58%, #02070d);
+  border-color: color-mix(in srgb, var(--simple-green) 82%, white);
+  background: transparent;
 }
 
 .simple-auditor-option-bar-label {
@@ -6176,7 +6317,7 @@ code {
   border-radius: 6px;
   background: var(--simple-bg);
   color: var(--simple-soft);
-  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: inherit;
   font-size: 0.82rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -6206,7 +6347,7 @@ code {
   border-radius: 0;
   background: transparent;
   color: var(--simple-teal);
-  font-weight: 850;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -6258,7 +6399,7 @@ code {
   padding: 9px 10px;
   color: var(--simple-muted);
   font-size: 0.7rem;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.06em;
   line-height: 1.2;
   text-transform: uppercase;
@@ -6329,7 +6470,7 @@ code {
   align-items: baseline;
   gap: 8px;
   color: var(--simple-text);
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.05;
   min-width: 0;
 }
@@ -6346,7 +6487,7 @@ code {
   max-width: 100%;
   color: var(--simple-muted);
   font-size: 0.72rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.03em;
   line-height: 1.15;
   text-transform: uppercase;
@@ -6407,7 +6548,7 @@ code {
   border-radius: 0;
   background: transparent;
   font-size: 0.88rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.15;
   text-transform: none;
   white-space: nowrap;
@@ -6457,7 +6598,7 @@ code {
   border-radius: 0;
   color: var(--simple-soft);
   font-size: 0.72rem;
-  font-weight: 850;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -6537,7 +6678,7 @@ code {
   min-height: 34px;
   color: var(--simple-soft);
   font-size: 0.9rem;
-  font-weight: 750;
+  font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -6638,7 +6779,7 @@ code {
     content: attr(data-label);
     color: var(--simple-muted);
     font-size: 0.68rem;
-    font-weight: 850;
+    font-weight: 700;
     letter-spacing: 0.06em;
     line-height: 1.2;
     text-transform: uppercase;
@@ -6920,7 +7061,7 @@ code {
 .simple-private-invite-code {
   color: var(--simple-text);
   font-size: 1.12rem;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1;
 }
 
@@ -7065,7 +7206,7 @@ code {
 .simple-private-invite-field-label {
   color: var(--simple-soft);
   font-size: 0.88rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
 }
 
@@ -7076,7 +7217,7 @@ code {
   min-height: 38px;
   color: var(--simple-soft);
   font-size: 0.92rem;
-  font-weight: 750;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -7487,7 +7628,7 @@ code {
   background: transparent;
   color: var(--simple-text);
   font-size: 0.94rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.4;
   text-align: center;
 }
@@ -7563,7 +7704,7 @@ code {
 .simple-questionnaire-stepper-copy strong {
   color: var(--simple-text);
   font-size: 0.94rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.3;
 }
 
@@ -7614,13 +7755,13 @@ code {
 .simple-optiona-voter-page {
   display: grid;
   gap: 22px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: inherit;
   font-synthesis: none;
   line-height: 1.5;
 }
 
 .simple-optiona-voter-page .av-ui-button {
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.35;
 }
 
@@ -7683,7 +7824,7 @@ code {
 .simple-questionnaire-voter-id-value {
   margin: 0;
   color: #f8fafc;
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: inherit;
   font-size: clamp(1.35rem, 6vw, 2.6rem);
   font-weight: 700;
   line-height: 1.15;
@@ -7727,7 +7868,7 @@ code {
   place-items: center;
   color: #07121d;
   font-size: 0.7rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-questionnaire-pow-slider {
@@ -7749,7 +7890,7 @@ code {
 
 .simple-questionnaire-pow-slider-heading strong {
   color: var(--simple-accent, #2dd4bf);
-  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  font-family: inherit;
   font-size: 0.85rem;
 }
 
@@ -7864,7 +8005,7 @@ code {
   margin: 0 0 3px;
   color: var(--simple-teal);
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.13em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -7885,7 +8026,7 @@ code {
   border-left: 0;
   color: var(--simple-teal);
   font-size: 0.86rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.2;
   text-align: right;
 }
@@ -7912,7 +8053,7 @@ code {
   background: transparent;
   color: var(--simple-teal);
   font-size: 0.82rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.2;
 }
 
@@ -7936,7 +8077,7 @@ code {
 .simple-vote-receipt-finder > span:first-child {
   color: var(--simple-teal);
   font-size: 0.73rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.11em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -7946,7 +8087,7 @@ code {
   display: inline;
   color: var(--simple-teal);
   font-size: clamp(1.28rem, 3vw, 1.72rem);
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.01em;
   line-height: 1.05;
   text-decoration: underline;
@@ -7957,7 +8098,7 @@ code {
 .simple-vote-receipt-finder .simple-vote-receipt-copy-line-identity strong {
   color: var(--simple-text);
   font-size: clamp(1.25rem, 3vw, 1.8rem);
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
   overflow-wrap: anywhere;
@@ -7999,7 +8140,7 @@ code {
 .simple-vote-receipt-marker-meta dt {
   color: var(--simple-teal);
   font-size: 0.73rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.11em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -8009,14 +8150,14 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: 0.96rem;
-  font-weight: 750;
+  font-weight: 700;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
 .simple-vote-receipt-marker-meta strong {
   font-size: clamp(1.25rem, 3vw, 1.8rem);
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
 }
@@ -8035,7 +8176,7 @@ code {
 .simple-vote-receipt-identity-copy span {
   color: var(--simple-teal);
   font-size: 0.73rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.11em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -8044,7 +8185,7 @@ code {
 .simple-vote-receipt-identity-copy strong {
   color: var(--simple-text);
   font-size: clamp(2.35rem, 6.5vw, 3.35rem);
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0;
   line-height: 0.95;
   overflow-wrap: anywhere;
@@ -8120,7 +8261,7 @@ code {
   background: rgba(2, 9, 18, 0.96);
   color: var(--simple-teal);
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1;
   opacity: 0;
   pointer-events: none;
@@ -8139,7 +8280,7 @@ code {
   max-width: 34ch;
   color: var(--simple-muted);
   font-size: 0.8rem;
-  font-weight: 650;
+  font-weight: 700;
   line-height: 1.35;
 }
 
@@ -8158,7 +8299,7 @@ code {
   padding: 0;
   color: var(--simple-soft);
   font-size: 0.78rem;
-  font-weight: 850;
+  font-weight: 700;
   line-height: 1.1;
   text-align: center;
   white-space: nowrap;
@@ -8168,7 +8309,7 @@ code {
   padding-bottom: 0;
   color: var(--simple-text);
   font-size: 0.86rem;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .simple-submission-identity-visual-labels span {
@@ -8206,7 +8347,7 @@ code {
 .simple-submission-identity-details dt {
   color: var(--simple-soft);
   font-size: 0.82rem;
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -8217,7 +8358,7 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: 0.82rem;
-  font-weight: 550;
+  font-weight: 700;
   line-height: 1.35;
   overflow-wrap: anywhere;
   text-align: right;
@@ -8255,7 +8396,7 @@ code {
   gap: 9px;
   color: var(--simple-soft);
   font-size: 0.75rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.05em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -8265,7 +8406,7 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: 0.95rem;
-  font-weight: 750;
+  font-weight: 700;
   line-height: 1.32;
   overflow-wrap: anywhere;
 }
@@ -8278,7 +8419,7 @@ code {
   display: inline;
   color: var(--simple-teal);
   font-size: clamp(1.08rem, 2.2vw, 1.24rem);
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.01em;
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -8330,7 +8471,7 @@ code {
   display: grid;
   place-items: center;
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1;
 }
 
@@ -8403,7 +8544,7 @@ code {
   color: var(--simple-soft);
   cursor: pointer;
   font-size: 0.86rem;
-  font-weight: 850;
+  font-weight: 700;
   list-style: none;
   transition:
     border-color 0.16s ease,
@@ -8446,7 +8587,7 @@ code {
   justify-self: end;
   color: var(--simple-muted);
   font-size: 0.74rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.35;
 }
 
@@ -8561,13 +8702,13 @@ code {
 .simple-vote-receipt-proxy-card-heading strong {
   color: var(--simple-text);
   font-size: 0.92rem;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .simple-vote-receipt-proxy-card-heading span {
   color: var(--simple-soft);
   font-size: 0.78rem;
-  font-weight: 750;
+  font-weight: 700;
   text-align: right;
 }
 
@@ -8597,13 +8738,13 @@ code {
 .simple-vote-receipt-proxy-card-copy .simple-identity-words-badge {
   color: var(--simple-teal);
   font-size: 1rem;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .simple-vote-receipt-proxy-card-copy .simple-vote-receipt-copy-line-identity strong {
   color: var(--simple-text);
   font-size: 0.96rem;
-  font-weight: 850;
+  font-weight: 700;
 }
 
 .simple-ballot-details-card {
@@ -8672,7 +8813,7 @@ code {
   margin: 0;
   color: var(--simple-teal);
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -8703,7 +8844,7 @@ code {
   background: transparent;
   color: var(--simple-teal);
   font-size: 0.76rem;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0;
   line-height: 1.3;
   text-transform: uppercase;
@@ -8766,7 +8907,7 @@ code {
   min-width: 0;
   color: var(--simple-text);
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.35;
 }
 
@@ -8779,7 +8920,7 @@ code {
   color: var(--simple-text);
   font-size: 1.45rem;
   line-height: 1.32;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .simple-questionnaire-voter-helper {
@@ -8803,7 +8944,7 @@ code {
   padding: 0 22px;
   border-radius: 10px;
   font-size: 1.02rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .simple-questionnaire-yes-no-grid .av-ui-icon,
@@ -8903,7 +9044,7 @@ code {
   border-color: rgba(45, 212, 191, 0.52);
   background: rgba(45, 212, 191, 0.08);
   color: var(--simple-text);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .simple-questionnaire-choice-row.is-selected input[type="checkbox"],
@@ -8982,7 +9123,7 @@ code {
   margin: -4px 0 0;
   color: var(--simple-teal);
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .simple-questionnaire-rank-voter-grid {
@@ -9036,7 +9177,7 @@ code {
   gap: 6px;
   min-width: 0;
   overflow-wrap: anywhere;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .simple-questionnaire-rank-inline-number {
@@ -9048,7 +9189,7 @@ code {
   justify-self: end;
   color: var(--simple-teal);
   font-size: 0.86rem;
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -9257,7 +9398,7 @@ code {
 
 .simple-vote-valid,
 .simple-vote-invalid {
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-vote-valid {
@@ -9272,7 +9413,7 @@ code {
   margin: 10px 0 18px;
   font-size: 1.85rem;
   line-height: 1.2;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--simple-text);
 }
 
@@ -9292,7 +9433,7 @@ code {
   margin: 0;
   color: var(--simple-text);
   font-size: 0.9rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-submitted-vote-list {
@@ -9370,7 +9511,7 @@ code {
   justify-items: center;
   color: var(--simple-text);
   font-size: 1.29rem;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1.1;
   text-align: center;
   white-space: nowrap;
@@ -9439,7 +9580,7 @@ code {
 .simple-auditor-submission-meta dt {
   color: var(--simple-teal);
   font-size: 0.64rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -9460,12 +9601,12 @@ code {
   min-height: 26px;
   padding: 3px 7px;
   font-size: 1.14rem;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1.08;
 }
 
 .simple-auditor-submission-meta-response dd {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: inherit;
   font-size: 0.7rem;
   line-height: 1.45;
 }
@@ -9486,7 +9627,7 @@ code {
   color: var(--simple-teal);
   cursor: pointer;
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1.1;
   list-style: none;
@@ -9523,7 +9664,7 @@ code {
   margin: 0;
   color: var(--simple-teal);
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1.1;
   text-transform: uppercase;
@@ -9553,7 +9694,7 @@ code {
   max-width: 100%;
   color: var(--simple-text);
   font-size: 0.88rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -9604,7 +9745,7 @@ code {
   background: transparent;
   color: var(--simple-soft);
   font-size: 0.72rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.15;
   text-transform: uppercase;
 }
@@ -9748,7 +9889,7 @@ code {
   border-left: 2px solid currentColor;
   border-radius: 2px;
   font-size: 0.58rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -9822,7 +9963,7 @@ code {
   background: #111b29;
   color: var(--simple-muted);
   font-size: 0.72rem;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -9877,10 +10018,10 @@ code {
 
 .simple-response-short-id {
   color: var(--simple-text);
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-family: inherit;
   font-variant-numeric: slashed-zero tabular-nums;
   font-size: 1.08rem;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1.1;
   white-space: nowrap;
 }
@@ -9888,7 +10029,7 @@ code {
 .simple-session-response-id {
   max-width: 220px;
   color: var(--simple-muted);
-  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: inherit;
   overflow-wrap: anywhere;
 }
 
@@ -10125,7 +10266,57 @@ code {
   }
 
   .simple-session-question-grid {
-    margin: 0;
+    margin: 0 12px 12px;
+  }
+
+  .simple-session-results-summary {
+    margin-inline: 12px;
+  }
+
+.simple-auditor-question-card.simple-session-question-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .simple-session-question-card .simple-auditor-question-card-head {
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    padding: 0 0 10px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  }
+
+  .simple-session-question-card .simple-auditor-question-response-count {
+    justify-self: end;
+    margin-top: 0;
+  }
+
+  .simple-session-question-card .simple-auditor-question-card-head .simple-voter-question {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .simple-session-question-card .simple-voter-question,
+  .simple-session-question-card .simple-auditor-option-bars,
+  .simple-session-question-card .simple-auditor-free-text-cardlet {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .simple-session-question-card .simple-auditor-question-card-head .simple-voter-question {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .simple-session-question-card .simple-auditor-option-bar-row {
+    grid-template-columns: 56px minmax(0, 1fr) 80px;
+    column-gap: 12px;
   }
 
   .simple-auditor-submissions-dropdown-body {
@@ -10283,7 +10474,7 @@ code {
   background: var(--simple-surface-2);
   color: var(--simple-text);
   font-size: 1.25rem;
-  font-weight: 800;
+  font-weight: 700;
   text-align: center;
 }
 
@@ -10362,7 +10553,7 @@ code {
 
 .simple-identity-words {
   color: var(--simple-teal);
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0.02em;
 }
 
@@ -10602,7 +10793,7 @@ code {
   border-radius: 999px;
   color: #22d3ee;
   font-size: 0.78rem;
-  font-weight: 900;
+  font-weight: 700;
   line-height: 1;
 }
 
@@ -10610,7 +10801,7 @@ code {
   margin: 0 0 3px;
   color: var(--simple-text);
   font-size: 0.88rem;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .simple-new-identity-confirm-warning div > span {
@@ -10754,7 +10945,7 @@ code {
   border-radius: 6px;
   color: var(--simple-soft);
   font-size: 0.84rem;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
@@ -10821,7 +11012,7 @@ code {
 
 .simple-messages-thread-id {
   color: var(--simple-soft);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-messages-thread-preview,
@@ -10889,7 +11080,7 @@ code {
 
 .simple-messages-link {
   color: var(--simple-teal);
-  font-weight: 750;
+  font-weight: 700;
   overflow-wrap: anywhere;
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -11158,7 +11349,7 @@ code {
   color: #052e16;
   background: var(--simple-green);
   border-color: var(--simple-green);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .simple-vote-status-list li.is-pending .simple-vote-status-icon {
@@ -11171,7 +11362,7 @@ code {
   background: var(--simple-surface-2);
   border-color: var(--simple-border-strong);
   font-size: 1.12rem;
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
 }
 
@@ -11262,7 +11453,7 @@ code {
   color: var(--simple-text);
   font-size: 0.98rem;
   line-height: 1.3;
-  font-weight: 600;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
@@ -11377,7 +11568,7 @@ code {
 .simple-request-card h3,
 .simple-motion-card h3 {
   margin: 0;
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
   font-size: 1.3rem;
 }
 
@@ -11419,7 +11610,7 @@ code {
   display: block;
   margin-top: 6px;
   font-size: clamp(1.8rem, 3vw, 2.4rem);
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
 }
 
 .simple-request-head,
@@ -11579,7 +11770,7 @@ code {
 }
 
 .demo-timeline-title-row strong {
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
   font-size: 1.02rem;
 }
 
@@ -11624,7 +11815,7 @@ code {
 }
 
 .demo-step-title-row strong {
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
   font-size: 1.05rem;
 }
 
@@ -11810,7 +12001,7 @@ code {
 
 .substep-title {
   margin: 0;
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
   font-size: 1.4rem;
 }
 
@@ -11852,7 +12043,7 @@ code {
 
 .question-title {
   margin: 0;
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
   font-size: 1.25rem;
 }
 
@@ -12487,7 +12678,7 @@ code {
     content: attr(data-label);
     color: var(--simple-muted);
     font-size: 0.68rem;
-    font-weight: 850;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -12560,7 +12751,7 @@ code {
     content: attr(data-label);
     color: var(--simple-muted);
     font-size: 0.68rem;
-    font-weight: 850;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -12810,7 +13001,7 @@ code {
   background: var(--card);
   cursor: pointer;
   text-align: center;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 0.9rem;
   transition: border-color 140ms, background 140ms;
   color: var(--text);
@@ -12865,7 +13056,7 @@ body.demo-page {
   color-scheme: dark;
   background: #0f1115;
   color: #e8ebf0;
-  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  font-family: inherit;
 }
 
 body.demo-page #root {
@@ -12904,7 +13095,7 @@ body.demo-page .demo-header {
 
 body.demo-page .demo-header h1 {
   margin: 6px 0 0;
-  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  font-family: inherit;
   font-size: clamp(2rem, 4vw, 3rem);
   line-height: 1.08;
 }
@@ -12967,7 +13158,7 @@ body.demo-page .demo-panel-title {
 
 body.demo-page .demo-panel-title h2 {
   margin: 4px 0 0;
-  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  font-family: inherit;
   font-size: 1.1rem;
 }
 
@@ -13076,7 +13267,7 @@ body.demo-page .demo-label {
 
 body.demo-page .demo-label {
   color: #98a2b3;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 body.demo-page .demo-input {
@@ -13215,7 +13406,7 @@ body.demo-page .demo-timeline-title-row {
 }
 
 body.demo-page .demo-timeline-title-row strong {
-  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-family: inherit;
   font-size: 1.02rem;
 }
 
@@ -13264,7 +13455,7 @@ body.app-page {
   color-scheme: dark;
   background: #0f1115;
   color: #e8ebf0;
-  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  font-family: inherit;
 }
 
 body.app-page #root {
@@ -13344,7 +13535,7 @@ body.app-page .hero-card h1,
 body.app-page .panel h2,
 body.app-page .substep-title,
 body.app-page .question-title {
-  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  font-family: inherit;
 }
 
 body.app-page .hero-copy,
@@ -13459,7 +13650,7 @@ body.demo-page .hero-hint {
 body.demo-page {
   background: #111313;
   color: #e3e8e2;
-  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-family: inherit;
 }
 
 body.demo-page .page-shell-demo {
@@ -13502,12 +13693,12 @@ body.demo-page .demo-brand-block {
 
 body.demo-page .demo-brand-title {
   color: #4fe0a0;
-  font-family: "IBM Plex Sans Condensed", "Avenir Next Condensed", "Arial Narrow", sans-serif;
+  font-family: inherit;
   font-size: 1.8rem;
   line-height: 1;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 body.demo-page .demo-brand-subtitle {
@@ -13576,7 +13767,7 @@ body.demo-page .demo-kv span {
 
 body.demo-page .demo-sidebar-status-value {
   color: #e8ede8;
-  font-family: "SFMono-Regular", "JetBrains Mono", monospace;
+  font-family: inherit;
 }
 
 body.demo-page .demo-sidebar-cta,
@@ -13699,7 +13890,7 @@ body.demo-page .demo-meta-row span {
 }
 
 body.demo-page .demo-meta-row strong {
-  font-family: "SFMono-Regular", "JetBrains Mono", monospace;
+  font-family: inherit;
   font-size: 0.82rem;
 }
 
@@ -13741,7 +13932,7 @@ body.demo-page .demo-ledger-summary-item strong {
   margin-top: 6px;
   color: #f3f7f4;
   font-size: 1.35rem;
-  font-family: "IBM Plex Sans Condensed", "Avenir Next Condensed", "Arial Narrow", sans-serif;
+  font-family: inherit;
 }
 
 body.demo-page .demo-ledger-table-wrap {
@@ -13934,14 +14125,14 @@ body.demo-page .demo-console-progress {
   display: flex;
   gap: 4px;
   color: #f2b24a;
-  font-family: "SFMono-Regular", "JetBrains Mono", monospace;
+  font-family: inherit;
 }
 
 body.demo-page .demo-console-tile-value {
   margin-top: 6px;
   color: #f3f7f4;
   font-size: 1.2rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 body.demo-page .demo-input,
@@ -14011,7 +14202,7 @@ body.demo-page .demo-panel-title h2,
 body.demo-page .demo-brand-title,
 body.demo-page .demo-sidebar-card-title,
 body.demo-page .demo-console-tile-value {
-  font-family: "IBM Plex Sans Condensed", "Avenir Next Condensed", "Arial Narrow", sans-serif;
+  font-family: inherit;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }

@@ -6,10 +6,12 @@ import {
 } from "react-aria-components";
 import {
   CalendarDays,
+  CircleCheck,
   CircleHelp,
   Clock3,
   Copy,
   FileText,
+  Activity,
   UserRound,
   Users,
 } from "lucide-react";
@@ -585,7 +587,7 @@ export default function QuestionnaireResultsDashboard({
   });
   const questionSummaryContent = filteredQuestionSummaries.length > 0 ? (
     <>
-      <div className={`simple-auditor-question-grid${isSessionVariant ? " simple-session-question-grid" : ""}`}>
+      <div className='simple-auditor-question-grid simple-session-question-grid'>
         {filteredQuestionSummaries.map((summary) => {
           const questionNumber = selectedQuestionNumberById.get(summary.questionId);
           const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
@@ -598,51 +600,48 @@ export default function QuestionnaireResultsDashboard({
             pendingLiveQuestionSummaryById.get(summary.questionId) ?? (!publishedTotalsAvailable ? summary : undefined),
           );
           return (
-            <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
+            <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card simple-session-question-card'>
               <div className='simple-auditor-question-card-head'>
-                <div>
-                  <h3 className='simple-voter-question'>
-                    {questionNumber ? `Q${questionNumber}. ` : ""}
-                    {questionTitle}
-                  </h3>
-                  <p className='simple-auditor-question-response-count'>
-                    <PeopleIcon />
-                    <span>{formatResponseCount(questionResponseCount)}</span>
-                  </p>
-                </div>
+                <p className='simple-session-question-number'>Q{questionNumber ?? "?"}</p>
+                <p className='simple-auditor-question-response-count'>
+                  <span>{formatResponseCount(questionResponseCount)}</span>
+                </p>
               </div>
-              {summary.answerType === "yes_no" ? (
-                <YesNoSummaryCard
-                  summary={summary}
-                  pendingSummary={pendingSummary}
-                  baseSummaryIncludesPending={baseSummaryIncludesPending}
-                />
-              ) : summary.answerType === "multiple_choice" ? (
-                <MultipleChoiceSummaryCard
-                  summary={summary}
-                  question={selectedQuestionById.get(summary.questionId)}
-                  responseCount={questionResponseCount}
-                  pendingSummary={pendingSummary}
-                  baseSummaryIncludesPending={baseSummaryIncludesPending}
-                />
-              ) : summary.answerType === "rank" ? (
-                <RankSummaryCard
-                  summary={summary}
-                  question={selectedQuestionById.get(summary.questionId)}
-                  pendingSummary={pendingSummary}
-                  baseSummaryIncludesPending={baseSummaryIncludesPending}
-                />
-              ) : (
-                <div className='simple-auditor-free-text-cardlet'>
-                  <UiButton
-                    icon='view'
-                    className='simple-auditor-text-button'
-                    onPress={() => setFreeTextViewerQuestionId(summary.questionId)}
-                  >
-                    View answers
-                  </UiButton>
-                </div>
-              )}
+              <div className='simple-auditor-question-card-content'>
+                <h3 className='simple-voter-question'>{questionTitle}</h3>
+                {summary.answerType === "yes_no" ? (
+                  <YesNoSummaryCard
+                    summary={summary}
+                    pendingSummary={pendingSummary}
+                    baseSummaryIncludesPending={baseSummaryIncludesPending}
+                  />
+                ) : summary.answerType === "multiple_choice" ? (
+                  <MultipleChoiceSummaryCard
+                    summary={summary}
+                    question={selectedQuestionById.get(summary.questionId)}
+                    responseCount={questionResponseCount}
+                    pendingSummary={pendingSummary}
+                    baseSummaryIncludesPending={baseSummaryIncludesPending}
+                  />
+                ) : summary.answerType === "rank" ? (
+                  <RankSummaryCard
+                    summary={summary}
+                    question={selectedQuestionById.get(summary.questionId)}
+                    pendingSummary={pendingSummary}
+                    baseSummaryIncludesPending={baseSummaryIncludesPending}
+                  />
+                ) : (
+                  <div className='simple-auditor-free-text-cardlet'>
+                    <UiButton
+                      icon='view'
+                      className='simple-auditor-text-button'
+                      onPress={() => setFreeTextViewerQuestionId(summary.questionId)}
+                    >
+                      View answers
+                    </UiButton>
+                  </div>
+                )}
+              </div>
             </article>
           );
         })}
@@ -655,6 +654,13 @@ export default function QuestionnaireResultsDashboard({
     <p className='simple-voter-empty'>No result cards match this filter.</p>
   ) : (
     <p className='simple-voter-empty'>{emptyQuestionSummaryText}</p>
+  );
+  const resultSummary = (
+    <div className='simple-session-results-summary' aria-label='Questionnaire result summary'>
+      <span><Users aria-hidden='true' /><strong>{loadedTotalCount}</strong><small>Responses</small></span>
+      <span><CircleCheck aria-hidden='true' /><strong>{loadedAcceptedCount}</strong><small>Published votes</small></span>
+      <span><Activity aria-hidden='true' /><strong>{pendingLiveAcceptedCount}</strong><small>Live votes</small></span>
+    </div>
   );
   const submittedVotesContent = questionnaire ? (
     responseDetails.length > 0 ? (
@@ -803,6 +809,7 @@ export default function QuestionnaireResultsDashboard({
         {isSessionVariant ? (
           <div className='simple-session-results-heading'>
           <h2 className='simple-voter-section-title'>{publishedTotalsAvailable ? "Published Results" : "Live Results"}</h2>
+            {actions ? <div className='simple-session-results-actions'>{actions}</div> : null}
             <div className='simple-session-live-status' aria-label='Live status'>
               <span className='simple-session-live-status-value'>
                 {pendingLiveTotalCount > 0 ? visibleProgressLabel : publishedTotalsAvailable ? publishedProgressLabel : loadedResponsesLabel}
@@ -820,6 +827,7 @@ export default function QuestionnaireResultsDashboard({
             {isSessionVariant && questionnaireDescription ? (
               <p className='simple-session-questionnaire-description'>{questionnaireDescription}</p>
             ) : null}
+            {isSessionVariant ? resultSummary : null}
             {isSessionVariant ? (
               <div className='simple-session-result-legend' aria-label='Vote status legend'>
                 <span><i className='is-submitted' aria-hidden='true' />Published results</span>
@@ -949,6 +957,7 @@ export default function QuestionnaireResultsDashboard({
                 defaultOpen
                 title={<span className='simple-voter-section-title simple-auditor-results-subtitle' role='heading' aria-level={2}>Results</span>}
               >
+                {resultSummary}
                 {effectiveQuestionSummaries.length > 0 ? (
                   <UiTextField
                     label='Filter results'
@@ -1117,12 +1126,13 @@ function YesNoSummaryCard({
     }
     return left.label === "Yes" ? -1 : 1;
   });
+  const leadingValue = Math.max(...sortedRows.map((row) => row.layers.totalValue));
   return (
     <div className='simple-auditor-option-bars simple-auditor-boolean-bars'>
       {sortedRows.map((row) => {
         const percent = total > 0 ? (row.layers.totalValue / total) * 100 : 0;
         return (
-          <div key={row.label} className={`simple-auditor-option-bar-row simple-auditor-boolean-bar-row ${row.className}`}>
+          <div key={row.label} className={`simple-auditor-option-bar-row simple-auditor-boolean-bar-row ${row.className}${row.layers.totalValue > 0 && row.layers.totalValue === leadingValue ? " is-leading" : ""}`}>
             <div className='simple-auditor-option-bar-label'>
               <span>{row.label}</span>
               <strong>{formatBooleanVoteShare(row.layers.finalValue, row.layers.pendingValue, percent)}</strong>
@@ -1324,7 +1334,7 @@ function formatFreeTextAnswer(text: string) {
 
 function formatVoteShare(finalCount: number, liveCount: number, percent: number) {
   const total = finalCount + liveCount;
-  return `${percent.toFixed(0)}% ${total} ${total === 1 ? "VOTE" : "VOTES"} · ${finalCount} published${liveCount > 0 ? ` · ${liveCount} live` : ""}`;
+  return `${percent.toFixed(0)}% (${total})${liveCount > 0 ? ` · ${liveCount} live` : ""}`;
 }
 
 function formatBooleanVoteShare(finalCount: number, liveCount: number, percent: number) {
