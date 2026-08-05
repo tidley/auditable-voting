@@ -60,21 +60,22 @@ Proxy voters may receive two independently blinded credentials. Each credential 
 
 ### 3.4 Anonymous ballot submission
 
-The voter submits a public blind-token response from a fresh response identity. The response contains answers or an encrypted answer payload, the token commitment and blind signature proof, and a nullifier derived from the token secret and ballot scope.
+The voter submits a public blind-token response from a fresh response identity. The response contains answers or an encrypted answer payload, the token commitment and blind signature proof, and a nullifier derived from the token secret and ballot scope. The outer Nostr event must have a valid signature from that same response identity; the payload `authorPubkey` is not trusted by itself.
 
 The verifier checks:
 
 1. the questionnaire definition and submission shape;
-2. the blind signature against the published blind-signing key;
-3. the questionnaire ID, protocol version, and allowed ballot scope embedded in the credential;
-4. answer validity and required scopes; and
-5. that every submitted nullifier has not already been accepted.
+2. the outer Nostr event signature and its binding to the response `authorPubkey`;
+3. the blind signature against the published blind-signing key;
+4. the questionnaire ID, protocol version, and allowed ballot scope embedded in the credential;
+5. answer validity and required scopes; and
+6. that every submitted nullifier and token commitment has not already been accepted.
 
 Accepted nullifiers are public one-use markers. They prevent a credential being spent twice without exposing the voter identity or token secret.
 
 ### 3.5 Deterministic decisions and audit
 
-Valid response candidates are ordered by Nostr `created_at`, then event ID. The first valid response using a nullifier is accepted; later responses using it are rejected as duplicates. The organiser or audit proxy publishes public accept/reject decisions and, once closed, a result summary.
+Valid response candidates are ordered by Nostr `created_at`, then event ID. The first valid response using a nullifier or token commitment is accepted; later responses using either are rejected as duplicates. The organiser or audit proxy publishes public accept/reject decisions and, once closed, a result summary. Relay receive and transmit times are operational diagnostics only and do not determine canonical ordering.
 
 Observers independently verify public proofs, apply the deterministic duplicate rule, and recompute result counts. Public provisional response events, where enabled, are display hints only and never count as votes.
 

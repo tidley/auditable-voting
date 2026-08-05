@@ -72,6 +72,8 @@ const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
 const COMPRESSED_BUNDLE_MESSAGE_TYPE: &str = "optiona_compressed_bundle_dm";
 const COMPRESSED_BUNDLE_ENCODING: &str = "gzip+base64url";
 const BUNDLE_COMPRESSION_THRESHOLD_BYTES: usize = 8 * 1024;
+const COMPRESSED_BUNDLE_MAX_BYTES: usize = 256 * 1024;
+const UNCOMPRESSED_BUNDLE_MAX_BYTES: usize = 1024 * 1024;
 const GENERAL_INVITE_POW_DOMAIN: &str = "auditable-voting-general-invite-pow:v1";
 const GENERAL_INVITE_POW_MAX_DIFFICULTY: u8 = 24;
 const DISCOURAGED_WORKER_READ_RELAYS: &[&str] = &[
@@ -465,18 +467,26 @@ fn unwrap_compressed_bundle_value(value: serde_json::Value) -> Result<serde_json
     {
         anyhow::bail!("unsupported compressed bundle envelope");
     }
+    if envelope.compressed_length > COMPRESSED_BUNDLE_MAX_BYTES
+        || envelope.original_length > UNCOMPRESSED_BUNDLE_MAX_BYTES
+        || envelope.payload.len() > COMPRESSED_BUNDLE_MAX_BYTES * 2
+    {
+        anyhow::bail!("compressed bundle exceeds the supported size");
+    }
     let compressed = URL_SAFE_NO_PAD
         .decode(envelope.payload.as_bytes())
         .context("invalid compressed bundle payload")?;
     if compressed.len() != envelope.compressed_length {
         anyhow::bail!("compressed bundle length mismatch");
     }
-    let mut decoder = GzDecoder::new(compressed.as_slice());
+    let mut decoder = GzDecoder::new(compressed.as_slice()).take((UNCOMPRESSED_BUNDLE_MAX_BYTES + 1) as u64);
     let mut content = String::new();
     decoder
         .read_to_string(&mut content)
         .context("invalid compressed bundle gzip payload")?;
-    if content.as_bytes().len() != envelope.original_length {
+    if content.as_bytes().len() > UNCOMPRESSED_BUNDLE_MAX_BYTES
+        || content.as_bytes().len() != envelope.original_length
+    {
         anyhow::bail!("compressed bundle length mismatch");
     }
     let inner: serde_json::Value =
@@ -1014,6 +1024,18 @@ fn blind_response_token_commitments(submission: &QuestionnaireBlindResponseEvent
         .map(|proof| proof.token_commitment.trim().to_string())
         .filter(|entry| !entry.is_empty())
         .collect::<Vec<_>>()
+}
+
+fn public_response_event_is_authentic(
+    event: &Event,
+    submission: &QuestionnaireBlindResponseEvent,
+) -> bool {
+    event.verify().is_ok()
+        && event
+            .pubkey
+            .to_bech32()
+            .ok()
+            .is_some_and(|pubkey| pubkey == submission.author_pubkey.trim())
 }
 
 fn definition_blind_signing_key_id(definition: &Option<serde_json::Value>) -> Option<String> {
@@ -3519,6 +3541,14 @@ impl WorkerRuntime {
                 }
             };
 
+        if !public_response_event_is_authentic(event, &submission) {
+            warn!(
+                "ignored unauthenticated blind response event {}",
+                event.id
+            );
+            return Ok(false);
+        }
+
         let should_handle = {
             let state = self.state.lock().await;
             if let Some(election) = state.elections.get(&submission.questionnaire_id) {
@@ -4669,13 +4699,21 @@ fn build_result_pack_csv(
 }
 
 fn csv_cell(value: &str) -> String {
-    if value
+    let safe = if value
+        .trim_start_matches(|ch: char| ch.is_ascii_whitespace())
+        .starts_with(['=', '+', '-', '@'])
+    {
+        format!("'{value}")
+    } else {
+        value.to_string()
+    };
+    if safe
         .chars()
         .any(|ch| matches!(ch, ',' | '"' | '\r' | '\n'))
     {
-        format!("\"{}\"", value.replace('"', "\"\""))
+        format!("\"{}\"", safe.replace('"', "\"\""))
     } else {
-        value.to_string()
+        safe
     }
 }
 
@@ -6531,6 +6569,38 @@ mod tests {
         assert!(!verify_blind_response_proofs(&election, &tampered_scope));
     }
 
+    #[test]
+    fn public_response_requires_a_valid_matching_outer_signature() {
+        let response_keys = Keys::generate();
+        let other_keys = Keys::generate();
+        let mut submission = signed_submission(
+            &test_definition_and_keypair("q_outer_signature").1,
+            "q_outer_signature",
+            "response_outer_signature",
+            "commitment_outer_signature",
+            "nullifier_outer_signature",
+        );
+        submission.author_pubkey = response_keys
+            .public_key()
+            .to_bech32()
+            .expect("response npub");
+        let event = EventBuilder::new(
+            Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND),
+            serde_json::to_string(&submission).expect("serialize submission"),
+        )
+        .sign_with_keys(&response_keys)
+        .expect("sign response event");
+        assert!(public_response_event_is_authentic(&event, &submission));
+
+        let mismatched_event = EventBuilder::new(
+            Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND),
+            serde_json::to_string(&submission).expect("serialize submission"),
+        )
+        .sign_with_keys(&other_keys)
+        .expect("sign mismatched response event");
+        assert!(!public_response_event_is_authentic(&mismatched_event, &submission));
+    }
+
     #[tokio::test]
     async fn handle_submission_requires_valid_proof_and_rejects_commitment_replay() {
         let questionnaire_id = "q_handle_verified_submission";
@@ -7090,6 +7160,32 @@ mod tests {
         );
         assert_eq!(decoded_envelope.requests.len(), 1);
         assert!(decoded_envelope.requests[0].blinded_message.len() > 16_000);
+    }
+
+    #[test]
+    fn compressed_bundle_rejects_declared_oversize_payload() {
+        let wrapper = serde_json::json!({
+            "type": COMPRESSED_BUNDLE_MESSAGE_TYPE,
+            "schemaVersion": 1,
+            "encoding": COMPRESSED_BUNDLE_ENCODING,
+            "innerType": "optiona_blind_request_bundle_dm",
+            "payload": "",
+            "compressedLength": 0,
+            "originalLength": UNCOMPRESSED_BUNDLE_MAX_BYTES + 1,
+            "sentAt": "2026-04-23T00:00:00Z",
+        });
+
+        assert!(unwrap_compressed_bundle_value(wrapper).is_err());
+    }
+
+    #[test]
+    fn csv_cells_neutralize_spreadsheet_formulas() {
+        assert_eq!(csv_cell("=SUM(A1:A2)"), "'=SUM(A1:A2)");
+        assert_eq!(
+            csv_cell("  @HYPERLINK(\"https://example.com\")"),
+            "\"'  @HYPERLINK(\"\"https://example.com\"\")\""
+        );
+        assert_eq!(csv_cell("ordinary answer"), "ordinary answer");
     }
 
     #[tokio::test]

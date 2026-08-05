@@ -105,6 +105,26 @@ describe("questionnaireTransport blind admissions", () => {
     expect(result.acceptedCountByNullifier["nullifier-x"]).toBe(1);
   });
 
+  it("rejects a new nullifier that reuses an accepted token commitment", () => {
+    const first = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+    const replay = blindResponse({
+      responseId: "resp-2",
+      nullifier: "nullifier-y",
+      createdAt: 1712537201,
+      eventId: "event-bbb",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({ entries: [first, replay] });
+
+    expect(result.accepted.map((entry) => entry.response.responseId)).toEqual(["resp-1"]);
+    expect(result.rejected[0].rejectionReason).toBe("duplicate_nullifier");
+  });
+
   it("rejects bundled responses when any scoped nullifier was already accepted", () => {
     const first = blindResponse({
       responseId: "resp-1",

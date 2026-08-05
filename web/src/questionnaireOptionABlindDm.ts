@@ -61,6 +61,8 @@ const OPTION_A_DM_EXISTENCE_CHECK_MAX_RELAYS = 6;
 const OPTION_A_COMPRESSED_BUNDLE_TYPE = "optiona_compressed_bundle_dm";
 const OPTION_A_COMPRESSED_BUNDLE_ENCODING = "gzip+base64url";
 const OPTION_A_BUNDLE_COMPRESSION_THRESHOLD_BYTES = 8 * 1024;
+const OPTION_A_COMPRESSED_BUNDLE_MAX_BYTES = 256 * 1024;
+const OPTION_A_UNCOMPRESSED_BUNDLE_MAX_BYTES = 1024 * 1024;
 const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
@@ -411,6 +413,13 @@ export function parseOptionADmEnvelopeContent(content: string): unknown {
       || typeof wrapper.compressedLength !== "number"
     ) {
       throw new Error("Invalid compressed bundle envelope.");
+    }
+    if (
+      wrapper.compressedLength > OPTION_A_COMPRESSED_BUNDLE_MAX_BYTES
+      || wrapper.originalLength > OPTION_A_UNCOMPRESSED_BUNDLE_MAX_BYTES
+      || wrapper.payload.length > OPTION_A_COMPRESSED_BUNDLE_MAX_BYTES * 2
+    ) {
+      throw new Error("Compressed bundle exceeds the supported size.");
     }
     const compressed = base64UrlToBytes(wrapper.payload);
     if (compressed.length !== wrapper.compressedLength) {
@@ -2494,6 +2503,10 @@ export async function fetchOptionABlindRequestDms(input: {
           incrementReason(rejectReasons, "election_mismatch");
           continue;
         }
+        if (toNpub(decoded.sealPubkey) !== request.invitedNpub) {
+          incrementReason(rejectReasons, "sender_mismatch");
+          continue;
+        }
         const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;
         if (!unique.has(key)) {
           unique.set(key, request);
@@ -2565,6 +2578,10 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
       for (const request of requests) {
         if (input.electionId?.trim() && request.electionId !== input.electionId.trim()) {
           incrementReason(rejectReasons, "election_mismatch");
+          continue;
+        }
+        if (toNpub(decoded.sealPubkey) !== request.invitedNpub) {
+          incrementReason(rejectReasons, "sender_mismatch");
           continue;
         }
         const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;

@@ -464,7 +464,7 @@ describe("questionnaireOptionABlindDm", () => {
     const recipientHex = getPublicKey(recipientSecret);
     const recipientNpub = nip19.npubEncode(recipientHex);
     const recipientNsec = nip19.nsecEncode(recipientSecret);
-    const senderSecret = generateSecretKey();
+    const senderSecret = recipientSecret;
     const envelope = {
       type: "optiona_blind_request_bundle_dm" as const,
       schemaVersion: 1 as const,
@@ -564,12 +564,49 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedIssuances.at(-1)?.issuanceId).toBe("issuance_q24");
   });
 
+  it("rejects a blind request whose authenticated sender is not the invited voter", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const attackerSecret = generateSecretKey();
+    const wrappedRequest = nip17.wrapEvent(
+      attackerSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_blind_request_dm",
+        schemaVersion: 1,
+        request: makeRequest({ requestId: "forged_request", invitedNpub: recipientNpub }),
+        sentAt: new Date().toISOString(),
+      }),
+      "Forged blind request",
+    );
+    querySync.mockResolvedValue([wrappedRequest]);
+
+    await expect(fetchOptionABlindRequestDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_bundle",
+    })).resolves.toEqual([]);
+  });
+
+  it("rejects compressed bundles that exceed the decode limit", () => {
+    expect(() => parseOptionADmEnvelopeContent(JSON.stringify({
+      type: "optiona_compressed_bundle_dm",
+      schemaVersion: 1,
+      encoding: "gzip+base64url",
+      innerType: "optiona_blind_request_bundle_dm",
+      payload: "",
+      compressedLength: 0,
+      originalLength: 1024 * 1024 + 1,
+    }))).toThrow("exceeds the supported size");
+  });
+
   it("reads blind request and issuance DMs via local nsec", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);
     const recipientNpub = nip19.npubEncode(recipientHex);
     const recipientNsec = nip19.nsecEncode(recipientSecret);
-    const senderSecret = generateSecretKey();
+    const senderSecret = recipientSecret;
 
     const request = {
       type: "blind_ballot_request" as const,
