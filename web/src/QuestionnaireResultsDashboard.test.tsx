@@ -329,22 +329,22 @@ describe("QuestionnaireResultsDashboard", () => {
               answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
             },
           },
+        ]}
+        provisionalResponseDetails={[
           {
             event: { id: "event-live", created_at: 1_774_000_100 },
             accepted: true,
-            includedInLatestPublish: false,
             response: {
               responseId: "submission_live",
               authorPubkey: "npub1" + "d".repeat(58),
               submittedAt: 1_774_000_100,
-              tokenNullifier: "nullifier-live",
               answers: [{ questionId: "q1", answerType: "yes_no", value: false }],
             },
           },
         ]}
         displayValidCount={1}
         displayInvalidCount={0}
-        loadedValidCount={2}
+        loadedValidCount={1}
         loadedInvalidCount={0}
         publishedTotalsAvailable
         coordinatorText="Organiser test"
@@ -352,7 +352,6 @@ describe("QuestionnaireResultsDashboard", () => {
       />,
     );
 
-    expect(screen.getByText("2/2 accepted (100%) · 1 published · 1 live")).toBeTruthy();
     expect(screen.getByText("50% 1 VOTE · 0 published · 1 live")).toBeTruthy();
     expect(container.querySelector(".simple-auditor-results-progress-live")).toBeTruthy();
     const optionLabels = [...container.querySelectorAll<HTMLSpanElement>(".simple-auditor-option-bar-label > span")];
@@ -361,6 +360,38 @@ describe("QuestionnaireResultsDashboard", () => {
     expect(yesLabel).toBeTruthy();
     expect(noLabel).toBeTruthy();
     expect(Boolean(yesLabel?.compareDocumentPosition(noLabel!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
+  it("shows submitted public responses as published before a final result summary", () => {
+    render(
+      <QuestionnaireResultsDashboard
+        questionnaire={{
+          questionnaireId: "q_submitted",
+          title: "Submitted",
+          questions: [{ questionId: "q1", type: "yes_no", prompt: "Ready?", required: true }],
+        }}
+        questionSummaries={[]}
+        responseDetails={[
+          {
+            event: { id: "event-submitted", created_at: 1_774_000_000 },
+            accepted: true,
+            response: {
+              responseId: "submission_submitted",
+              authorPubkey: "npub1" + "f".repeat(58),
+              submittedAt: 1_774_000_000,
+              tokenNullifier: "nullifier-submitted",
+              answers: [{ questionId: "q1", answerType: "yes_no", value: true }],
+            },
+          },
+        ]}
+        displayValidCount={1}
+        displayInvalidCount={0}
+        coordinatorText="Organiser test"
+        publishedAtLabel="Published"
+      />,
+    );
+
+    expect(screen.getByText("100% 1 VOTE · 1 published")).toBeTruthy();
   });
 
   it("shows provisional per-question votes before final submissions exist", () => {

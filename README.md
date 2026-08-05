@@ -146,7 +146,7 @@ It can:
 - publish the result summary;
 - stay online for later sessions after currently delegated close and summary publication are complete.
 
-While results are live, Organiser and Observer show locally verified accepted votes. Once a valid public result summary covers the loaded responses, that published summary supersedes the live tally and is shown without a live overlay.
+Organiser and Observer show provisional answers as live while a voter is completing the questionnaire. A submitted public ballot is immediately shown as published because the voter cannot change it. A final public result summary remains the auditable closing record.
 
 Run it locally:
 

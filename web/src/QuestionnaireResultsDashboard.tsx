@@ -272,23 +272,19 @@ export default function QuestionnaireResultsDashboard({
     return new Map(summaries.map((summary) => [summary.questionId, summary]));
   }, [questionnaire?.questions, responseDetails]);
   const provisionalDeltaQuestionSummaryById = useMemo(() => {
-    if (publishedTotalsAvailable) {
-      return new Map<string, QuestionnaireResultQuestionSummary>();
-    }
     return buildPendingProvisionalQuestionSummaries(
       questionnaire?.questions ?? [],
       provisionalResponseDetails,
-      acceptedQuestionResponseCountById,
       acceptedQuestionLatestAtById,
     );
-  }, [acceptedQuestionLatestAtById, acceptedQuestionResponseCountById, provisionalResponseDetails, publishedTotalsAvailable, questionnaire?.questions]);
+  }, [acceptedQuestionLatestAtById, provisionalResponseDetails, questionnaire?.questions]);
   const provisionalPendingResponseCount = useMemo(
     () => sumQuestionSummaryResponseCounts([...provisionalDeltaQuestionSummaryById.values()]),
     [provisionalDeltaQuestionSummaryById],
   );
-  const pendingFinalResponseDetails = useMemo(
-    () => publishedTotalsAvailable ? [] : responseDetails,
-    [publishedTotalsAvailable, responseDetails],
+  const pendingFinalResponseDetails = useMemo<QuestionnaireResultsDashboardResponseDetail[]>(
+    () => [],
+    [],
   );
   const pendingFinalAcceptedCount = useMemo(
     () => pendingFinalResponseDetails.filter((entry) => entry.accepted).length,
@@ -1459,7 +1455,6 @@ function buildLoadedQuestionSummaries(
 function buildPendingProvisionalQuestionSummaries(
   questions: QuestionnaireQuestion[],
   provisionalResponses: QuestionnaireResultsDashboardResponseDetail[],
-  acceptedResponseCountByQuestionId: Map<string, number>,
   acceptedLatestAtByQuestionId: Map<string, number>,
 ) {
   const summaries = new Map<string, QuestionnaireResultQuestionSummary>();
@@ -1494,10 +1489,7 @@ function buildPendingProvisionalQuestionSummaries(
         Number(right.event.created_at ?? right.response.submittedAt ?? 0)
         - Number(left.event.created_at ?? left.response.submittedAt ?? 0)
       ));
-    const pendingCount = Math.max(
-      0,
-      latestCandidateResponses.length - (acceptedResponseCountByQuestionId.get(question.questionId) ?? 0),
-    );
+    const pendingCount = latestCandidateResponses.length;
     if (pendingCount <= 0) {
       continue;
     }
