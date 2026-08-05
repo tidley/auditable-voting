@@ -166,6 +166,8 @@ type QuestionnaireCoordinatorPanelProps = {
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: (questionnaireId: string) => void;
   onWorkerDelegationChange?: (delegation: WorkerDelegationCertificate | null) => void;
+  onPublishedDefinitionChange?: (published: boolean) => void;
+  onWorkerActiveChange?: (active: boolean) => void;
   initialQuestionnaireId?: string;
   proxySetupSignal?: number;
   setupFocusTarget?: QuestionnaireSetupFocusTarget;
@@ -1894,6 +1896,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     : null;
   const selectedQuestionnaireIsKnownPublished = selectedQuestionnaireHasPublishedSignal;
   const publishedDefinition = selectedQuestionnaireIsKnownPublished;
+  useEffect(() => {
+    props.onPublishedDefinitionChange?.(publishedDefinition);
+  }, [props.onPublishedDefinitionChange, publishedDefinition]);
   const questionnaireEditorLocked = publishedDefinition;
   const appliedPublishedDefinitionKeyRef = useRef("");
 
@@ -2613,19 +2618,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
           relays: questionnaireRelayPublishHints,
         }).catch(() => []),
-        fetchQuestionnaireEventsWithFallback({
+        fetchQuestionnaireResultSummary({
           questionnaireId: id,
-          kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
-          parseQuestionnaireIdFromEvent: (event) => {
-            try {
-              const parsed = JSON.parse(event.content) as { questionnaireId?: string };
-              return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
-            } catch {
-              return null;
-            }
-          },
           relays: questionnaireRelayPublishHints,
-        }),
+          limit: 50,
+          readRelayLimit: 5,
+          preferKindOnly: true,
+          maxPages: COORDINATOR_RESPONSE_FETCH_MAX_PAGES,
+          timeBudgetMs: COORDINATOR_RESPONSE_FETCH_TIME_BUDGET_MS,
+        }).then((entries) => ({
+          events: entries.map((entry) => entry.event),
+          diagnostics: {
+            mode: "kind_only_fallback" as const,
+            filteredCount: 0,
+            kindOnlyCount: entries.length,
+          },
+        })),
       ]);
       if (cancelled) {
         return;
@@ -3239,6 +3247,9 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     }
     return "Pending activation";
   }, [activeWorkerDelegation, lastWorkerRevocationState, questionnaireId, selectedWorkerStatus]);
+  useEffect(() => {
+    props.onWorkerActiveChange?.(delegationStatusLabel === "Active");
+  }, [delegationStatusLabel, props.onWorkerActiveChange]);
   const dashboardCoordinatorIdentity = useMemo(() => {
     const active = activeWorkerDelegation;
     if (active && lastWorkerRevocationState !== "revoked") {
@@ -4544,11 +4555,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     }
     setStatus(canReuseActiveDelegation ? "Synchronising audit proxy configuration..." : "Publishing audit proxy delegation...");
     try {
-      const publicResult = canReuseActiveDelegation ? null : await publishWorkerDelegationCertificate({
-        coordinatorNsec: coordinatorNsecTrimmed,
-        delegation,
-        relays: controlRelays,
-      });
       const dmResult = canReuseActiveDelegation ? null : await publishOptionAWorkerDelegationDm({
         signer: createSignerService(),
         recipientNpub: workerNpub,
@@ -4691,6 +4697,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         });
         configResultSummary = ", config unchanged; DM sync skipped";
       }
+      // The public certificate activates voter routing to the proxy. Publish it
+      // only after the proxy has a reachable election configuration.
+      const publicResult = canReuseActiveDelegation ? null : await publishWorkerDelegationCertificate({
+        coordinatorNsec: coordinatorNsecTrimmed,
+        delegation,
+        relays: controlRelays,
+      });
       const existingSummary = loadElectionSummary(electionId);
       if (existingSummary) {
         upsertElectionSummary({

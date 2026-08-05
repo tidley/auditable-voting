@@ -3817,11 +3817,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : submitInFlight
           ? "Submitting..."
           : "Submit";
-  const hasGroupSpecificQuestions = Boolean(currentDefinition?.questions.some((question) => questionRequiredScope(question)));
-  const showMainOnlyScopeWarning = questionnaireCredentialReady
-    && (!activeBallotGroup || activeBallotGroup === "0")
-    && hasGroupSpecificQuestions
-    && !responseSubmittedForCurrentQuestionnaire;
   const questionNavForwardHighlighted = showViewResultsFromQuestionNav || canSubmitFromQuestionNav || (nextQuestionIndex >= 0 && activeQuestionReadyForNavigation);
   const activeQuestionProgressLabel = (() => {
     const questionPosition = Math.min(activeQuestionIndex + 1, Math.max(questions.length, 1));
@@ -4707,11 +4702,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </p>
       ) : showQuestionnaireLanding ? null : (
         <div className='simple-questionnaire-voter-list'>
-          {showMainOnlyScopeWarning ? (
-            <p className='simple-voter-note' role='status'>
-              This ballot is assigned to the main questions only. If you expected group-specific questions, contact the organiser before submitting.
-            </p>
-          ) : null}
           {showQuestionNavigation ? (
             <div className='simple-questionnaire-question-stepper is-single-group' aria-label='Question progress'>
               <div className='simple-questionnaire-question-progress-row'>

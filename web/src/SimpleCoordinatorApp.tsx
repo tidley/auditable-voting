@@ -1658,6 +1658,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [questionnairePrimaryPublishAction, setQuestionnairePrimaryPublishAction] = useState<QuestionnairePrimaryPublishAction>(null);
   const [primaryPublishActionSignal, setPrimaryPublishActionSignal] = useState(0);
   const [proxySetupSignal, setProxySetupSignal] = useState(0);
+  const [editPublished, setEditPublished] = useState(false);
+  const [proxySeenActive, setProxySeenActive] = useState(false);
   const [activeReadinessItemId, setActiveReadinessItemId] = useState<QuestionnaireReadinessItem["id"] | null>("basics");
   const [pendingParticipantSettingsByNpub, setPendingParticipantSettingsByNpub] = useState<Record<string, PendingParticipantSettings>>({});
   const [queuedParticipantApprovalByNpub, setQueuedParticipantApprovalByNpub] = useState<Record<string, true>>({});
@@ -1811,6 +1813,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const handleWorkerDelegationChange = useCallback((delegation: WorkerDelegationCertificate | null) => {
     setSelectedActiveWorkerDelegation(delegation);
   }, []);
+  const handlePublishedDefinitionChange = useCallback((published: boolean) => {
+    setEditPublished(published);
+  }, []);
+  const handleWorkerActiveChange = useCallback((active: boolean) => {
+    if (active) {
+      setProxySeenActive(true);
+    }
+  }, []);
   useEffect(() => {
     const electionId = optionAElectionId.trim();
     if (!electionId) {
@@ -1827,6 +1837,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         ? delegation
         : null,
     );
+  }, [optionAElectionId]);
+  useEffect(() => {
+    setEditPublished(false);
+    setProxySeenActive(false);
   }, [optionAElectionId]);
   useEffect(() => {
     participantNoteDraftsRef.current = {};
@@ -8916,7 +8930,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           </div>
         </div>
         <nav className='simple-coordinator-sidebar-readiness simple-coordinator-sidebar-tabs' aria-label='Questionnaire navigation'>
-          <UiButton icon='edit' className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`} onPress={() => selectTab('configure')}>Edit</UiButton>
+          <UiButton icon='edit' className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}${editPublished ? ' is-confirmed' : ''}`} onPress={() => selectTab('configure')}>Edit</UiButton>
+          <UiButton icon='shield' className={`simple-coordinator-nav-button${activeTab === 'proxy' ? ' is-active' : ''}${proxySeenActive ? ' is-confirmed' : ''}`} onPress={() => {
+            selectTab('proxy');
+            setProxySetupSignal((current) => current + 1);
+          }}>Proxy</UiButton>
           <UiButton icon='users' className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'voters' ? ' is-active' : ''}`} onPress={() => {
             setParticipantNavSection('voters');
             selectTab('participants');
@@ -8967,6 +8985,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
               onConfigureWorker={openQuestionnaireProxy}
               onWorkerDelegationChange={handleWorkerDelegationChange}
+              onPublishedDefinitionChange={handlePublishedDefinitionChange}
+              onWorkerActiveChange={handleWorkerActiveChange}
               initialQuestionnaireId={optionAElectionId}
               setupFocusTarget={setupFocusRequest.target}
               setupFocusSignal={setupFocusRequest.signal}
@@ -9008,6 +9028,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
               onConfigureWorker={openQuestionnaireProxy}
               onWorkerDelegationChange={handleWorkerDelegationChange}
+              onPublishedDefinitionChange={handlePublishedDefinitionChange}
+              onWorkerActiveChange={handleWorkerActiveChange}
               initialQuestionnaireId={optionAElectionId}
               proxySetupSignal={proxySetupSignal}
               newRoundMode={newRoundMode}
@@ -9046,6 +9068,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               canAddSession={canStartNewRound}
               questionnaireRelaysInput={questionnaireRelaysInput}
               onWorkerDelegationChange={handleWorkerDelegationChange}
+              onPublishedDefinitionChange={handlePublishedDefinitionChange}
+              onWorkerActiveChange={handleWorkerActiveChange}
               onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
               onPrimaryPublishActionChange={handleQuestionnairePrimaryPublishActionChange}
               primaryPublishActionSignal={primaryPublishActionSignal}
