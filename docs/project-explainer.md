@@ -25,6 +25,8 @@ Observers can independently recompute the result from public data.
 4. The voter submits the questionnaire response anonymously; all questions share one proof, like one multi-part question.
 5. Anyone can verify that accepted ballots are valid, unique, and correctly tallied.
 
+The app itself renders in a dark theme by default, with a bright light theme one tap away via the sun/moon toggle in the corner of any screen. The choice is remembered per browser, first visits follow the system colour-scheme preference, and the protocol behaves identically in both themes.
+
 ## Roles
 
 | Voter | Organiser | Observer |

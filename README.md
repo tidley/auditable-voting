@@ -41,6 +41,8 @@ The practical target is small-organisation and controlled-pilot voting, not high
 - Optional audit proxy that can issue credentials, verify submissions, publish decisions, close completed questionnaires, and publish result summaries.
 - Static deployment to GitHub Pages or nsite.
 
+The interface ships in a calm dark theme by default and also offers a bright light theme. A sun/moon toggle in the corner of every screen switches between the two; the choice is remembered on the device, and first visits follow the system colour-scheme preference.
+
 ## Repository Layout
 
 ```text
