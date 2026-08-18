@@ -230,7 +230,7 @@
   --slate-deep-tint-460: rgba(71, 85, 105, 0.46);
   --slate-deep-tint-720: rgba(71, 85, 105, 0.72);
   --slate-tint-120: rgba(148, 163, 184, 0.12);
-  --slate-tint-130: var(--slate-tint-130);
+  --slate-tint-130: rgba(148, 163, 184, 0.13);
   --slate-tint-140: rgba(148, 163, 184, 0.14);
   --slate-tint-160: rgba(148, 163, 184, 0.16);
   --slate-tint-180: rgba(148, 163, 184, 0.18);
@@ -14719,4 +14719,316 @@ body.demo-page .demo-workspace {
   body.demo-page .demo-list-item code {
     max-width: 100%;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Light theme ("dawn") — active when <html data-theme="light">.
+   Cream paper, white cards, gold primary actions, sky links/tabs,
+   sage success, coral errors. Functional QR-scanner tokens (near-black
+   modules on white tiles) are deliberately left untouched in both themes.
+--------------------------------------------------------------------------- */
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Base palette */
+  --simple-bg: #FCFAF2;
+  --simple-bg-2: #F6F1E6;
+  --simple-surface: #FFFFFF;
+  --simple-surface-2: #FCFAF2;
+  --simple-surface-3: #F3EEE3;
+  --simple-border: #EAE6DF;
+  --simple-border-strong: #D9D2C6;
+  --simple-text: #2D312E;
+  --simple-muted: #68706A;
+  --simple-soft: #4A4F4B;
+  --simple-blue: #F2A93B;
+  --simple-blue-hover: #D9952B;
+  --simple-teal: #4A90E2;
+  --simple-coral: #E63946;
+  --simple-green: #52B788;
+  --simple-shadow: 0 6px 24px rgba(58, 52, 44, 0.08), 0 2px 8px rgba(58, 52, 44, 0.05);
+  --shadow-card: 0 6px 24px rgba(58, 52, 44, 0.08), 0 2px 8px rgba(58, 52, 44, 0.05);
+
+  /* Accent: gold fills for primary actions, sky for secondary chrome */
+  --accent-bar: #4A90E2;
+  --accent-bright-tint-80: rgba(74, 144, 226, 0.08);
+  --accent-deep-tint-120: rgba(74, 144, 226, 0.12);
+  --accent-deep-tint-160: rgba(74, 144, 226, 0.16);
+  --accent-deep-tint-220: rgba(74, 144, 226, 0.22);
+  --accent-deep-tint-720: rgba(74, 144, 226, 0.72);
+  --accent-fill-tint-130: rgba(242, 169, 59, 0.13);
+  --accent-fill-tint-280: rgba(242, 169, 59, 0.28);
+  --accent-solid: #F2A93B;
+  --accent-solid-bright: #F6BC55;
+  --accent-solid-bright-hover: #FFC966;
+  --accent-solid-hover: #D9952B;
+  --accent-tint-0: rgba(74, 144, 226, 0);
+  --accent-tint-25: rgba(74, 144, 226, 0.025);
+  --accent-tint-40: rgba(74, 144, 226, 0.04);
+  --accent-tint-45: rgba(74, 144, 226, 0.045);
+  --accent-tint-60: rgba(74, 144, 226, 0.06);
+  --accent-tint-80: rgba(74, 144, 226, 0.08);
+  --accent-tint-100: rgba(74, 144, 226, 0.1);
+  --accent-tint-120: rgba(74, 144, 226, 0.12);
+  --accent-tint-140: rgba(74, 144, 226, 0.14);
+  --accent-tint-160: rgba(74, 144, 226, 0.16);
+  --accent-tint-180: rgba(74, 144, 226, 0.18);
+  --accent-tint-200: rgba(74, 144, 226, 0.2);
+  --accent-tint-240: rgba(74, 144, 226, 0.24);
+  --accent-tint-260: rgba(74, 144, 226, 0.26);
+  --accent-tint-280: rgba(74, 144, 226, 0.28);
+  --accent-tint-320: rgba(74, 144, 226, 0.32);
+  --accent-tint-340: rgba(74, 144, 226, 0.34);
+  --accent-tint-360: rgba(74, 144, 226, 0.36);
+  --accent-tint-380: rgba(74, 144, 226, 0.38);
+  --accent-tint-420: rgba(74, 144, 226, 0.42);
+  --accent-tint-440: rgba(74, 144, 226, 0.44);
+  --accent-tint-460: rgba(74, 144, 226, 0.46);
+  --accent-tint-480: rgba(74, 144, 226, 0.48);
+  --accent-tint-520: rgba(74, 144, 226, 0.52);
+  --accent-tint-620: rgba(74, 144, 226, 0.62);
+  --accent-tint-680: rgba(74, 144, 226, 0.68);
+  --accent-tint-700: rgba(74, 144, 226, 0.7);
+  --accent-tint-720: rgba(74, 144, 226, 0.72);
+  --accent-tint-760: rgba(74, 144, 226, 0.76);
+  --accent-tint-780: rgba(74, 144, 226, 0.78);
+  --accent-tint-820: rgba(74, 144, 226, 0.82);
+  --accent-tint-900: rgba(74, 144, 226, 0.9);
+  --surface-accent-active: #E7F0FB;
+  --accent-strong-border: rgba(217, 149, 43, 0.9);
+  --text-on-accent: #FFFFFF;
+
+  /* Success: sage */
+  --success-dot: #52B788;
+  --success-glow: #2E9E6F;
+  --success-icon-bright: #2E9E6F;
+  --success-solid-deep: #2B7A5E;
+  --success-text-bright: #217A57;
+  --success-tint-60: rgba(82, 183, 136, 0.06);
+  --success-tint-100: rgba(82, 183, 136, 0.1);
+  --success-tint-110: rgba(82, 183, 136, 0.11);
+  --success-tint-160: rgba(82, 183, 136, 0.16);
+  --success-tint-240: rgba(82, 183, 136, 0.24);
+  --success-tint-280: rgba(82, 183, 136, 0.28);
+  --success-tint-320: rgba(82, 183, 136, 0.32);
+  --success-tint-360: rgba(82, 183, 136, 0.36);
+  --success-tint-420: rgba(82, 183, 136, 0.42);
+  --success-tint-780: rgba(82, 183, 136, 0.78);
+
+  /* Danger: coral */
+  --coral-tint-35: rgba(230, 57, 70, 0.035);
+  --coral-tint-60: rgba(230, 57, 70, 0.06);
+  --coral-tint-100: rgba(230, 57, 70, 0.1);
+  --coral-tint-110: rgba(230, 57, 70, 0.11);
+  --coral-tint-160: rgba(230, 57, 70, 0.16);
+  --coral-tint-280: rgba(230, 57, 70, 0.28);
+  --coral-tint-550: rgba(230, 57, 70, 0.55);
+  --coral-tint-580: rgba(230, 57, 70, 0.58);
+  --danger-rose: #D9534F;
+  --danger-solid-deep: #B32733;
+  --danger-text: #C81E2B;
+  --danger-text-soft: #D9535F;
+  --danger-text-strong: #B31420;
+  --danger-text-warm: #B3443E;
+  --danger-text-warm-soft: #C4574F;
+  --danger-tint-0: rgba(230, 57, 70, 0);
+  --danger-tint-220: rgba(230, 57, 70, 0.22);
+  --danger-tint-240: rgba(230, 57, 70, 0.24);
+  --danger-tint-480: rgba(230, 57, 70, 0.48);
+  --danger-tint-550: rgba(230, 57, 70, 0.55);
+  --danger-tint-580: rgba(230, 57, 70, 0.58);
+  --danger-tint-700: rgba(230, 57, 70, 0.7);
+  --danger-tint-720: rgba(230, 57, 70, 0.72);
+  --danger-tint-880: rgba(230, 57, 70, 0.88);
+  --maroon-tint-180: rgba(140, 26, 26, 0.18);
+  --maroon-tint-220: rgba(140, 26, 26, 0.22);
+  --maroon-tint-240: rgba(140, 26, 26, 0.24);
+  --maroon-tint-380: rgba(140, 26, 26, 0.38);
+  --text-on-danger: #FFFFFF;
+
+  /* Warning: amber deepened for light backgrounds */
+  --amber-bright: #D97706;
+  --amber-gold: #B45309;
+  --amber-icon: #D97706;
+  --amber-text-soft: #8A5A0E;
+
+  /* Informational */
+  --info-cyan: #0891B2;
+
+  /* High-emphasis text: near-white literals become dark ink */
+  --text-hi-tint: #2D312E;
+  --text-hi-tint-2: #3A3F3B;
+  --text-hi-tint-3: #3A3F3B;
+  --text-on-accent-bright: #FFFFFF;
+  --text-on-success: #FFFFFF;
+  --text-hi: #2D312E;
+
+  /* Dark surfaces become white/cream surfaces */
+  --surface-button: #FFFFFF;
+  --surface-inset: #F6F1E6;
+  --surface-menu-active: #E7F0FB;
+  --surface-nav: #FFFFFF;
+  --surface-nav-hover: #F3EEE3;
+  --surface-sidebar: #F6F1E6;
+  --surface-sunken: #F6F1E6;
+  --surface-switch-track: #EAE6DF;
+  --surface-table-shell: #FFFFFF;
+  --surface-variant-a: #FCFAF2;
+  --surface-variant-b: #F6F1E6;
+  --surface-variant-c: #F3EEE3;
+  --surface-variant-d: #EDF4FB;
+  --surface-variant-e: #F6F1E6;
+  --surface-well: #F6F1E6;
+  --surface-well-2: #F3EEE3;
+
+  /* Slate tints become warm greys */
+  --border-deep-tint-550: rgba(45, 49, 46, 0.45);
+  --border-deep-tint-900: rgba(45, 49, 46, 0.7);
+  --border-tint-750: rgba(45, 49, 46, 0.55);
+  --mist-tint-340: rgba(104, 112, 106, 0.34);
+  --mist-tint-460: rgba(104, 112, 106, 0.46);
+  --mist-tint-480: rgba(104, 112, 106, 0.48);
+  --mist-tint-550: rgba(104, 112, 106, 0.55);
+  --mist-tint-580: rgba(104, 112, 106, 0.58);
+  --paper-tint-540: rgba(120, 112, 100, 0.27);
+  --paper-tint-560: rgba(120, 112, 100, 0.28);
+  --paper-tint-720: rgba(120, 112, 100, 0.36);
+  --paper-tint-920: rgba(120, 112, 100, 0.46);
+  --slate-darkest-tint-820: rgba(45, 49, 46, 0.82);
+  --slate-deep-tint-460: rgba(45, 49, 46, 0.46);
+  --slate-deep-tint-720: rgba(45, 49, 46, 0.72);
+  --slate-tint-120: rgba(45, 49, 46, 0.12);
+  --slate-tint-130: rgba(45, 49, 46, 0.13);
+  --slate-tint-140: rgba(45, 49, 46, 0.14);
+  --slate-tint-160: rgba(45, 49, 46, 0.16);
+  --slate-tint-180: rgba(45, 49, 46, 0.18);
+  --slate-tint-200: rgba(45, 49, 46, 0.2);
+  --slate-tint-220: rgba(45, 49, 46, 0.22);
+  --slate-tint-240: rgba(45, 49, 46, 0.24);
+  --slate-tint-350: rgba(45, 49, 46, 0.35);
+  --slate-tint-500: rgba(45, 49, 46, 0.5);
+  --slate-tint-720: rgba(45, 49, 46, 0.72);
+  --steel-deep-tint-340: rgba(104, 112, 106, 0.34);
+  --steel-deep-tint-420: rgba(104, 112, 106, 0.42);
+  --steel-soft-tint-420: rgba(104, 112, 106, 0.42);
+  --steel-tint-180: rgba(104, 112, 106, 0.18);
+  --steel-tint-240: rgba(104, 112, 106, 0.24);
+  --steel-tint-320: rgba(104, 112, 106, 0.32);
+  --steel-tint-480: rgba(104, 112, 106, 0.48);
+  --steel-tint-560: rgba(104, 112, 106, 0.56);
+  --white-tint-40: rgba(45, 49, 46, 0.03);
+  --white-tint-45: rgba(45, 49, 46, 0.035);
+  --white-tint-180: rgba(45, 49, 46, 0.06);
+  --white-tint-200: rgba(45, 49, 46, 0.07);
+  --white-tint-420: rgba(45, 49, 46, 0.08);
+  --white-tint-450: rgba(45, 49, 46, 0.085);
+  --white-tint-560: rgba(45, 49, 46, 0.1);
+  --white-tint-750: rgba(45, 49, 46, 0.12);
+  --selection-bg: rgba(242, 169, 59, 0.35);
+
+  /* Ink veils become light warm tints; scrims get scoped overrides below */
+  --ink-mix-base: #FFFFFF;
+  --veil-0-0-0-350: rgba(45, 49, 46, 0.09);
+  --veil-0-0-0-420: rgba(45, 49, 46, 0.1);
+  --veil-0-0-0-580: rgba(45, 49, 46, 0.12);
+  --veil-10-19-25-780: rgba(45, 49, 46, 0.05);
+  --veil-11-12-12-100: rgba(45, 49, 46, 0.05);
+  --veil-12-19-25-420: rgba(45, 49, 46, 0.1);
+  --veil-12-19-25-550: rgba(45, 49, 46, 0.11);
+  --veil-12-19-25-820: rgba(45, 49, 46, 0.05);
+  --veil-13-27-39-720: rgba(45, 49, 46, 0.05);
+  --veil-14-28-40-760: rgba(45, 49, 46, 0.05);
+  --veil-15-23-42-380: rgba(45, 49, 46, 0.09);
+  --veil-15-23-42-420: rgba(45, 49, 46, 0.1);
+  --veil-15-23-42-740: rgba(45, 49, 46, 0.05);
+  --veil-16-24-32-560: rgba(45, 49, 46, 0.11);
+  --veil-16-24-32-720: rgba(45, 49, 46, 0.05);
+  --veil-2-6-23-220: rgba(45, 49, 46, 0.1);
+  --veil-2-6-23-500: rgba(45, 49, 46, 0.12);
+  --veil-2-6-23-580: rgba(45, 49, 46, 0.12);
+  --veil-2-6-23-820: rgba(45, 49, 46, 0.05);
+  --veil-2-9-18-420: rgba(45, 49, 46, 0.1);
+  --veil-2-9-18-960: rgba(45, 49, 46, 0.06);
+  --veil-3-10-18-880: rgba(45, 49, 46, 0.05);
+  --veil-3-13-23-720: rgba(45, 49, 46, 0.05);
+  --veil-3-7-18-120: rgba(45, 49, 46, 0.06);
+  --veil-3-7-18-160: rgba(45, 49, 46, 0.08);
+  --veil-3-7-18-180: rgba(45, 49, 46, 0.09);
+  --veil-6-12-18-480: rgba(45, 49, 46, 0.1);
+  --veil-6-12-18-780: rgba(45, 49, 46, 0.05);
+  --veil-6-16-27-580: rgba(45, 49, 46, 0.12);
+  --veil-6-16-27-820: rgba(45, 49, 46, 0.05);
+  --veil-7-13-16-140: rgba(45, 49, 46, 0.07);
+  --veil-7-13-16-860: rgba(45, 49, 46, 0.05);
+  --veil-7-17-27-550: rgba(45, 49, 46, 0.11);
+  --veil-7-17-29-360: rgba(45, 49, 46, 0.09);
+  --veil-8-17-27-580: rgba(45, 49, 46, 0.12);
+
+  /* Cosmetic-only functional-family override; QR tiles stay white/near-black */
+  --switch-knob: #FFFFFF;
+}
+
+/* Results bars: neutral bars become a sky-to-gold sweep; live/provisional
+   segments follow the token mix (gold over white); yes/no keep sage/coral. */
+[data-theme="light"] .simple-auditor-results-progress span {
+  background: linear-gradient(90deg, #4A90E2, #F2A93B);
+}
+
+[data-theme="light"] .simple-auditor-results-progress-stacked .simple-auditor-results-progress-final {
+  background: linear-gradient(90deg, #4A90E2, #F2A93B);
+}
+
+[data-theme="light"] .simple-auditor-option-bar-row.is-leading .simple-auditor-results-progress-final {
+  background: #4A90E2;
+}
+
+[data-theme="light"] .simple-session-result-legend .is-submitted {
+  background: linear-gradient(90deg, #4A90E2, #F2A93B);
+}
+
+/* Tables: warm zebra striping on cream */
+[data-theme="light"] .av-ui-data-table tbody tr:nth-child(even) td {
+  background: #FCFAF2;
+}
+
+[data-theme="light"] .simple-voter-table tbody tr:nth-child(even) td {
+  background: #FCFAF2;
+}
+
+/* Yes/no grid: active chips sit on pale tints, so label ink must darken */
+[data-theme="light"] .simple-questionnaire-yes-no-grid .simple-voter-choice-yes.is-active {
+  color: #1E5B41;
+}
+
+[data-theme="light"] .simple-questionnaire-yes-no-grid .simple-voter-choice-no.is-active {
+  color: #8A1C24;
+}
+
+/* Unread-message hover sits on a pale maroon tint in light mode */
+[data-theme="light"] .simple-voter-menu-switch .simple-role-switch-button.has-unread-message:hover,
+[data-theme="light"] .simple-voter-menu-switch .simple-role-switch-button.has-unread-message:focus-visible {
+  color: #7A161E;
+}
+
+/* Scrims keep enough depth to separate dialogs from the light page */
+[data-theme="light"] .simple-account-menu-backdrop {
+  background: rgba(45, 49, 46, 0.42);
+}
+
+[data-theme="light"] .simple-invite-qr-overlay,
+[data-theme="light"] .simple-identity-qr-overlay,
+[data-theme="light"] .simple-new-identity-confirm-overlay,
+[data-theme="light"] .token-fingerprint-overlay {
+  background: rgba(45, 49, 46, 0.46);
+}
+
+[data-theme="light"] .token-fingerprint-overlay-card {
+  border-color: #EAE6DF;
+  background: #FFFFFF;
+  box-shadow: 0 30px 80px rgba(58, 52, 44, 0.18);
+}
+
+[data-theme="light"] .simple-vote-receipt-copy-feedback {
+  background: #FFFFFF;
 }
