@@ -15032,3 +15032,40 @@ body.demo-page .demo-workspace {
 [data-theme="light"] .simple-vote-receipt-copy-feedback {
   background: #FFFFFF;
 }
+
+/* Corner sun/moon theme toggle (shared chrome on every entrypoint) */
+.simple-theme-toggle {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 420;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--simple-border-strong);
+  border-radius: 999px;
+  background: var(--simple-surface);
+  color: var(--simple-teal);
+  cursor: pointer;
+  box-shadow: var(--simple-shadow);
+  transition: color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.simple-theme-toggle:hover {
+  color: var(--simple-text);
+  border-color: var(--simple-teal);
+  transform: translateY(-1px);
+}
+
+.simple-theme-toggle:focus-visible {
+  outline: 2px solid var(--simple-teal);
+  outline-offset: 2px;
+}
+
+.simple-theme-toggle svg {
+  width: 20px;
+  height: 20px;
+}
