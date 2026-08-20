@@ -25,13 +25,18 @@ DDE-style payloads, or workbook corruption.
 at parse time:
 
 1. The field is trimmed.
-2. Leading invisible format characters that `trim()` does not remove
-   (zero-width space U+200B, word joiner U+2060, bidi marks, soft hyphen,
-   BOM) are stripped, so they cannot disguise a formula prefix.
+2. Leading invisible Unicode format characters (general category Cf) that
+   `trim()` does not remove — zero-width space U+200B, word joiner U+2060,
+   bidi controls U+202A–U+202E / U+2066–U+2069, Arabic number signs
+   U+0600–U+0605, soft hyphen, BOM — are stripped, so they cannot disguise
+   a formula prefix. This stripping is intentionally lossy for values that
+   legitimately begin with a format character (rare in contact fields).
 3. If the value then starts with one of the formula prefix characters
    `=` `+` `-` `@`, a single apostrophe (`'`) is prepended.
 4. Neutralisation happens **before** validation, so the stored value — and any
    value later re-exported — can never begin with a formula prefix.
+5. A field containing only invisible characters is treated as not provided
+   (undefined), consistent with blank-field handling.
 
 The apostrophe prefix is the standard mitigation recommended by OWASP: it
 forces spreadsheet applications to treat the cell as literal text while
@@ -51,12 +56,12 @@ This mirrors the `csv_cell` hardening applied by the maintainer in PR #10
 
 | Function | Signature | Description |
 |---|---|---|
-| `neutralizeCsvFormula` | `(value: string \| undefined) => string \| undefined` | Prefixes `'` when the value starts with `=`, `+`, `-`, or `@`; otherwise returns the value unchanged. |
+| `neutralizeCsvFormula` | `(value: string \| undefined) => string \| undefined` | Strips leading Unicode Cf format characters, then prefixes `'` if the value starts with `=`, `+`, `-`, or `@`; otherwise returns the value unchanged. Invisible-only values return `undefined`. |
 
 ## Testing
 
 `residentRegister.test.ts` covers the neutralisation through the public
-`parseResidentCsv` API with 10 dedicated tests (22 total for the module):
+`parseResidentCsv` API with 13 dedicated tests (25 total for the module):
 
 - `=` prefixed name cells are stored with a leading apostrophe
 - `+`, `-`, `@` prefixed cells are neutralised across phone and name
@@ -64,8 +69,9 @@ This mirrors the `csv_cell` hardening applied by the maintainer in PR #10
 - ordinary values (including emails containing `@` in non-initial position)
   pass through untouched
 - neutralised optional fields still count as present (non-empty)
-- zero-width space (U+200B) and word joiner (U+2060) prefixes are stripped
-  before neutralising
+- zero-width space (U+200B), word joiner (U+2060), bidi isolate (U+2066),
+  and Arabic number-sign (U+0600) prefixes are stripped before neutralising
+- invisible-only optional fields are treated as not provided (undefined)
 - tab prefixes are handled by trim and neutralised
 - already-apostrophe-prefixed values are not double-escaped
 - formula payloads in masters_list_number are rejected as row errors

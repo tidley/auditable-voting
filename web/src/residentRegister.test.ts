@@ -205,6 +205,30 @@ describe("parseResidentCsv", () => {
       expect(result.residents[0].phone).toBe("'+cmd");
     });
 
+    it("strips a bidi-isolate prefix (U+2066 LRI) before neutralizing", () => {
+      const csv = "masters_list_number,email,phone,name\n1,alice@example.com,,\u2066=SUM(A1)";
+      const result = parseResidentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.residents).toHaveLength(1);
+      expect(result.residents[0].name).toBe("'=SUM(A1)");
+    });
+
+    it("strips an Arabic number-sign Cf prefix (U+0600) before neutralizing", () => {
+      const csv = "masters_list_number,email,phone,name\n1,alice@example.com,,\u0600+1";
+      const result = parseResidentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.residents[0].name).toBe("'+1");
+    });
+
+    it("treats an invisible-only optional field as not provided", () => {
+      const csv = "masters_list_number,email,phone,name\n1,alice@example.com,\u200B,\u2066";
+      const result = parseResidentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.residents).toHaveLength(1);
+      expect(result.residents[0].phone).toBeUndefined();
+      expect(result.residents[0].name).toBeUndefined();
+    });
+
     it("neutralizes a formula prefix after a tab, via trim", () => {
       const csv = "masters_list_number,email,phone,name\n1,alice@example.com,,\t=SUM(A1)";
       const result = parseResidentCsv(csv);

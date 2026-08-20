@@ -18,14 +18,15 @@ export interface ParseResult {
 const FORMULA_PREFIXES = ["=", "+", "-", "@"];
 
 /**
- * Leading Unicode format characters (Cf category) that are invisible but are
- * NOT removed by String.trim() — e.g. zero-width space U+200B and word
- * joiner U+2060. Stripping them prevents "\u200B=SUM(A1)" from smuggling a
+ * Leading Unicode format characters (general category Cf) that are invisible
+ * but are NOT removed by String.trim() — e.g. zero-width space U+200B, word
+ * joiner U+2060, bidi isolates U+2066-U+2069, Arabic number signs
+ * U+0600-U+0605. Stripping them prevents "\u200B=SUM(A1)" from smuggling a
  * formula prefix past neutralization if a downstream renderer or exporter
- * discards invisible characters.
+ * discards invisible characters. Using the \p{Cf} property escape (instead
+ * of enumerated ranges) guarantees complete coverage of the category.
  */
-const INVISIBLE_PREFIX =
-  /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\uFEFF]/;
+const INVISIBLE_PREFIX = /\p{Cf}/u;
 
 /**
  * Neutralise a CSV cell value that could be interpreted as a spreadsheet
@@ -34,11 +35,15 @@ const INVISIBLE_PREFIX =
  * value is stored and displayed as literal text instead of being executed.
  *
  * Leading invisible format characters (zero-width space, word joiner, bidi
- * marks, soft hyphen, BOM) are stripped first, so they cannot disguise a
- * formula prefix.
+ * controls, soft hyphen, BOM, …) are stripped first, so they cannot disguise
+ * a formula prefix. This stripping is intentionally lossy for values that
+ * legitimately begin with a format character — an acceptable tradeoff for
+ * contact fields.
  *
  * Undefined and empty-string inputs are returned unchanged so "field is
- * empty" validation is unaffected.
+ * empty" validation is unaffected. A value that becomes empty after
+ * stripping (invisible-only field) is returned as undefined so callers
+ * treat it as not provided.
  *
  * Mirrors the `csv_cell` hardening applied by the maintainer in PR #10
  * (security-hardening-review branch).
@@ -54,7 +59,7 @@ export function neutralizeCsvFormula(
     v = v.slice(1);
   }
   if (v === "") {
-    return v;
+    return undefined;
   }
   return FORMULA_PREFIXES.includes(v[0]) ? `'${v}` : v;
 }
