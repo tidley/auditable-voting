@@ -9298,7 +9298,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                </div>
 	              </SimpleCollapsibleSection>
             </div>
-            <div id='coordinator-resident-admission-section' className='simple-session-invites'>
+            <div id='coordinator-resident-admission-section'>
               <ResidentOtpAdmission />
             </div>
           </section>
