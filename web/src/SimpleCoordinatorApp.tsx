@@ -60,6 +60,7 @@ import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
+import ResidentOtpAdmission from "./ResidentOtpAdmission";
 import { UiButton, UiDataTable, UiIcon, UiSelect, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import QuestionnaireCoordinatorPanel, {
   QUESTIONNAIRE_ID_RESET_EVENT,
@@ -9296,6 +9297,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 	                  </div>
 	                </div>
 	              </SimpleCollapsibleSection>
+            </div>
+            <div id='coordinator-resident-admission-section' className='simple-session-invites'>
+              <ResidentOtpAdmission />
             </div>
           </section>
         ) : null}

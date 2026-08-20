@@ -15069,3 +15069,64 @@ body.demo-page .demo-workspace {
   width: 20px;
   height: 20px;
 }
+
+/* Resident admission (demo) — coordinator participants tab */
+.simple-resident-admission-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.simple-resident-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.simple-resident-table th,
+.simple-resident-table td {
+  border: 1px solid var(--surface-table-shell, #08111b);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.simple-resident-issued {
+  margin-top: 16px;
+}
+
+.simple-resident-issued-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--surface-table-shell, #08111b);
+}
+
+.simple-resident-issued-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.simple-resident-issued-primary {
+  font-weight: 600;
+}
+
+.simple-resident-issued-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  letter-spacing: 0.12em;
+}
+
+.simple-resident-issued-time {
+  opacity: 0.7;
+  font-size: 12px;
+}
+
+.simple-resident-verify {
+  margin-top: 16px;
+}
