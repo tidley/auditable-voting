@@ -11,6 +11,34 @@ export interface ParseResult {
 }
 
 /**
+ * Characters that, when they start a spreadsheet cell, cause applications
+ * like Excel, Google Sheets, and LibreOffice Calc to evaluate the cell
+ * content as a formula (CSV formula injection / CSV injection).
+ */
+const FORMULA_PREFIXES = ["=", "+", "-", "@"];
+
+/**
+ * Neutralise a CSV cell value that could be interpreted as a spreadsheet
+ * formula. If the (already trimmed) value starts with one of the formula
+ * prefix characters (=, +, -, @), a single apostrophe is prepended so the
+ * value is stored and displayed as literal text instead of being executed.
+ *
+ * Undefined and empty-string inputs are returned unchanged so "field is
+ * empty" validation is unaffected.
+ *
+ * Mirrors the `csv_cell` hardening applied by the maintainer in PR #10
+ * (security-hardening-review branch).
+ */
+export function neutralizeCsvFormula(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined || value === "") {
+    return value;
+  }
+  return FORMULA_PREFIXES.includes(value[0]) ? `'${value}` : value;
+}
+
+/**
  * Parse a CSV string containing resident contact information.
  *
  * Expected CSV format (header required):
@@ -23,6 +51,9 @@ export interface ParseResult {
  * - name is optional
  * - Extra columns beyond the standard 4 are ignored
  * - Fields may be quoted (RFC 4180 style)
+ * - String fields (email, phone, name) whose value starts with a formula
+ *   prefix character (=, +, -, @) are neutralised with a leading apostrophe
+ *   so they cannot execute as formulas in spreadsheet applications
  */
 export function parseResidentCsv(csvContent: string): ParseResult {
   const errors: string[] = [];
@@ -73,9 +104,12 @@ export function parseResidentCsv(csvContent: string): ParseResult {
     }
 
     const mastersListNumberStr = fields[0]?.trim() ?? "";
-    const email = fields[1]?.trim() ?? "";
-    const phone = fields[2]?.trim() || undefined;
-    const name = fields[3]?.trim() || undefined;
+    // Neutralise formula injection on string fields after trimming and
+    // BEFORE any validation, so stored values can never execute as
+    // spreadsheet formulas (mirrors the maintainer's csv_cell hardening).
+    const email = neutralizeCsvFormula(fields[1]?.trim() ?? "") ?? "";
+    const phone = neutralizeCsvFormula(fields[2]?.trim() || undefined);
+    const name = neutralizeCsvFormula(fields[3]?.trim() || undefined);
 
     // Validate masters_list_number
     if (!mastersListNumberStr) {
