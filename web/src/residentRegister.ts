@@ -18,10 +18,24 @@ export interface ParseResult {
 const FORMULA_PREFIXES = ["=", "+", "-", "@"];
 
 /**
+ * Leading Unicode format characters (Cf category) that are invisible but are
+ * NOT removed by String.trim() — e.g. zero-width space U+200B and word
+ * joiner U+2060. Stripping them prevents "\u200B=SUM(A1)" from smuggling a
+ * formula prefix past neutralization if a downstream renderer or exporter
+ * discards invisible characters.
+ */
+const INVISIBLE_PREFIX =
+  /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\uFEFF]/;
+
+/**
  * Neutralise a CSV cell value that could be interpreted as a spreadsheet
  * formula. If the (already trimmed) value starts with one of the formula
  * prefix characters (=, +, -, @), a single apostrophe is prepended so the
  * value is stored and displayed as literal text instead of being executed.
+ *
+ * Leading invisible format characters (zero-width space, word joiner, bidi
+ * marks, soft hyphen, BOM) are stripped first, so they cannot disguise a
+ * formula prefix.
  *
  * Undefined and empty-string inputs are returned unchanged so "field is
  * empty" validation is unaffected.
@@ -35,7 +49,14 @@ export function neutralizeCsvFormula(
   if (value === undefined || value === "") {
     return value;
   }
-  return FORMULA_PREFIXES.includes(value[0]) ? `'${value}` : value;
+  let v = value;
+  while (v.length > 0 && INVISIBLE_PREFIX.test(v[0])) {
+    v = v.slice(1);
+  }
+  if (v === "") {
+    return v;
+  }
+  return FORMULA_PREFIXES.includes(v[0]) ? `'${v}` : v;
 }
 
 /**

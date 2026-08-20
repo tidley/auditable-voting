@@ -188,5 +188,43 @@ describe("parseResidentCsv", () => {
       expect(result.residents[0].phone).toBe("'=555");
       expect(result.residents[0].name).toBe("'=John");
     });
+
+    it("strips a zero-width space prefix before neutralizing", () => {
+      const csv = "masters_list_number,email,phone,name\n1,alice@example.com,,\u200B=SUM(A1)";
+      const result = parseResidentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.residents).toHaveLength(1);
+      expect(result.residents[0].name).toBe("'=SUM(A1)");
+    });
+
+    it("strips a word-joiner prefix (U+2060) before neutralizing", () => {
+      const csv = "masters_list_number,email,phone,name\n1,alice@example.com,\u2060+cmd,";
+      const result = parseResidentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.residents).toHaveLength(1);
+      expect(result.residents[0].phone).toBe("'+cmd");
+    });
+
+    it("neutralizes a formula prefix after a tab, via trim", () => {
+      const csv = "masters_list_number,email,phone,name\n1,alice@example.com,,\t=SUM(A1)";
+      const result = parseResidentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.residents[0].name).toBe("'=SUM(A1)");
+    });
+
+    it("does not double-escape an already-apostrophe-prefixed value", () => {
+      const csv = "masters_list_number,email,phone,name\n1,alice@example.com,,'=literal";
+      const result = parseResidentCsv(csv);
+      expect(result.errors).toEqual([]);
+      expect(result.residents[0].name).toBe("'=literal");
+    });
+
+    it("rejects a formula payload in masters_list_number as a row error", () => {
+      const csv = "masters_list_number,email,phone,name\n=SUM(A1),alice@example.com,,Alice";
+      const result = parseResidentCsv(csv);
+      expect(result.residents).toHaveLength(0);
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.errors[0]).toMatch(/masters_list_number/i);
+    });
   });
 });
