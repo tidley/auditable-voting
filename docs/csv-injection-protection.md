@@ -25,9 +25,12 @@ DDE-style payloads, or workbook corruption.
 at parse time:
 
 1. The field is trimmed.
-2. If the value starts with one of the formula prefix characters
+2. Leading invisible format characters that `trim()` does not remove
+   (zero-width space U+200B, word joiner U+2060, bidi marks, soft hyphen,
+   BOM) are stripped, so they cannot disguise a formula prefix.
+3. If the value then starts with one of the formula prefix characters
    `=` `+` `-` `@`, a single apostrophe (`'`) is prepended.
-3. Neutralisation happens **before** validation, so the stored value — and any
+4. Neutralisation happens **before** validation, so the stored value — and any
    value later re-exported — can never begin with a formula prefix.
 
 The apostrophe prefix is the standard mitigation recommended by OWASP: it
@@ -53,7 +56,7 @@ This mirrors the `csv_cell` hardening applied by the maintainer in PR #10
 ## Testing
 
 `residentRegister.test.ts` covers the neutralisation through the public
-`parseResidentCsv` API with 5 dedicated tests (17 total for the module):
+`parseResidentCsv` API with 10 dedicated tests (22 total for the module):
 
 - `=` prefixed name cells are stored with a leading apostrophe
 - `+`, `-`, `@` prefixed cells are neutralised across phone and name
@@ -61,6 +64,11 @@ This mirrors the `csv_cell` hardening applied by the maintainer in PR #10
 - ordinary values (including emails containing `@` in non-initial position)
   pass through untouched
 - neutralised optional fields still count as present (non-empty)
+- zero-width space (U+200B) and word joiner (U+2060) prefixes are stripped
+  before neutralising
+- tab prefixes are handled by trim and neutralised
+- already-apostrophe-prefixed values are not double-escaped
+- formula payloads in masters_list_number are rejected as row errors
 
 Run tests:
 
