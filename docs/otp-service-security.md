@@ -72,6 +72,9 @@ The test suite (`otpService.test.ts`) covers 18 tests across all functions,
 including security-specific tests for CSPRNG usage, salt randomisation,
 constant-time comparison, rate limiting, and edge cases.
 
+The service is wired into the coordinator UI via the Resident admission
+section — see `docs/resident-otp-admission-ui.md`.
+
 Run tests:
 
 ```bash
