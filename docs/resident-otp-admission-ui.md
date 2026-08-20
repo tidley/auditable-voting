@@ -21,9 +21,14 @@ displayed to the organiser once, who hands them to residents out of band.
    `masters_list_number,email,phone,name`. Parsing is all-or-nothing: any
    invalid row rejects the file with a per-row error list.
 2. **Generate** — per resident or in one batch. Each code is generated with
-   `generateOtp()` (CSPRNG) and only its salted SHA-256 hash (`hashOtp()`) is
-   retained. The plaintext code is shown **once** in the "Issued codes" panel
-   with a copy button and the issue time. Re-generating replaces the entry.
+   `generateOtp()` (CSPRNG) and its salted SHA-256 hash (`hashOtp()`) is
+   retained for verification. The plaintext code is displayed in the
+   "Issued codes" panel with a copy button and the issue time, and is
+   never re-derivable from the stored hash. Re-generating replaces the
+   entry. Note: codes and hashes live in component state only — switching
+   coordinator tabs or uploading a new roster discards them; the section
+   holds them in browser memory for its mounted lifetime and sends nothing
+   to any server.
 3. **Verify** — the organiser selects a resident, enters the 6-digit code,
    and submits. The form reports one of: success, incorrect code,
    rate-limited (after `MAX_OTP_ATTEMPTS` failures), expired
@@ -31,8 +36,14 @@ displayed to the organiser once, who hands them to residents out of band.
 
 ## Security properties
 
-- Codes are never persisted in plaintext; only `saltHex:hashHex` values are
-  held in browser memory for the lifetime of the tab.
+- Codes are never sent anywhere; the salted `saltHex:hashHex` values used
+  for verification are held in browser memory only while the section is
+  mounted (no persistence, no network).
+- The plaintext code remains visible in the Issued codes panel until
+  replaced or the roster changes — it is a demo hand-off channel, not a
+  delivery channel. Clipboard copy failure is silent (browser denies or
+  lacks clipboard access); the code can still be read and transcribed
+  manually.
 - Verification goes through `verifyOtp()` (constant-time comparison,
   per-hash rate limiting).
 - Expiry is checked with `isOtpExpired()` before verification, so expired

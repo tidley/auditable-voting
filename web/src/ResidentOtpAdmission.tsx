@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import {
   generateOtp,
   hashOtp,
@@ -26,43 +26,79 @@ export default function ResidentOtpAdmission() {
   const [residents, setResidents] = useState<ResidentEntry[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [issued, setIssued] = useState<IssuedResidentCode[]>([]);
-  const [failedAttempts, setFailedAttempts] = useState<Record<number, number>>({});
+  const [isIssuingAll, setIsIssuingAll] = useState(false);
   const [verifyResident, setVerifyResident] = useState("");
   const [verifyCode, setVerifyCode] = useState("");
   const [verifyStatus, setVerifyStatus] = useState<string | null>(null);
   const { isCopied, showCopied } = useTransientCopiedLabel();
+  // Failed-attempt counts are kept in a ref (not state) because handleVerify
+  // must read and increment them synchronously after an await — state reads
+  // would be stale if two verifies resolve before a re-render.
+  const failedAttemptsRef = useRef<Record<number, number>>({});
+  // Bumped on every roster change so in-flight batch loops and late hashOtp
+  // resolutions from a previous roster are discarded.
+  const rosterVersionRef = useRef(0);
 
   async function handleCsvChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
       return;
     }
-    const text = await file.text();
-    const result = parseResidentCsv(text);
+    rosterVersionRef.current += 1;
+    let result: ReturnType<typeof parseResidentCsv>;
+    try {
+      const text = await file.text();
+      result = parseResidentCsv(text);
+    } catch {
+      setCsvErrors(["The file could not be read."]);
+      setResidents([]);
+      setIssued([]);
+      failedAttemptsRef.current = {};
+      setVerifyResident("");
+      setVerifyCode("");
+      setVerifyStatus(null);
+      event.target.value = "";
+      return;
+    }
     setResidents(result.residents);
     setCsvErrors(result.errors);
     setIssued([]);
-    setFailedAttempts({});
+    failedAttemptsRef.current = {};
     setVerifyResident("");
     setVerifyCode("");
     setVerifyStatus(null);
     event.target.value = "";
   }
 
-  async function issueCode(resident: ResidentEntry) {
+  async function issueCode(resident: ResidentEntry, rosterVersion: number) {
     const code = generateOtp();
     const hash = await hashOtp(code);
+    if (rosterVersionRef.current !== rosterVersion) {
+      return;
+    }
     const issuedAt = Date.now();
     setIssued((current) => [
       ...current.filter((entry) => entry.mastersListNumber !== resident.mastersListNumber),
       { mastersListNumber: resident.mastersListNumber, name: resident.name ?? "", code, hash, issuedAt },
     ]);
-    setFailedAttempts((current) => ({ ...current, [resident.mastersListNumber]: 0 }));
+    failedAttemptsRef.current = { ...failedAttemptsRef.current, [resident.mastersListNumber]: 0 };
   }
 
   async function issueAllCodes() {
-    for (const resident of residents) {
-      await issueCode(resident);
+    if (isIssuingAll) {
+      return;
+    }
+    setIsIssuingAll(true);
+    try {
+      const rosterVersion = rosterVersionRef.current;
+      for (const resident of residents) {
+        if (rosterVersionRef.current !== rosterVersion) {
+          return;
+        }
+        await issueCode(resident, rosterVersion);
+      }
+    } finally {
+      setIsIssuingAll(false);
     }
   }
 
@@ -84,12 +120,14 @@ export default function ResidentOtpAdmission() {
     }
     const matches = await verifyOtp(code, record.hash);
     if (matches) {
-      setFailedAttempts((current) => ({ ...current, [mastersListNumber]: 0 }));
+      failedAttemptsRef.current = { ...failedAttemptsRef.current, [mastersListNumber]: 0 };
       setVerifyStatus(`Code verified for resident ${mastersListNumber}.`);
       return;
     }
-    const attempts = (failedAttempts[mastersListNumber] ?? 0) + 1;
-    setFailedAttempts((current) => ({ ...current, [mastersListNumber]: attempts }));
+    // Read and increment via the ref so two resolves landing before a
+    // re-render both count (no stale-closure undercount of the lockout).
+    const attempts = (failedAttemptsRef.current[mastersListNumber] ?? 0) + 1;
+    failedAttemptsRef.current = { ...failedAttemptsRef.current, [mastersListNumber]: attempts };
     setVerifyStatus(attempts >= MAX_OTP_ATTEMPTS
       ? "Too many failed attempts. Generate a new code to continue."
       : "Incorrect code.");
@@ -102,8 +140,10 @@ export default function ResidentOtpAdmission() {
       <h3 className="simple-voter-question">Resident admission</h3>
       <p className="simple-voter-note">
         Upload a CSV with the header masters_list_number,email,phone,name.
-        One-time codes are shown once when generated; only salted hashes are kept,
-        and they never leave this browser tab. This demo does not send codes by email or SMS.
+        One-time codes are shown once when generated and are handed to residents
+        out of band; nothing is sent to a server, and only salted hashes are kept
+        for verification while this section stays mounted. This demo does not
+        send codes by email or SMS.
       </p>
       <input
         type="file"
@@ -126,11 +166,11 @@ export default function ResidentOtpAdmission() {
           <table className="simple-resident-table" aria-label="Residents">
             <thead>
               <tr>
-                <th>Masters list number</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Phone</th>
-                <th>One-time code</th>
+                <th scope="col">Masters list number</th>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Phone</th>
+                <th scope="col">One-time code</th>
               </tr>
             </thead>
             <tbody>
@@ -145,7 +185,7 @@ export default function ResidentOtpAdmission() {
                       type="button"
                       className="simple-voter-secondary"
                       aria-label={`Generate code for resident ${resident.mastersListNumber}`}
-                      onClick={() => void issueCode(resident)}
+                      onClick={() => void issueCode(resident, rosterVersionRef.current)}
                     >
                       Generate code
                     </button>
@@ -159,6 +199,7 @@ export default function ResidentOtpAdmission() {
               type="button"
               className="simple-voter-secondary"
               aria-label="Generate codes for all residents"
+              disabled={isIssuingAll}
               onClick={() => void issueAllCodes()}
             >
               Generate codes for all residents
