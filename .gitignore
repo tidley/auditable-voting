@@ -31,6 +31,10 @@ test-results/
 debug/
 .fingerprint/
 
+# Test coverage
+coverage/
+web/coverage/
+
 # Rust / Wasm build artefacts
 auditable-voting-core/target/
 web/rust-core/target/

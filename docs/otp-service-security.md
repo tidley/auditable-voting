@@ -63,7 +63,8 @@ prevent unbounded memory growth from adversarial inputs.
 
 | Name | Value | Description |
 |---|---|---|
-| `OTP_TTL_MS` | `600_000` (10 min) | Default OTP time-to-live. |
+| `OTP_TTL_MS` | `600_000` (10 min) | Default OTP time-to-live for interactive use. |
+| `ADMISSION_TTL_MS` | `86_400_000` (24 h) | TTL for admission codes distributed out of band. |
 | `MAX_OTP_ATTEMPTS` | `5` | Max failed attempts before rate limiting. |
 
 ## Testing

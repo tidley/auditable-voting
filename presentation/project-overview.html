@@ -634,6 +634,7 @@
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
           <li>Reads and live subscriptions are kept to a smaller primary subset, with tag-filtered paginated public questionnaire reads, consolidated organiser/voter/observer questionnaire subscriptions, adaptive blind-DM history reads, capped foreground DM/mailbox read fanout, a shared relay circuit breaker, browser WebSocket caps, and a shorter organiser startup burst to reduce relay-side `too many concurrent REQs` and browser WebSocket pressure</li>
           <li>Small live runs are now much stronger than large public-relay committee runs</li>
+          <li>Coordinator resident admission now supports a delivery abstraction: a per-election channel selector (manual, email-nomail, SMS), name+code CSV export with proper escaping, and results-CSV import into a delivery status table. Batch email sending runs on the coordinator machine, not in the browser; the manual channel is the recommended fallback.</li>
           <li>The protocol remains inspectable by any third party</li>
         </ul>
       </div>
