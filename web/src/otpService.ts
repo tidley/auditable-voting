@@ -4,6 +4,16 @@
 export const OTP_TTL_MS = 10 * 60 * 1000;
 
 /**
+ * TTL in milliseconds for admission codes distributed out of band (24 hours).
+ *
+ * Admission codes are handed to residents outside the interactive flow and
+ * may sit for a while before the resident enters them, so they need a longer
+ * life than the 10-minute interactive TTL. The 10-minute default is
+ * unchanged for interactive use.
+ */
+export const ADMISSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
  * Maximum number of failed verification attempts per OTP hash before
  * the hash is permanently rejected (rate limiting).
  */

@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_OTP_ATTEMPTS, OTP_TTL_MS } from "./otpService";
+import { ADMISSION_TTL_MS, MAX_OTP_ATTEMPTS } from "./otpService";
 
 // jsdom provides crypto.getRandomValues but not crypto.subtle; otpService needs both.
 if (!globalThis.crypto?.subtle) {
@@ -252,7 +252,7 @@ describe("ResidentOtpAdmission OTP verification", () => {
     await uploadCsv(VALID_CSV);
     const code = await generateFor(101);
 
-    vi.setSystemTime(new Date(Date.now() + OTP_TTL_MS + 60_000));
+    vi.setSystemTime(new Date(Date.now() + ADMISSION_TTL_MS + 60_000));
 
     await userEvent.selectOptions(
       screen.getByLabelText("Resident to verify"),
