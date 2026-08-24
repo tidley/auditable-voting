@@ -32,7 +32,9 @@ displayed to the organiser once, who hands them to residents out of band.
 3. **Verify** — the organiser selects a resident, enters the 6-digit code,
    and submits. The form reports one of: success, incorrect code,
    rate-limited (after `MAX_OTP_ATTEMPTS` failures), expired
-   (`OTP_TTL_MS`, 10 minutes), or that no code has been issued yet.
+   (`ADMISSION_TTL_MS`, 24 hours — admission codes are distributed out of
+   band and may sit before the resident enters them), or that no code has
+   been issued yet.
 
 ## Security properties
 
@@ -63,4 +65,5 @@ cd web && npx vitest run src/ResidentOtpAdmission.test.tsx
 ```
 
 See `docs/otp-service-security.md` for the underlying service design and
-`docs/csv-injection-protection.md` for the CSV hardening.
+`docs/csv-injection-protection.md` for the CSV hardening. For the delivery
+channels, selector and results import, see `docs/otp-delivery.md`.
