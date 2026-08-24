@@ -34,7 +34,8 @@
     "test:live-delegate-coordinator": "tsx scripts/live-delegate-coordinator-smoke.ts",
     "test:live-rust-helper": "tsx scripts/live-rust-helper-smoke.ts",
     "test:live-ui-rust-worker": "tsx scripts/live-ui-rust-worker-smoke.ts",
-    "test:scoped-ballot-load": "tsx scripts/scoped-ballot-load-sim.ts"
+    "test:scoped-ballot-load": "tsx scripts/scoped-ballot-load-sim.ts",
+    "test:e2e": "npx playwright test"
   },
   "dependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.5",
@@ -53,6 +54,7 @@
   "devDependencies": {
     "@emnapi/core": "^1.10.0",
     "@emnapi/runtime": "^1.10.0",
+    "@playwright/test": "^1.62.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.5.0",
