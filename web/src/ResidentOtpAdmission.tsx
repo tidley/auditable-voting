@@ -1,5 +1,6 @@
 import { useRef, useState, type ChangeEvent } from "react";
 import {
+  ADMISSION_TTL_MS,
   generateOtp,
   hashOtp,
   isOtpExpired,
@@ -114,7 +115,7 @@ export default function ResidentOtpAdmission() {
       setVerifyStatus("Enter the 6-digit code.");
       return;
     }
-    if (isOtpExpired(record.issuedAt)) {
+    if (isOtpExpired(record.issuedAt, ADMISSION_TTL_MS)) {
       setVerifyStatus("This code has expired. Generate a new code.");
       return;
     }
