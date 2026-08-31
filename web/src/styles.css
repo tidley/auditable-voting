@@ -6969,15 +6969,74 @@ code {
 
 .simple-private-invite-section-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.45fr);
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 0.4fr) minmax(120px, 0.3fr);
   align-items: center;
   gap: 10px;
+}
+
+.simple-private-invite-capacity {
+  display: grid;
+  gap: 4px;
+  color: var(--simple-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .simple-private-invite-action-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.simple-organiser-demo-launcher {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+
+.simple-resident-import-preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--simple-border);
+  border-radius: 12px;
+  background: var(--simple-surface-2);
+}
+
+.organiser-demo-tour-dialog {
+  border: 1px solid var(--simple-border-strong) !important;
+  border-radius: 14px !important;
+  background: var(--simple-surface) !important;
+  color: var(--simple-text) !important;
+  box-shadow: var(--simple-shadow) !important;
+}
+
+.organiser-demo-tour-dialog * {
+  font-family: inherit !important;
+}
+
+.organiser-demo-tour-backdrop {
+  background: rgba(0, 0, 0, 0.72) !important;
+}
+
+.organiser-demo-tour-skip {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--simple-muted);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .simple-organiser-demo-launcher {
+    justify-content: stretch;
+  }
+
+  .simple-organiser-demo-launcher > button {
+    width: 100%;
+  }
 }
 
 .simple-private-invite-action-grid .av-ui-button {

@@ -176,7 +176,10 @@ type QuestionnaireCoordinatorPanelProps = {
   draftQuestionnaireId?: string;
   canApplyAdmissionsOnPublish?: boolean;
   onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
+  onDemoPublished?: () => void;
   onResponseDetailsChange?: (responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => void;
+  onOpenObserver?: () => void;
+  demoSetupSignal?: number;
   onReadinessChange?: (items: QuestionnaireReadinessItem[]) => void;
   onPrimaryPublishActionChange?: (action: QuestionnairePrimaryPublishAction) => void;
   primaryPublishActionSignal?: number;
@@ -1590,6 +1593,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const questionnaireRelaysInput = props.questionnaireRelaysInput ?? storedDraft.questionnaireRelays ?? "";
   const [useDefaultSetupRelays, setUseDefaultSetupRelays] = useState(() => normalizeQuestionnaireRelays(questionnaireRelaysInput).length === 0);
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
+  const lastDemoSetupSignalRef = useRef(0);
   const [voterGroups, setVoterGroups] = useState<QuestionnaireVoterGroup[]>(storedDraft.voterGroups ?? []);
   const [newVoterGroupLabel, setNewVoterGroupLabel] = useState("");
   const [generalInvitePowEnabled, setGeneralInvitePowEnabled] = useState(storedDraft.generalInvitePowEnabled ?? false);
@@ -1896,6 +1900,19 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     : null;
   const selectedQuestionnaireIsKnownPublished = selectedQuestionnaireHasPublishedSignal;
   const publishedDefinition = selectedQuestionnaireIsKnownPublished;
+  useEffect(() => {
+    const signal = props.demoSetupSignal ?? 0;
+    if (signal <= 0 || signal === lastDemoSetupSignalRef.current || view !== "build" || publishedDefinition) {
+      return;
+    }
+    lastDemoSetupSignalRef.current = signal;
+    setTitle("Neighbourhood Consultation Demo");
+    setDescription("A short demonstration questionnaire for a neighbourhood consultation.");
+    setQuestions([createYesNoQuestion("q1", "Do you support creating a shared community garden?")]);
+    setCloseTimerEnabled(false);
+    setVoterGroups([]);
+    setStatus("Demo questionnaire ready. Review it, then select Go Live to publish.");
+  }, [props.demoSetupSignal, publishedDefinition, view]);
   useEffect(() => {
     props.onPublishedDefinitionChange?.(publishedDefinition);
   }, [props.onPublishedDefinitionChange, publishedDefinition]);
@@ -3952,6 +3969,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             forceConfigSync: true,
           });
         }
+        props.onDemoPublished?.();
       } else {
         setStatus("Vote publish failed.");
         await refresh();
@@ -5151,6 +5169,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           coordinatorText={dashboardCoordinatorIdentity.text}
           publishedAtLabel='Published'
           publishedAtTime={activePublishedDefinition?.createdAt ?? null}
+          actions={props.onOpenObserver ? (
+            <UiButton icon='view' className='simple-voter-secondary' onPress={props.onOpenObserver}>
+              Open observer
+            </UiButton>
+          ) : null}
           emptyQuestionSummaryText='No question results yet.'
           emptySelectionText=''
           emptyResponsesText='No submitted responses found for this questionnaire yet.'

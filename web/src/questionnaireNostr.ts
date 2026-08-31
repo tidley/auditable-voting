@@ -18,7 +18,10 @@ import type {
   QuestionnaireResultSummary,
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
-import { normalizeQuestionnaireDefinition } from "./questionnaireProtocol";
+import {
+  normaliseQuestionnairePrivateInviteMaxRedemptions,
+  normalizeQuestionnaireDefinition,
+} from "./questionnaireProtocol";
 import {
   IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT,
@@ -864,6 +867,12 @@ export function parseQuestionnairePrivateInviteStatusEvent(
       redeemedNpubHash: typeof parsed.redeemedNpubHash === "string"
         ? parsed.redeemedNpubHash.trim().toLowerCase() || null
         : null,
+      redemptionCount: Number.isFinite(parsed.redemptionCount)
+        ? Math.max(0, Math.floor(parsed.redemptionCount as number))
+        : undefined,
+      maxRedemptions: Number.isFinite(parsed.maxRedemptions)
+        ? normaliseQuestionnairePrivateInviteMaxRedemptions(parsed.maxRedemptions)
+        : undefined,
       redeemedAt: typeof parsed.redeemedAt === "string" ? parsed.redeemedAt : null,
       revokedAt: typeof parsed.revokedAt === "string" ? parsed.revokedAt : null,
     };

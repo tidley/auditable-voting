@@ -156,11 +156,15 @@ pub struct BearerInviteCodeEntry {
     #[serde(default)]
     pub credentials_per_voter: Option<u8>,
     #[serde(default)]
+    pub max_redemptions: Option<usize>,
+    #[serde(default)]
     pub ballot_group: Option<String>,
     #[serde(default)]
     pub redeemed_at: Option<String>,
     #[serde(default)]
     pub redeemed_npub: Option<String>,
+    #[serde(default)]
+    pub redeemed_npubs: Vec<String>,
     #[serde(default)]
     pub revoked_at: Option<String>,
 }

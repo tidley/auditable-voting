@@ -107,12 +107,16 @@ export interface BearerInviteCodeEntry {
   createdAt: IsoTime;
   state: BearerInviteCodeState;
   credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
+  /** Maximum distinct voters that can redeem this private code. Defaults to one. */
+  maxRedemptions?: number;
   ballotGroup?: string | null;
   note?: string | null;
   autoRequestBallot?: boolean;
   markedUsedAt?: IsoTime | null;
   redeemedAt?: IsoTime | null;
   redeemedNpub?: Npub | null;
+  /** Local organiser-only redemption record. Never published with the invite link. */
+  redeemedNpubs?: Npub[];
   revokedAt?: IsoTime | null;
 }
 
@@ -1391,9 +1395,17 @@ export function restoreCoordinatorElectionState(input: {
       const bearerInvite = Object.values(merged.bearerInviteCodes).find((candidate) => (
         candidate.codeHash.trim().toLowerCase() === inviteCodeHash
       ));
-      if (bearerInvite && (!bearerInvite.redeemedNpub || bearerInvite.redeemedNpub === entry.invitedNpub)) {
-        bearerInvite.state = "redeemed";
-        bearerInvite.redeemedNpub = entry.invitedNpub;
+      if (bearerInvite) {
+        const redeemedNpubs = [...new Set([
+          ...(bearerInvite.redeemedNpubs ?? []),
+          ...(bearerInvite.redeemedNpub ? [bearerInvite.redeemedNpub] : []),
+          entry.invitedNpub,
+        ])];
+        const maxRedemptions = Math.max(1, Math.floor(bearerInvite.maxRedemptions ?? 1));
+        bearerInvite.redeemedNpubs = redeemedNpubs;
+        bearerInvite.maxRedemptions = maxRedemptions;
+        bearerInvite.state = redeemedNpubs.length >= maxRedemptions ? "redeemed" : "available";
+        bearerInvite.redeemedNpub = maxRedemptions === 1 ? entry.invitedNpub : null;
         bearerInvite.redeemedAt = entry.inviteCodeRedeemedAt ?? bearerInvite.redeemedAt ?? entry.addedAt;
       }
     }

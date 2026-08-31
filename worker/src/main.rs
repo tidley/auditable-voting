@@ -1079,6 +1079,12 @@ fn normalize_invite_code_hash(value: &str) -> Option<String> {
     Some(normalized)
 }
 
+const MAX_BEARER_INVITE_REDEMPTIONS: usize = 10_000;
+
+fn normalize_bearer_invite_max_redemptions(value: Option<usize>) -> usize {
+    value.unwrap_or(1).clamp(1, MAX_BEARER_INVITE_REDEMPTIONS)
+}
+
 fn normalize_ballot_group(value: &str) -> Option<String> {
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty() || normalized == "main" || normalized == "0" {
@@ -1102,11 +1108,39 @@ fn merge_bearer_invite_codes(election: &mut ElectionRuntimeState, codes: &[Beare
             continue;
         }
         let existing = election.bearer_invite_codes.get(&code_hash).cloned();
-        let next = match (existing, incoming.state.as_str()) {
-            (Some(existing), _) if existing.state == "redeemed" => existing,
-            (_, "available" | "redeemed" | "revoked") => {
+        let next = match incoming.state.as_str() {
+            "available" | "redeemed" | "revoked" => {
                 let mut next = incoming.clone();
                 next.code_hash = code_hash.clone();
+                let mut redeemed_npubs = existing
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|entry| entry.redeemed_npubs.iter().cloned())
+                    .chain(
+                        existing
+                            .as_ref()
+                            .and_then(|entry| entry.redeemed_npub.clone()),
+                    )
+                    .chain(next.redeemed_npubs.iter().cloned())
+                    .chain(next.redeemed_npub.clone())
+                    .collect::<Vec<_>>();
+                redeemed_npubs.sort();
+                redeemed_npubs.dedup();
+                let max_redemptions = normalize_bearer_invite_max_redemptions(next.max_redemptions);
+                next.max_redemptions = Some(max_redemptions);
+                next.redeemed_npubs = redeemed_npubs;
+                next.redeemed_npub = if max_redemptions == 1 {
+                    next.redeemed_npubs.first().cloned()
+                } else {
+                    None
+                };
+                if next.state != "revoked" {
+                    next.state = if next.redeemed_npubs.len() >= max_redemptions {
+                        "redeemed".to_string()
+                    } else {
+                        "available".to_string()
+                    };
+                }
                 next.ballot_group = next
                     .ballot_group
                     .as_deref()
@@ -1465,11 +1499,32 @@ fn authorize_blind_request(
             return BlindRequestAuthorization::Rejected;
         }
         match entry.state.as_str() {
+            "available" if entry.redeemed_npubs.contains(&request.invited_npub) => {
+                return BlindRequestAuthorization::Authorized {
+                    state_changed: false,
+                };
+            }
             "available" => {
+                let max_redemptions = normalize_bearer_invite_max_redemptions(entry.max_redemptions);
+                if entry.redeemed_npubs.len() >= max_redemptions {
+                    entry.state = "redeemed".to_string();
+                    return BlindRequestAuthorization::Rejected;
+                }
                 let redeemed_at = now_iso();
-                entry.state = "redeemed".to_string();
+                entry.redeemed_npubs.push(request.invited_npub.clone());
+                entry.redeemed_npubs.sort();
+                entry.redeemed_npubs.dedup();
+                entry.state = if entry.redeemed_npubs.len() >= max_redemptions {
+                    "redeemed".to_string()
+                } else {
+                    "available".to_string()
+                };
                 entry.redeemed_at = Some(redeemed_at);
-                entry.redeemed_npub = Some(request.invited_npub.clone());
+                entry.redeemed_npub = if max_redemptions == 1 {
+                    Some(request.invited_npub.clone())
+                } else {
+                    None
+                };
                 election
                     .whitelist_npubs
                     .insert(request.invited_npub.clone());
@@ -1487,7 +1542,10 @@ fn authorize_blind_request(
                     state_changed: true,
                 };
             }
-            "redeemed" if entry.redeemed_npub.as_deref() == Some(request.invited_npub.as_str()) => {
+            "redeemed"
+                if entry.redeemed_npubs.contains(&request.invited_npub)
+                    || entry.redeemed_npub.as_deref() == Some(request.invited_npub.as_str()) =>
+            {
                 let inserted = election
                     .whitelist_npubs
                     .insert(request.invited_npub.clone());
@@ -5590,9 +5648,11 @@ mod tests {
                 created_at: now_iso(),
                 state: "available".to_string(),
                 credentials_per_voter: None,
+                max_redemptions: None,
                 ballot_group: None,
                 redeemed_at: None,
                 redeemed_npub: None,
+                redeemed_npubs: vec![],
                 revoked_at: None,
             }]),
             eligibility_required: Some(true),
@@ -6838,9 +6898,11 @@ mod tests {
                     created_at: now_iso(),
                     state: "available".to_string(),
                     credentials_per_voter: None,
+                    max_redemptions: None,
                     ballot_group: None,
                     redeemed_at: None,
                     redeemed_npub: None,
+                    redeemed_npubs: vec![],
                     revoked_at: None,
                 },
             )]),
@@ -6896,9 +6958,11 @@ mod tests {
                     created_at: now_iso(),
                     state: "available".to_string(),
                     credentials_per_voter: Some(2),
+                    max_redemptions: None,
                     ballot_group: None,
                     redeemed_at: None,
                     redeemed_npub: None,
+                    redeemed_npubs: vec![],
                     revoked_at: None,
                 },
             )]),
@@ -6934,6 +6998,91 @@ mod tests {
             &election,
             &second_credential_request
         ));
+    }
+
+    #[test]
+    fn private_invite_code_authorizes_each_claimant_up_to_its_limit() {
+        let code_hash = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let mut election = ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            eligibility_required: true,
+            bearer_invite_codes: HashMap::from([(
+                code_hash.to_string(),
+                BearerInviteCodeEntry {
+                    election_id: "q_worker_definition".to_string(),
+                    code_hash: code_hash.to_string(),
+                    created_at: now_iso(),
+                    state: "available".to_string(),
+                    credentials_per_voter: None,
+                    max_redemptions: Some(2),
+                    ballot_group: None,
+                    redeemed_at: None,
+                    redeemed_npub: None,
+                    redeemed_npubs: vec![],
+                    revoked_at: None,
+                },
+            )]),
+            ..ElectionRuntimeState::default()
+        };
+        let mut first_request = sample_request();
+        first_request.invite_code_hash = Some(code_hash.to_string());
+        let mut second_request = first_request.clone();
+        second_request.invited_npub =
+            "npub1secondsharedinvitee000000000000000000000000000000000000".to_string();
+        let mut third_request = first_request.clone();
+        third_request.invited_npub =
+            "npub1thirdsharedinvitee0000000000000000000000000000000000000".to_string();
+
+        assert!(matches!(
+            authorize_blind_request(&mut election, &first_request),
+            BlindRequestAuthorization::Authorized { .. }
+        ));
+        assert!(matches!(
+            authorize_blind_request(&mut election, &second_request),
+            BlindRequestAuthorization::Authorized { .. }
+        ));
+        assert_eq!(
+            authorize_blind_request(&mut election, &third_request),
+            BlindRequestAuthorization::Rejected
+        );
+        let entry = election
+            .bearer_invite_codes
+            .get(code_hash)
+            .expect("invite code");
+        assert_eq!(entry.state, "redeemed");
+        assert_eq!(entry.redeemed_npubs.len(), 2);
+    }
+
+    #[test]
+    fn private_invite_code_capacity_is_capped() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            ..ElectionRuntimeState::default()
+        };
+        merge_bearer_invite_codes(
+            &mut election,
+            &[BearerInviteCodeEntry {
+                election_id: "q_worker_definition".to_string(),
+                code_hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string(),
+                created_at: now_iso(),
+                state: "available".to_string(),
+                credentials_per_voter: None,
+                max_redemptions: Some(100_001),
+                ballot_group: None,
+                redeemed_at: None,
+                redeemed_npub: None,
+                redeemed_npubs: vec![],
+                revoked_at: None,
+            }],
+        );
+
+        assert_eq!(
+            election
+                .bearer_invite_codes
+                .get("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+                .and_then(|entry| entry.max_redemptions),
+            Some(10_000)
+        );
     }
 
     #[test]

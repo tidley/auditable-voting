@@ -994,12 +994,11 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(requestBlindBallot).not.toHaveBeenCalled();
   });
 
-  it("continues a private invite link already claimed by the same local identity", async () => {
+  it("allows a shared private invite claimant to retry after the link reaches capacity", async () => {
     const localVoterNpub = "npub1" + "w".repeat(58);
     const coordinatorNpub = "npub1" + "b".repeat(58);
     const inviteCode = "same-device-private-code";
     const codeHash = await hashQuestionnaireInviteCode(inviteCode);
-    const localClaimHash = await hashQuestionnairePrivateInviteClaim({ codeHash, npub: localVoterNpub });
     storeCachedQuestionnaireDefinition({
       schemaVersion: 1,
       eventType: "questionnaire_definition",
@@ -1037,7 +1036,9 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         state: "redeemed",
         createdAt: 20,
         coordinatorPubkey: coordinatorNpub,
-        redeemedNpubHash: localClaimHash,
+        redeemedNpubHash: null,
+        redemptionCount: 2,
+        maxRedemptions: 2,
         redeemedAt: "2026-06-12T12:00:00.000Z",
         revokedAt: null,
       },

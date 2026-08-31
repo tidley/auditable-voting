@@ -38,6 +38,13 @@ export type QuestionnaireVoterGroup = {
   label: string;
 };
 
+export const QUESTIONNAIRE_PRIVATE_INVITE_MAX_REDEMPTIONS = 10_000;
+
+export function normaliseQuestionnairePrivateInviteMaxRedemptions(value: unknown): number {
+  const count = typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : 1;
+  return Math.min(QUESTIONNAIRE_PRIVATE_INVITE_MAX_REDEMPTIONS, Math.max(1, count));
+}
+
 export function normaliseQuestionnaireScope(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -195,6 +202,8 @@ export type QuestionnairePrivateInviteStatusEvent = {
   createdAt: number;
   coordinatorPubkey: string;
   redeemedNpubHash?: string | null;
+  redemptionCount?: number;
+  maxRedemptions?: number;
   redeemedAt?: string | null;
   revokedAt?: string | null;
 };

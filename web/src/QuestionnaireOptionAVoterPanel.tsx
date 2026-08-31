@@ -2661,6 +2661,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       || null;
     const generalInviteUrl = buildGeneralPrivateInviteFallbackUrl(questionnaireId, coordinatorNpub);
     if (statusEvent.state === "redeemed") {
+      // Shared-invite status does not disclose every claimant, so let the organiser
+      // distinguish a claimant retry from a new request once its capacity is full.
+      if ((statusEvent.maxRedemptions ?? 1) > 1) {
+        setPrivateInviteBlock(null);
+        return { ok: true, claimedByThisDevice: false, statusKnown: true };
+      }
       const ownClaimHash = await hashQuestionnairePrivateInviteClaim({ codeHash, npub: voterNpub });
       if (ownClaimHash && statusEvent.redeemedNpubHash === ownClaimHash) {
         setPrivateInviteBlock(null);

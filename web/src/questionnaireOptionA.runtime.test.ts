@@ -1798,6 +1798,48 @@ describe("questionnaireOptionARuntime", () => {
     expect(listBlindRequests(electionId).some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
   });
 
+  it("issues one blind ballot to each distinct claimant until a shared private invite reaches its limit", async () => {
+    const inviteCode = "shared-private-invite-code";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addBearerInviteCode(inviteCodeHash, { maxRedemptions: 2 });
+
+    for (const npub of [otherNpub, "npub1sharedsecondruntime000000000000000000000000000"]) {
+      const voter = new QuestionnaireOptionAVoterRuntime(signer(npub), electionId);
+      voter.setBearerInviteCode(inviteCode);
+      await voter.loginWithSigner(null);
+      await voter.requestBlindBallot();
+      await coordinator.processPendingBlindRequests();
+      voter.refreshIssuanceAndAcceptance();
+      expect(voter.getSnapshot()?.credentialReady).toBe(true);
+    }
+
+    const redeemed = coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash];
+    expect(redeemed).toMatchObject({ state: "redeemed", maxRedemptions: 2 });
+    expect(redeemed?.redeemedNpubs).toHaveLength(2);
+
+    const extraVoter = new QuestionnaireOptionAVoterRuntime(
+      signer("npub1sharedthirdruntime0000000000000000000000000000"),
+      electionId,
+    );
+    extraVoter.setBearerInviteCode(inviteCode);
+    await extraVoter.loginWithSigner(null);
+    await extraVoter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
+    expect(coordinator.getSnapshot()?.whitelist["npub1sharedthirdruntime0000000000000000000000000000"]).toBeUndefined();
+  });
+
+  it("caps private invite capacity at 10,000 claimants", async () => {
+    const inviteCodeHash = await hashQuestionnaireInviteCode("capped-private-invite-code");
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+
+    const invite = coordinator.addBearerInviteCode(inviteCodeHash, { maxRedemptions: 100_001 });
+
+    expect(invite.maxRedemptions).toBe(10_000);
+  });
+
   it("restores a private invite claimant from its whitelist invite-code hash", async () => {
     const inviteCode = "private-invite-code-recovery";
     const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);

@@ -40,6 +40,7 @@
     "@cloudflare/blindrsa-ts": "^0.4.5",
     "@noble/hashes": "^2.0.1",
     "@scure/bip39": "^2.0.1",
+    "@sjmc11/tourguidejs": "^0.0.27",
     "@tanstack/react-table": "^8.21.3",
     "fflate": "^0.8.3",
     "jsqr": "^1.4.0",

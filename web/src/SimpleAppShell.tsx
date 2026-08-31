@@ -1173,7 +1173,13 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           showSectionTabs={false}
         />
       ) : role === 'coordinator' ? (
-        <SimpleCoordinatorApp accountMenu={accountMenuControl} />
+        <SimpleCoordinatorApp
+          accountMenu={accountMenuControl}
+          onOpenObserver={() => {
+            setAuditorPage("gallery");
+            activateRole("auditor");
+          }}
+        />
       ) : auditorPage === "relays" ? (
         <main className='simple-voter-shell simple-auditor-shell simple-relays-shell'>
           <SimpleRelayPanel standalone />

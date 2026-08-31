@@ -158,6 +158,7 @@ import {
   normaliseQuestionnaireAllowedScopes,
   normaliseQuestionnaireBallotGroup,
   normaliseQuestionnaireCredentialsPerVoter,
+  normaliseQuestionnairePrivateInviteMaxRedemptions,
   questionBallotCredentialScope,
   questionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
@@ -4937,6 +4938,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
   addBearerInviteCode(codeHash: string, options?: {
     credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
     ballotGroup?: string | null;
+    maxRedemptions?: number;
   }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
@@ -4955,6 +4957,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
       createdAt: existing?.createdAt ?? nowIso(),
       state: existing?.state === "revoked" ? "revoked" : "available",
       credentialsPerVoter: normaliseQuestionnaireCredentialsPerVoter(options?.credentialsPerVoter ?? existing?.credentialsPerVoter),
+      maxRedemptions: normaliseQuestionnairePrivateInviteMaxRedemptions(
+        options?.maxRedemptions ?? existing?.maxRedemptions,
+      ),
       ballotGroup: options?.ballotGroup !== undefined
         ? normaliseQuestionnaireBallotGroup(options.ballotGroup)
         : existing?.ballotGroup ?? null,
@@ -4963,6 +4968,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       markedUsedAt: existing?.markedUsedAt ?? null,
       redeemedAt: existing?.redeemedAt ?? null,
       redeemedNpub: existing?.redeemedNpub ?? null,
+      redeemedNpubs: existing?.redeemedNpubs ?? (existing?.redeemedNpub ? [existing.redeemedNpub] : []),
       revokedAt: existing?.revokedAt ?? null,
     };
     this.state = {
@@ -5160,8 +5166,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!codeEntry || codeEntry.electionId !== this.electionId || codeEntry.state === "revoked") {
       return state;
     }
-    const redeemedNpub = codeEntry.redeemedNpub?.trim() ?? "";
-    if (codeEntry.state === "redeemed" && redeemedNpub && redeemedNpub !== request.invitedNpub) {
+    const redeemedNpubs = [...new Set([
+      ...(codeEntry.redeemedNpubs ?? []),
+      ...(codeEntry.redeemedNpub ? [codeEntry.redeemedNpub] : []),
+    ].map((npub) => npub.trim()).filter(Boolean))];
+    const maxRedemptions = normaliseQuestionnairePrivateInviteMaxRedemptions(codeEntry.maxRedemptions);
+    if (!redeemedNpubs.includes(request.invitedNpub) && redeemedNpubs.length >= maxRedemptions) {
       return state;
     }
 
@@ -5188,11 +5198,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
         claimState: "whitelisted",
       };
 
+    const nextRedeemedNpubs = redeemedNpubs.includes(request.invitedNpub)
+      ? redeemedNpubs
+      : [...redeemedNpubs, request.invitedNpub];
     const redeemedCodeEntry: BearerInviteCodeEntry = {
       ...codeEntry,
-      state: "redeemed",
+      state: nextRedeemedNpubs.length >= maxRedemptions ? "redeemed" : "available",
       redeemedAt,
-      redeemedNpub: request.invitedNpub,
+      redeemedNpub: maxRedemptions === 1 ? request.invitedNpub : null,
+      redeemedNpubs: nextRedeemedNpubs,
+      maxRedemptions,
     };
 
     return {
@@ -5224,8 +5239,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (codeEntry.state === "revoked") {
       return "revoked";
     }
-    const redeemedNpub = codeEntry.redeemedNpub?.trim() ?? "";
-    if (codeEntry.state === "redeemed" && redeemedNpub && redeemedNpub !== request.invitedNpub) {
+    const redeemedNpubs = [...new Set([
+      ...(codeEntry.redeemedNpubs ?? []),
+      ...(codeEntry.redeemedNpub ? [codeEntry.redeemedNpub] : []),
+    ].map((npub) => npub.trim()).filter(Boolean))];
+    if (
+      !redeemedNpubs.includes(request.invitedNpub)
+      && redeemedNpubs.length >= normaliseQuestionnairePrivateInviteMaxRedemptions(codeEntry.maxRedemptions)
+    ) {
       return "redeemed";
     }
     return null;
