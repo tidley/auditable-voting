@@ -20,6 +20,7 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDisplay";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
+import ThemeToggle from "./ThemeToggle";
 import {
   clearQuestionnaireInviteCodeUrlContext,
   hasVoterInviteContextInUrl,
@@ -740,6 +741,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   if (showGateway) {
     return (
       <div className='simple-app-shell'>
+        <ThemeToggle />
         <section className='simple-login-gateway' aria-label='Login and role selection'>
           <div className='simple-login-brand'>
             <div className='simple-login-brand-mark' aria-hidden='true'>
@@ -1130,6 +1132,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   return (
     <div className={`simple-app-shell${role === "coordinator" ? " simple-app-shell-coordinator" : ""}`}>
+      <ThemeToggle />
       {role === "coordinator" ? null : (
         <div className={`simple-role-switch-wrap${role === "auditor" ? " simple-auditor-topbar-wrap" : ""}`}>
           <div className='simple-role-switch-topbar'>

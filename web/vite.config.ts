@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 
@@ -28,6 +28,17 @@ export default defineConfig(({ mode }) => ({
     }
     : undefined,
   plugins: [react(), wasm()],
+  test: {
+    // Playwright owns browser specs under web/e2e; Vitest must only discover
+    // unit and component tests under src.
+    include: ["src/**/*.test.{ts,tsx}"],
+    setupFiles: ["./src/test/setup.ts"],
+    environment: "node",
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json", "html"],
+    },
+  },
   build: {
     target: "es2022",
     rollupOptions: {
