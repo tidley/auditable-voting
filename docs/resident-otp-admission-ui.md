@@ -25,10 +25,10 @@ displayed to the organiser once, who hands them to residents out of band.
    retained for verification. The plaintext code is displayed in the
    "Issued codes" panel with a copy button and the issue time, and is
    never re-derivable from the stored hash. Re-generating replaces the
-   entry. Note: codes and hashes live in component state only — switching
-   coordinator tabs or uploading a new roster discards them; the section
-   holds them in browser memory for its mounted lifetime and sends nothing
-   to any server.
+   entry. The salted hash is persisted to `localStorage`
+   (`otp-admission-roster:<electionId>`) so the resident can redeem their
+   code after this tab is closed; only the hash is stored, never the
+   plaintext code, and nothing is sent to any server.
 3. **Verify** — the organiser selects a resident, enters the 6-digit code,
    and submits. The form reports one of: success, incorrect code,
    rate-limited (after `MAX_OTP_ATTEMPTS` failures), expired
@@ -39,8 +39,9 @@ displayed to the organiser once, who hands them to residents out of band.
 ## Security properties
 
 - Codes are never sent anywhere; the salted `saltHex:hashHex` values used
-  for verification are held in browser memory only while the section is
-  mounted (no persistence, no network).
+  for verification are persisted in `localStorage` (never plaintext, never
+  the code itself) so a resident can redeem their code hours later. No
+  network is involved.
 - The plaintext code remains visible in the Issued codes panel until
   replaced or the roster changes — it is a demo hand-off channel, not a
   delivery channel. Clipboard copy failure is silent (browser denies or

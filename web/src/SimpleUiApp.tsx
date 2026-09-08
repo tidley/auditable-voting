@@ -3,6 +3,7 @@ import { generateSecretKey, getPublicKey, nip19, type NostrEvent } from "nostr-t
 import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireVoterPanel from "./QuestionnaireVoterPanel";
+import ResidentOtpEntry from "./ResidentOtpEntry";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
@@ -469,6 +470,9 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const [autoRequestBallotFromUrl, setAutoRequestBallotFromUrl] = useState(initialAutoRequestBallotFromUrl);
   const [linkedPrivateInviteCode, setLinkedPrivateInviteCode] = useState(initialLinkedPrivateInviteCode);
   const [linkedCoordinatorNpub, setLinkedCoordinatorNpub] = useState(initialLinkedCoordinatorNpub);
+  // Whether this voter has redeemed a resident OTP this session. Gates the
+  // ballot/private-invite panel so a resident cannot vote until admitted.
+  const [residentAdmitted, setResidentAdmitted] = useState(false);
   const urlCoordinatorTargets = useMemo(() => sanitizeCoordinatorNpubs([linkedCoordinatorNpub]), [linkedCoordinatorNpub]);
   const shouldHydrateSavedManualCoordinators = useMemo(
     () => hasVoterInviteContextInUrl() && urlCoordinatorTargets.length === 0 && !linkedQuestionnaireId && !linkedPrivateInviteCode,
@@ -3396,7 +3400,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
           hidden={activeTab !== 'vote'}
           aria-hidden={activeTab !== 'vote'}
         >
-            {identityReady ? <QuestionnaireVoterPanel
+            <ResidentOtpEntry voterNpub={activeVoterNpub} onAdmitted={() => setResidentAdmitted(true)} />
+            {identityReady && !residentAdmitted ? (
+              <p className='simple-voter-note' aria-label='Admission required'>
+                Redeem your one-time code above to unlock your ballot and private invite.
+              </p>
+            ) : null}
+            {identityReady && residentAdmitted ? <QuestionnaireVoterPanel
               onContextChange={handleQuestionnaireContextChange}
               participationHistory={questionnaireParticipationHistory}
               onParticipationHistoryChange={setQuestionnaireParticipationHistory}

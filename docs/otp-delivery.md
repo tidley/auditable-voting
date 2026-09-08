@@ -55,8 +55,9 @@ the manual path available as a fallback.
 ## Security notes
 
 - The plaintext name+code CSV is **sensitive** — delete it after distribution.
-- Codes and hashes live in component state only; nothing is sent to any
-  server from the browser.
+- Codes are never stored or sent anywhere from the browser. Only the salted
+  `saltHex:hashHex` verification value is persisted (`otp-admission-roster:`),
+  never the plaintext code.
 - The email channel ships **no auth or send code** in the browser bundle —
   that would be dead, security-sensitive code. It is a descriptor only.
 - Admission codes use a 24-hour TTL (`ADMISSION_TTL_MS`) because they are
