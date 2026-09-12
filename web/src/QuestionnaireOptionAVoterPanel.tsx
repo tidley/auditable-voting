@@ -37,6 +37,9 @@ import {
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
 } from "./questionnaireProtocol";
+import { resolveLocalised } from "./i18n/resolveLocale";
+import { useLocaleSafe } from "./i18n/LanguageContext";
+import type { SupportedLocale } from "./i18n/types";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import TokenFingerprint from "./TokenFingerprint";
@@ -300,15 +303,17 @@ function credentialIndexFromSubmission(key: string, submission: BallotSubmission
   return keyedCredentialIndex ? Math.max(1, Math.floor(Number(keyedCredentialIndex))) : 1;
 }
 
-function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
+function mapDefinitionQuestions(definition: QuestionnaireDefinition, locale: SupportedLocale) {
   return definition.questions.map((question) => ({
     questionId: question.questionId,
     required: question.required,
-    prompt: question.prompt,
+    prompt: resolveLocalised(question.prompt, locale),
     requiredScope: questionRequiredScope(question),
     ballotGroup: normaliseQuestionnaireBallotGroup(question.ballotGroup),
     type: question.type,
-    options: question.type === "multiple_choice" || question.type === "rank" ? question.options : undefined,
+    options: question.type === "multiple_choice" || question.type === "rank"
+      ? question.options.map((option) => ({ ...option, label: resolveLocalised(option.label, locale) }))
+      : undefined,
     multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
     minimumRanked: question.type === "rank" ? question.minimumRanked : undefined,
     maxLength: question.type === "free_text" ? question.maxLength : undefined,
@@ -371,8 +376,8 @@ function cacheDefinitionForVoting(
   const closed = Number.isFinite(storedDefinition.closeAt) && storedDefinition.closeAt <= Math.floor(Date.now() / 1000);
   upsertElectionSummary({
     electionId,
-    title: storedDefinition.title || existing?.title || "Questionnaire",
-    description: storedDefinition.description ?? existing?.description ?? "",
+    title: resolveLocalised(storedDefinition.title, "en") || existing?.title || "Questionnaire",
+    description: resolveLocalised(storedDefinition.description ?? "", "en") || existing?.description || "",
     state: existing?.state ?? (closed ? "closed" : "open"),
     openedAt: Number.isFinite(storedDefinition.openAt) ? new Date(storedDefinition.openAt * 1000).toISOString() : existing?.openedAt ?? null,
     closedAt: Number.isFinite(storedDefinition.closeAt) ? new Date(storedDefinition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
@@ -403,8 +408,8 @@ function buildInviteFromPublicDefinition(
     type: "election_invite",
     schemaVersion: 1,
     electionId,
-    title: definition.title || "Questionnaire",
-    description: definition.description ?? "",
+    title: resolveLocalised(definition.title, "en") || "Questionnaire",
+    description: resolveLocalised(definition.description ?? "", "en"),
     voteUrl: typeof window === "undefined" ? "" : window.location.href,
     invitedNpub: invitedNpub.trim(),
     coordinatorNpub,
@@ -466,11 +471,11 @@ function isLikelyMobileClient() {
 const AUTO_INVITE_REFRESH_INTERVAL_MS = 45_000;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
-  const fromDefinition = invite.definition?.title?.trim() ?? "";
+  const fromDefinition = resolveLocalised(invite.definition?.title ?? "", "en").trim();
   if (fromDefinition) {
     return fromDefinition;
   }
-  const fromCache = readCachedQuestionnaireDefinition(invite.electionId)?.title?.trim() ?? "";
+  const fromCache = resolveLocalised(readCachedQuestionnaireDefinition(invite.electionId)?.title ?? "", "en").trim();
   if (fromCache) {
     return fromCache;
   }
@@ -804,6 +809,7 @@ function scopedBallotScopeForQuestion(
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
   const displayMode = props.displayMode ?? "vote";
   const settingsMode = displayMode === "settings";
+  const { locale } = useLocaleSafe();
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [privateInviteBlock, setPrivateInviteBlock] = useState<PrivateInviteBlockState | null>(null);
@@ -1741,10 +1747,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ?? readCachedQuestionnaireDefinition(electionId);
     if (localDefinition) {
       cacheDefinitionForVoting(localDefinition);
-      setQuestionnaireTitle(localDefinition.title || "Questionnaire");
-      setQuestionnaireDescription(localDefinition.description || "");
+      setQuestionnaireTitle(resolveLocalised(localDefinition.title, locale) || "Questionnaire");
+      setQuestionnaireDescription(resolveLocalised(localDefinition.description ?? "", locale));
       setQuestionnaireDefinition(localDefinition);
-      setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(localDefinition), activeBallotGroup));
+      setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(localDefinition, locale), activeBallotGroup));
     }
     let cancelled = false;
     const definitionRelays = mergeQuestionnaireRelayHints(
@@ -1765,16 +1771,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           return;
         }
         cacheDefinitionForVoting(latest);
-        setQuestionnaireTitle(latest.title || "Questionnaire");
-        setQuestionnaireDescription(latest.description || "");
+        setQuestionnaireTitle(resolveLocalised(latest.title, locale) || "Questionnaire");
+        setQuestionnaireDescription(resolveLocalised(latest.description ?? "", locale));
         setQuestionnaireDefinition(latest);
-        setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(latest), activeBallotGroup));
+        setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(latest, locale), activeBallotGroup));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [activeBallotGroup, activeInvite, contextPendingInvites, electionId, inviteContext.invite, snapshot?.blindIssuance, snapshot?.inviteMessage]);
+  }, [activeBallotGroup, activeInvite, contextPendingInvites, electionId, inviteContext.invite, locale, snapshot?.blindIssuance, snapshot?.inviteMessage]);
 
   useEffect(() => {
     const currentId = electionId.trim();
@@ -3422,13 +3428,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       || signedInNpub.trim()
       || (snapshot?.electionId === id ? snapshot.invitedNpub?.trim() : "")
       || "";
-    const title = definition?.title?.trim() || summary?.title?.trim() || id;
+    const title = resolveLocalised(definition?.title ?? "", "en").trim() || summary?.title?.trim() || id;
     return {
       type: "election_invite",
       schemaVersion: 1,
       electionId: id,
       title,
-      description: definition?.description ?? summary?.description ?? "",
+      description: resolveLocalised(definition?.description ?? "", "en") || (summary?.description ?? ""),
       voteUrl: typeof window === "undefined" ? "" : window.location.href,
       invitedNpub,
       coordinatorNpub,

@@ -21,6 +21,11 @@ import { deriveActorDisplayId, formatQuestionnaireDisplayId } from "./actorDispl
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import { UiButton, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import ThemeToggle from "./ThemeToggle";
+import { LanguageProvider } from "./i18n/LanguageContext";
+import { LanguageSwitcher } from "./i18n/LanguageSwitcher";
+import { useLocale } from "./i18n/LanguageContext";
+import { t, type UiStringKey } from "./i18n/uiStrings";
+import { type SupportedLocale } from "./i18n/types";
 import {
   clearQuestionnaireInviteCodeUrlContext,
   hasVoterInviteContextInUrl,
@@ -31,27 +36,31 @@ type SimpleRole = "voter" | "coordinator" | "auditor";
 type AuditorPage = "gallery" | "relays";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
-const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
-  { role: "auditor", label: "Observer" },
-  { role: "coordinator", label: "Organiser" },
-  { role: "voter", label: "Voter" },
+const ROLE_OPTIONS: Array<{ role: SimpleRole; labelKey: UiStringKey }> = [
+  { role: "auditor", labelKey: "roleObserver" },
+  { role: "coordinator", labelKey: "roleOrganiser" },
+  { role: "voter", labelKey: "roleVoter" },
 ];
-const ACCOUNT_MENU_ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
-  { role: "voter", label: "Voter" },
-  { role: "coordinator", label: "Organiser" },
-  { role: "auditor", label: "Observer" },
+const ACCOUNT_MENU_ROLE_OPTIONS: Array<{ role: SimpleRole; labelKey: UiStringKey }> = [
+  { role: "voter", labelKey: "roleVoter" },
+  { role: "coordinator", labelKey: "roleOrganiser" },
+  { role: "auditor", labelKey: "roleObserver" },
 ];
-const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string; icon: string }> = [
-  { tab: "configure", label: "Find organiser", icon: "join" },
-  { tab: "vote", label: "Vote", icon: "vote" },
-  { tab: "messages", label: "Messages", icon: "messages" },
-  { tab: "settings", label: "Settings", icon: "settings" },
+const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; labelKey: UiStringKey; icon: string }> = [
+  { tab: "configure", labelKey: "tabFindOrganiser", icon: "join" },
+  { tab: "vote", labelKey: "tabVote", icon: "vote" },
+  { tab: "paperBallot", labelKey: "tabEnterPaperBallot", icon: "clipboard" },
+  { tab: "messages", labelKey: "tabMessages", icon: "messages" },
+  { tab: "settings", labelKey: "tabSettings", icon: "settings" },
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
 const PUBLIC_LINK_FRESH_VOTER_PARAM = "fresh_voter";
 const PUBLIC_LINK_FRESH_VOTER_STATE = "auditableVotingFreshVoterCreated";
 
 function voterTabIconName(icon: string): UiIconName {
+  if (icon === "clipboard") {
+    return "clipboard";
+  }
   if (icon === "messages") {
     return "message";
   }
@@ -191,8 +200,9 @@ function returnToLandingPage() {
   window.location.assign(getLandingPageUrl());
 }
 
-function roleLabel(role: SimpleRole) {
-  return ROLE_OPTIONS.find((entry) => entry.role === role)?.label ?? "Observer";
+function roleLabel(role: SimpleRole, locale: SupportedLocale) {
+  const entry = ROLE_OPTIONS.find((entry) => entry.role === role);
+  return t(entry?.labelKey ?? "roleObserver", locale);
 }
 
 function isSimpleActorRole(role: SimpleRole): role is SimpleActorRole {
@@ -290,7 +300,16 @@ function isMobileBrowser() {
   return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || "");
 }
 
-export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShellProps) {
+export default function SimpleAppShell(props: SimpleAppShellProps) {
+  return (
+    <LanguageProvider>
+      <SimpleAppShellInner {...props} />
+    </LanguageProvider>
+  );
+}
+
+function SimpleAppShellInner({ initialRole = "auditor" }: SimpleAppShellProps) {
+  const { locale } = useLocale();
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [voterTab, setVoterTab] = useState<VoterTab>(() => (readLinkedQuestionnaireIdFromUrl() ? "vote" : "configure"));
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -328,7 +347,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       ? accountIdentityNpub
         ? `Open voter profile menu for ${accountIdentityLabel}${voterMessagesUnread ? ", new message" : ""}`
         : `Open voter profile menu${voterMessagesUnread ? ", new message" : ""}`
-      : "Menu";
+      : t("menuLabel", locale);
   const isPublicVoterInvite = role === "voter" && hasVoterInviteContextInUrl();
   const voterSectionOptions = useMemo(() => (
     isPublicVoterInvite
@@ -553,11 +572,11 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     writeRoleToUrl(role);
   }, [role, showGateway]);
 
-  const gatewayRoleTitle = useMemo(() => roleLabel(gatewayRole), [gatewayRole]);
+  const gatewayRoleTitle = useMemo(() => roleLabel(gatewayRole, locale), [gatewayRole, locale]);
   const currentRoleSummary = useMemo(() => (
-    isSimpleActorRole(role) ? `${roleLabel(role)} ${accountIdentityLabel}` : roleLabel(role)
-  ), [accountIdentityLabel, role]);
-  const newIdentityConfirmLabel = newIdentityConfirmRole ? roleLabel(newIdentityConfirmRole) : "";
+    isSimpleActorRole(role) ? `${roleLabel(role, locale)} ${accountIdentityLabel}` : roleLabel(role, locale)
+  ), [accountIdentityLabel, role, locale]);
+  const newIdentityConfirmLabel = newIdentityConfirmRole ? roleLabel(newIdentityConfirmRole, locale) : "";
   const newIdentityConfirmShortId = newIdentityConfirmRole === role && accountIdentityNpub
     ? deriveActorDisplayId(accountIdentityNpub)
     : "";
@@ -741,7 +760,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   if (showGateway) {
     return (
       <div className='simple-app-shell'>
-        <ThemeToggle />
+        <div className='simple-shell-controls'>
+          <LanguageSwitcher />
+          <ThemeToggle />
+        </div>
         <section className='simple-login-gateway' aria-label='Login and role selection'>
           <div className='simple-login-brand'>
             <div className='simple-login-brand-mark' aria-hidden='true'>
@@ -752,7 +774,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             </div>
           </div>
 
-          <label className='simple-voter-label simple-login-role-label'>Select role</label>
+          <label className='simple-voter-label simple-login-role-label'>{t("selectRoleLabel", locale)}</label>
           <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
             {ROLE_OPTIONS.map((option) => (
               <UiButton
@@ -763,7 +785,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 className={`simple-role-switch-button${gatewayRole === option.role ? " is-active" : ""}`}
                 onPress={() => setGatewayRole(option.role)}
               >
-                <span>{option.label}</span>
+                <span>{t(option.labelKey, locale)}</span>
               </UiButton>
             ))}
           </div>
@@ -775,7 +797,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           </div>
 
           <div className='simple-login-existing'>
-            <p className='simple-login-existing-title'>Or login using existing profile:</p>
+            <p className='simple-login-existing-title'>{t("orLoginExisting", locale)}</p>
             <div className='simple-login-actions simple-login-existing-actions'>
               <UiButton
                 icon='login'
@@ -806,7 +828,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                   setGatewayNsecOpen(false);
                 }}
               >
-                Advanced
+                {t("advancedLabel", locale)}
               </UiButton>
             </div>
           </div>
@@ -814,7 +836,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           {gatewayNsecOpen ? (
             <section id='gateway-nsec-panel' className='simple-login-panel' aria-label='nsec login'>
               <UiTextField
-                label='Enter nsec'
+                label={t("enterNsecLabel", locale)}
                 inputClassName='simple-voter-input'
                 inputProps={{
                   id: 'gateway-nsec',
@@ -842,14 +864,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                   className='simple-voter-secondary'
                   onPress={() => void copyPreparedGatewayValue("nostr-connect")}
                 >
-                  {isCopyLabelActive("gateway-nostr-connect") ? "Copied" : "Copy nostr-connect URL"}
+                  {isCopyLabelActive("gateway-nostr-connect") ? t("actionCopied", locale) : t("copyNostrConnectUrl", locale)}
                 </UiButton>
                 <UiButton
                   icon={isCopyLabelActive("gateway-nsec-bunker") ? "check" : "copy"}
                   className='simple-voter-secondary'
                   onPress={() => void copyPreparedGatewayValue("nsec-bunker")}
                 >
-                  {isCopyLabelActive("gateway-nsec-bunker") ? "Copied" : "Copy nsec-bunker URL"}
+                  {isCopyLabelActive("gateway-nsec-bunker") ? t("actionCopied", locale) : t("copyNsecBunkerUrl", locale)}
                 </UiButton>
                 <UiButton
                   icon='qr'
@@ -875,7 +897,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         </section>
         <footer className='simple-app-version' aria-label='App version'>
           <span>v{SIMPLE_APP_VERSION}</span>
-          <a href='project-explainer.html' target='_blank' rel='noopener noreferrer'>How it works</a>
+          <a href='project-explainer.html' target='_blank' rel='noopener noreferrer'>{t("howItWorks", locale)}</a>
         </footer>
       </div>
     );
@@ -897,10 +919,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         {role === "coordinator" ? (
           <>
             <span className='simple-account-profile-copy'>
-              <span className='simple-account-menu-kicker'>Organiser</span>
+              <span className='simple-account-menu-kicker'>{t("roleOrganiser", locale)}</span>
               <span className='simple-account-profile-title'>{accountIdentityLabel}</span>
               <span className='simple-account-profile-npub' title={accountIdentityNpub || undefined}>
-                {accountIdentityNpub || "Identity loading"}
+                {accountIdentityNpub || t("identityLoading", locale)}
               </span>
             </span>
           </>
@@ -910,7 +932,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             <span className='simple-account-menu-trigger-text'>{accountIdentityLabel}</span>
           </>
         ) : (
-          "Menu"
+          t("menuLabel", locale)
         )}
       </UiButton>
       {accountMenuOpen ? (
@@ -924,27 +946,27 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             id='simple-app-menu'
             className='simple-account-menu simple-main-menu'
             role='menu'
-            aria-label='App menu'
+            aria-label={t("appMenuLabel", locale)}
           >
           <UiButton
             icon='cancel'
             iconOnly
             className='simple-account-menu-close'
-            aria-label='Close menu'
+            aria-label={t("closeMenuLabel", locale)}
             onPress={() => setAccountMenuOpen(false)}
           />
           <p
             className='simple-account-menu-title'
             data-tooltip={accountIdentityNpub ? `Full identity: ${accountIdentityNpub}` : undefined}
           >
-            {isSimpleActorRole(role) ? accountIdentityLabel : roleLabel(role)}
+            {isSimpleActorRole(role) ? accountIdentityLabel : roleLabel(role, locale)}
           </p>
           {role === "voter" ? (
             <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
               <div
                 className={`simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch${isPublicVoterInvite ? " is-public-invite" : ""}`}
                 role='tablist'
-                aria-label='Main actions'
+                aria-label={t("mainActionsLabel", locale)}
               >
                 {voterSectionOptions.map((option) => (
                   <UiButton
@@ -961,7 +983,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       setAccountMenuOpen(false);
                     }}
                   >
-                    <span>{option.label}</span>
+                    <span>{t(option.labelKey, locale)}</span>
                   </UiButton>
                 ))}
               </div>
@@ -973,7 +995,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               <div
                 className='simple-role-switch simple-role-switch-menu-inline simple-auditor-menu-switch'
                 role='tablist'
-                aria-label='Observer pages'
+                aria-label={t("observerPagesLabel", locale)}
               >
                 <UiButton
                   icon='view'
@@ -985,7 +1007,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     setAccountMenuOpen(false);
                   }}
                 >
-                  <span>Questionnaire Results</span>
+                  <span>{t("questionnaireResultsLabel", locale)}</span>
                 </UiButton>
                 <UiButton
                   icon='share'
@@ -997,14 +1019,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     setAccountMenuOpen(false);
                   }}
                 >
-                  <span>Relays</span>
+                  <span>{t("relaysLabel", locale)}</span>
                 </UiButton>
               </div>
             </div>
           ) : null}
           {role === "auditor" && auditorPage === "gallery" ? <div id='simple-auditor-menu-filters' role='none' /> : null}
           <div className='simple-account-menu-section' role='none'>
-            <p className='simple-account-menu-kicker'>Change View</p>
+            <p className='simple-account-menu-kicker'>{t("changeViewLabel", locale)}</p>
             <div
               className='simple-role-switch simple-role-switch-menu-inline'
               role='tablist'
@@ -1021,7 +1043,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     void handleRoleSelect(option.role);
                   }}
                 >
-                  <span>{option.label}</span>
+                  <span>{t(option.labelKey, locale)}</span>
                 </UiButton>
               ))}
             </div>
@@ -1029,7 +1051,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           {isSimpleActorRole(role) && !(role === "voter" && isPublicVoterInvite) ? (
             <>
               <div className='simple-account-menu-section simple-account-menu-identity' role='none'>
-                <p className='simple-account-menu-kicker'>Identity</p>
+                <p className='simple-account-menu-kicker'>{t("identityLabel", locale)}</p>
                 {accountIdentityNpub ? (
                   <div className='simple-account-menu-identity-grid' role='none'>
                     <UiButton
@@ -1041,7 +1063,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                         setAccountIdentityDialogOpen("qr");
                       }}
                     >
-                      <span>QR code</span>
+                      <span>{t("qrCodeLabel", locale)}</span>
                     </UiButton>
                     <UiButton
                       icon={isCopyLabelActive("account-identity") ? "check" : "copy"}
@@ -1051,7 +1073,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                         void copyValueWithFeedback(accountIdentityNpub, "account-identity");
                       }}
                     >
-                      <span>{isCopyLabelActive("account-identity") ? "Copied" : "Copy identity"}</span>
+                      <span>{isCopyLabelActive("account-identity") ? t("actionCopied", locale) : t("copyIdentity", locale)}</span>
                     </UiButton>
                     <UiButton
                       icon='add'
@@ -1062,7 +1084,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                         setNewIdentityConfirmRole(role);
                       }}
                     >
-                      <span>New identity</span>
+                      <span>{t("newIdentityLabel", locale)}</span>
                     </UiButton>
                   </div>
                 ) : null}
@@ -1073,7 +1095,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             </>
           ) : null}
           <div className='simple-account-menu-section simple-account-menu-about-section' role='none'>
-            <p className='simple-account-menu-kicker'>About</p>
+            <p className='simple-account-menu-kicker'>{t("aboutLabel", locale)}</p>
             <div className='simple-account-menu-about-row' role='none'>
               <a
                 className='simple-account-menu-button simple-account-menu-link'
@@ -1084,7 +1106,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 onClick={() => setAccountMenuOpen(false)}
               >
                 <MenuIcon name='info' />
-                <span>How it works</span>
+                <span>{t("howItWorks", locale)}</span>
               </a>
               <a
                 className='simple-account-menu-button simple-account-menu-link'
@@ -1095,7 +1117,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 onClick={() => setAccountMenuOpen(false)}
               >
                 <MenuIcon name='book' />
-                <span>Demo guide</span>
+                <span>{t("demoGuideLabel", locale)}</span>
               </a>
               <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
             </div>
@@ -1109,7 +1131,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 onPress={() => {
                   if (
                     typeof window !== "undefined"
-                    && !window.confirm("Sign out and return to the landing page?")
+                    && !window.confirm(t("signOutConfirm", locale))
                   ) {
                     return;
                   }
@@ -1120,7 +1142,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                   }
                 }}
               >
-                <span>Sign out</span>
+                <span>{t("actionSignOut", locale)}</span>
               </UiButton>
             </div>
           ) : null}
@@ -1132,7 +1154,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   return (
     <div className={`simple-app-shell${role === "coordinator" ? " simple-app-shell-coordinator" : ""}`}>
-      <ThemeToggle />
+      <div className='simple-shell-controls'>
+        <LanguageSwitcher />
+        <ThemeToggle />
+      </div>
       {role === "coordinator" ? null : (
         <div className={`simple-role-switch-wrap${role === "auditor" ? " simple-auditor-topbar-wrap" : ""}`}>
           <div className='simple-role-switch-topbar'>
@@ -1154,7 +1179,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 className='simple-role-switch-toggle simple-current-role-summary simple-current-role-button'
                 onPress={() => setAccountIdentityDialogOpen("qr")}
                 aria-haspopup='dialog'
-                aria-label={`Show full ${roleLabel(role).toLowerCase()} npub QR`}
+                aria-label={`Show full ${roleLabel(role, locale).toLowerCase()} npub QR`}
               >
                 {currentRoleSummary}
               </UiButton>
@@ -1199,7 +1224,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           className='simple-identity-qr-overlay simple-account-identity-overlay'
           role='dialog'
           aria-modal='true'
-          aria-label={`${roleLabel(role)} npub QR code`}
+          aria-label={`${roleLabel(role, locale)} npub QR code`}
           onClick={() => setAccountIdentityDialogOpen(null)}
         >
           <UiButton
@@ -1215,7 +1240,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             onClick={(event) => event.stopPropagation()}
           >
             <div className='simple-account-identity-overlay-copy'>
-              <p className='simple-account-menu-kicker'>{roleLabel(role)} identity</p>
+              <p className='simple-account-menu-kicker'>{roleLabel(role, locale)} identity</p>
               <h2 className='simple-voter-section-title'>
                 QR code
               </h2>
@@ -1225,7 +1250,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               <img
                 className='simple-identity-qr-overlay-image simple-account-identity-overlay-image'
                 src={accountIdentityQrSrc}
-                alt={`QR code for ${roleLabel(role)} npub`}
+                alt={`QR code for ${roleLabel(role, locale)} npub`}
               />
             ) : (
               <div
@@ -1299,7 +1324,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                   });
                 }}
               >
-                {isCopyLabelActive("new-identity-backup") ? "Downloaded" : "Download backup"}
+                {isCopyLabelActive("new-identity-backup") ? t("actionDownloaded", locale) : t("actionDownloadBackup", locale)}
               </UiButton>
               <UiButton
                 icon='key'

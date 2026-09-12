@@ -2,6 +2,7 @@ import type {
   QuestionnaireDefinition,
   QuestionnaireDefinitionReference,
 } from "./questionnaireProtocol";
+import { canonicaliseQuestionnaireDefinitionText } from "./questionnaireProtocol";
 import { sha256HexRust } from "./wasm/auditableVotingCore";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue | undefined };
@@ -29,7 +30,10 @@ function stableJsonStringify(value: JsonValue | undefined): string {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`).join(",")}}`;
 }
 export function questionnaireDefinitionHash(definition: QuestionnaireDefinition) {
-  return sha256HexRust(stableJsonStringify(definition as unknown as JsonValue));
+  // Hash the canonical multilingual shape so a definition that was built with
+  // English-only plain strings and the same definition after its text fields
+  // were upgraded to `LocalisedText` produce the same hash.
+  return sha256HexRust(stableJsonStringify(canonicaliseQuestionnaireDefinitionText(definition) as unknown as JsonValue));
 }
 
 export function questionnaireDefinitionEventHash(content: string) {
@@ -37,7 +41,7 @@ export function questionnaireDefinitionEventHash(content: string) {
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
     throw new Error("Questionnaire definition event content must be a JSON object.");
   }
-  return sha256HexRust(stableJsonStringify(parsed));
+  return sha256HexRust(stableJsonStringify(canonicaliseQuestionnaireDefinitionText(parsed)));
 }
 
 export function selectNewestMatchingQuestionnaireDefinition(

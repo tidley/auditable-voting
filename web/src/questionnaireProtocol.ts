@@ -12,15 +12,40 @@ import {
   normalizeQuestionnaireRelays,
   questionnaireRelaysForMetadata,
 } from "./questionnaireRelays";
+import { shouldShowQuestion } from "./questionConditionEvaluator";
+import { isLocalisedText, type LocalisedText } from "./i18n/types";
+
+/**
+ * Conditional display: this question is only shown if the condition is met.
+ * The condition references an earlier question and the answer it must have.
+ */
+export type QuestionCondition = {
+  /** Question ID whose answer determines whether this question is shown. */
+  dependsOnQuestionId: string;
+  /** Required answer to trigger showing this question. */
+  requiredAnswer: QuestionConditionAnswer;
+};
+
+export type QuestionConditionAnswer =
+  | { answerType: "yes_no"; value: boolean }
+  | { answerType: "multiple_choice"; selectedOptionIds: string[] };
+
+/**
+ * A text field that may be a plain string (backward compat) or a
+ * LocalisedText object with translations for multiple locales.
+ */
+export type LocalisableText = string | LocalisedText;
 
 export type QuestionnaireQuestionBase = {
   questionId: string;
-  prompt: string;
+  prompt: LocalisableText;
   required: boolean;
   ballotSlot?: QuestionnaireBallotSlot | null;
   requiredScope?: string | null;
   /** Legacy alias for requiredScope. */
   ballotGroup?: string | null;
+  /** Conditional display: this question is only shown if the condition is met. */
+  showIf?: QuestionCondition | null;
 };
 
 export type QuestionnaireBallotCredentialMode = "questionnaire" | "per_question";
@@ -107,7 +132,7 @@ export type QuestionnaireYesNoQuestion = QuestionnaireQuestionBase & {
 
 export type QuestionnaireMultipleChoiceOption = {
   optionId: string;
-  label: string;
+  label: LocalisableText;
 };
 
 export type QuestionnaireMultipleChoiceQuestion = QuestionnaireQuestionBase & {
@@ -141,8 +166,8 @@ export type QuestionnaireDefinition = {
   flowMode?: QuestionnaireFlowMode;
   responseMode: QuestionnaireResponseMode;
   questionnaireId: string;
-  title: string;
-  description?: string;
+  title: LocalisableText;
+  description?: LocalisableText;
   createdAt: number;
   openAt: number;
   closeAt: number;
@@ -373,6 +398,38 @@ function isNonEmpty(value: string | null | undefined) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/**
+ * Check whether a LocalisableText value has a non-empty `en` field.
+ * Plain strings always pass (they are implicitly English-only).
+ * LocalisedText objects must have a non-empty `en` string.
+ */
+function hasLocalisedEn(value: LocalisableText | null | undefined): boolean {
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (value !== null && typeof value === "object" && typeof value.en === "string") {
+    return value.en.trim().length > 0;
+  }
+  return false;
+}
+
+/**
+ * Check whether a `LocalisableText` carries any text at all, in any locale.
+ * Used for optional fields: an empty value is the same as "not provided", so a
+ * questionnaire whose optional description was left blank stays publishable,
+ * while a value that only carries `fr`/`ta` text still has to supply `en`
+ * because English is the fallback base for every reader.
+ */
+function hasAnyLocalisedText(value: LocalisableText | null | undefined): boolean {
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some((entry) => typeof entry === "string" && entry.trim().length > 0);
+  }
+  return false;
+}
+
 export function questionnaireUsesPerQuestionCredentials(definition: Pick<QuestionnaireDefinition, "ballotCredentialMode"> | null | undefined) {
   return definition?.ballotCredentialMode === "per_question";
 }
@@ -507,6 +564,12 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
   if (!isNonEmpty(input.questionnaireId)) {
     errors.push("questionnaire_id_missing");
   }
+  if (!hasLocalisedEn(input.title)) {
+    errors.push("title_missing_en");
+  }
+  if (input.description !== undefined && input.description !== null && hasAnyLocalisedText(input.description) && !hasLocalisedEn(input.description)) {
+    errors.push("description_missing_en");
+  }
   if (!isNonEmpty(input.coordinatorPubkey)) {
     errors.push("coordinator_pubkey_missing");
   }
@@ -560,6 +623,9 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
         errors.push(`question_id_duplicate:${question.questionId}`);
       }
       questionIds.add(question.questionId);
+      if (!hasLocalisedEn(question.prompt)) {
+        errors.push(`prompt_missing_en:${question.questionId}`);
+      }
       if (question.requiredScope !== undefined && question.requiredScope !== null && !normaliseQuestionnaireScope(question.requiredScope)) {
         errors.push(`required_scope_invalid:${question.questionId}`);
       }
@@ -594,6 +660,9 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
             errors.push(`option_id_missing:${question.questionId}`);
             continue;
           }
+          if (!hasLocalisedEn(option.label)) {
+            errors.push(`option_label_missing_en:${question.questionId}:${option.optionId}`);
+          }
           if (optionIds.has(option.optionId)) {
             errors.push(`option_id_duplicate:${question.questionId}:${option.optionId}`);
           }
@@ -620,9 +689,113 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
           errors.push(`invalid_free_text_encrypt_responses:${question.questionId}`);
         }
       }
+
+      // Conditional display (showIf) validation
+      if (question.showIf !== undefined && question.showIf !== null) {
+        const condition = question.showIf;
+        const depId = condition.dependsOnQuestionId;
+        const depIndex = input.questions.findIndex((q) => q.questionId === depId);
+
+        if (depIndex === -1) {
+          errors.push(`show_if_dependency_not_found:${question.questionId}:${depId}`);
+        } else if (depIndex >= index) {
+          errors.push(`show_if_forward_reference:${question.questionId}:${depId}`);
+        } else {
+          const depQuestion = input.questions[depIndex];
+          const requiredAnswerType = condition.requiredAnswer.answerType;
+          if (requiredAnswerType !== depQuestion.type) {
+            errors.push(`show_if_answer_type_mismatch:${question.questionId}:${depId}`);
+          } else if (requiredAnswerType === "multiple_choice") {
+            const depOptions = depQuestion.type === "multiple_choice" ? depQuestion.options : [];
+            const validOptionIds = new Set(depOptions.map((opt) => opt.optionId));
+            const requiredOptionIds = condition.requiredAnswer.selectedOptionIds;
+            if (!Array.isArray(requiredOptionIds) || requiredOptionIds.length === 0) {
+              errors.push(`show_if_empty_option_ids:${question.questionId}:${depId}`);
+            } else {
+              for (const optId of requiredOptionIds) {
+                if (!validOptionIds.has(optId)) {
+                  errors.push(`show_if_invalid_option_id:${question.questionId}:${depId}:${optId}`);
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Canonicalise a single `LocalisableText` value so every consumer sees the
+ * multilingual shape:
+ * - a plain string is upgraded to an English-only `LocalisedText` (`{ en }`),
+ *   which is how definitions published before multi-language support are read;
+ * - an existing `LocalisedText` object keeps every locale it carries (`en`, and
+ *   any `fr`/`ta` translations);
+ * - anything else is returned untouched so malformed payloads stay visible to
+ *   `validateQuestionnaireDefinition` instead of being silently rewritten.
+ */
+export function canonicaliseLocalisableText(value: unknown): unknown {
+  if (typeof value === "string") {
+    return { en: value };
+  }
+  if (isLocalisedText(value)) {
+    return { ...value, en: value.en };
+  }
+  return value;
+}
+
+function canonicaliseQuestionText(question: unknown): unknown {
+  if (!question || typeof question !== "object" || Array.isArray(question)) {
+    return question;
+  }
+  const next: Record<string, unknown> = { ...question };
+  if ("prompt" in next) {
+    next.prompt = canonicaliseLocalisableText(next.prompt);
+  }
+  if (Array.isArray(next.options)) {
+    next.options = next.options.map((option) => {
+      if (!option || typeof option !== "object" || Array.isArray(option)) {
+        return option;
+      }
+      const optionRecord: Record<string, unknown> = { ...option };
+      if ("label" in optionRecord) {
+        optionRecord.label = canonicaliseLocalisableText(optionRecord.label);
+      }
+      return optionRecord;
+    });
+  }
+  return next;
+}
+
+/**
+ * Canonicalise the localisable text fields of a questionnaire definition:
+ * `title`, `description`, every question `prompt` and every option `label`.
+ *
+ * Nostr definition events written before multi-language support carry plain
+ * strings in these fields.  Upgrading them to `LocalisedText` on the way in
+ * means downstream code always sees the multilingual shape, while definitions
+ * that already carry `LocalisedText` round-trip with all languages preserved.
+ *
+ * The transformation is idempotent and does not add, remove or reorder any
+ * other field, so it is safe to apply on both the publish and the parse path.
+ */
+export function canonicaliseQuestionnaireDefinitionText<T>(value: T): T {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const next: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  if ("title" in next) {
+    next.title = canonicaliseLocalisableText(next.title);
+  }
+  if (next.description !== undefined && next.description !== null) {
+    next.description = canonicaliseLocalisableText(next.description);
+  }
+  if (Array.isArray(next.questions)) {
+    next.questions = next.questions.map(canonicaliseQuestionText);
+  }
+  return next as T;
 }
 
 export function normalizeQuestionnaireDefinition(
@@ -637,13 +810,18 @@ export function normalizeQuestionnaireDefinition(
       ? QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1
       : QUESTIONNAIRE_FLOW_MODE_LEGACY_PRIVATE_DM);
   const questionnaireRelays = questionnaireRelaysForMetadata(input.questionnaireRelays ?? []);
-  return {
+  const normalized: QuestionnaireDefinition = {
     ...input,
     responseMode,
     flowMode,
     protocolVersion: input.protocolVersion ?? QUESTIONNAIRE_PROTOCOL_VERSION_V1,
     ...(questionnaireRelays ? { questionnaireRelays } : { questionnaireRelays: undefined }),
   };
+  // Every definition that enters the app (parsed from a Nostr event, read from
+  // the local cache or rebuilt in memory) carries canonical `LocalisedText`
+  // text fields, so a definition published before multi-language support is
+  // read as English-only text rather than as a bare string.
+  return canonicaliseQuestionnaireDefinitionText(normalized);
 }
 
 export function validateQuestionnaireResponsePayload(input: {
@@ -658,6 +836,14 @@ export function validateQuestionnaireResponsePayload(input: {
   const byQuestionId = new Map(definition.questions.map((question) => [question.questionId, question]));
   const seenAnswers = new Set<string>();
 
+  // Build the answered map and question map for conditional (showIf) evaluation.
+  const answeredMap = new Map<string, QuestionnaireResponseAnswer>(
+    payload.answers.map((answer) => [answer.questionId, answer]),
+  );
+  const questionMap = new Map<string, QuestionnaireQuestion>(
+    definition.questions.map((question) => [question.questionId, question]),
+  );
+
   for (const answer of payload.answers) {
     const question = byQuestionId.get(answer.questionId);
     if (!question) {
@@ -669,6 +855,11 @@ export function validateQuestionnaireResponsePayload(input: {
       continue;
     }
     seenAnswers.add(answer.questionId);
+
+    // Conditional display: an answer for a question whose showIf is unmet is invalid.
+    if (!shouldShowQuestion(question, answeredMap, questionMap)) {
+      errors.push(`answer_for_hidden_question:${answer.questionId}`);
+    }
 
     if (question.type === "yes_no") {
       if (answer.answerType !== "yes_no") {
@@ -733,6 +924,10 @@ export function validateQuestionnaireResponsePayload(input: {
   }
 
   for (const question of definition.questions) {
+    // A required question whose showIf is unmet is hidden and must not be required.
+    if (!shouldShowQuestion(question, answeredMap, questionMap)) {
+      continue;
+    }
     const rankMinimumMissing = question.type === "rank"
       && clampRankMinimum(question) > 0
       && !seenAnswers.has(question.questionId);

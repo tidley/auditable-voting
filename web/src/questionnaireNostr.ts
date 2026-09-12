@@ -19,6 +19,7 @@ import type {
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 import {
+  canonicaliseQuestionnaireDefinitionText,
   normaliseQuestionnairePrivateInviteMaxRedemptions,
   normalizeQuestionnaireDefinition,
 } from "./questionnaireProtocol";
@@ -292,16 +293,23 @@ export async function publishQuestionnaireDefinition(input: {
   definition: QuestionnaireDefinition;
   relays?: string[];
 }) {
+  // Serialise the canonical multilingual shape. A definition that still carries
+  // plain English strings (for example a draft built before multi-language
+  // support) is published as `{ en: "<text>" }`, and any `fr`/`ta` translations
+  // already attached to a field are carried through unchanged. Older readers
+  // still receive a usable value because the parse path upgrades a bare string
+  // back to an English-only `LocalisedText`.
+  const definition = canonicaliseQuestionnaireDefinitionText(input.definition);
   return publishEvent({
     nsec: input.coordinatorNsec,
     kind: QUESTIONNAIRE_DEFINITION_KIND,
     tags: [
       ["t", "questionnaire_definition"],
-      ["q", input.definition.questionnaireId],
-      ["questionnaire-id", input.definition.questionnaireId],
+      ["q", definition.questionnaireId],
+      ["questionnaire-id", definition.questionnaireId],
       ["state", "draft"],
     ],
-    content: JSON.stringify(input.definition),
+    content: JSON.stringify(definition),
     relays: input.relays,
     channel: "questionnaire-definition",
   });
@@ -748,7 +756,14 @@ export function parseQuestionnaireDefinitionEvent(
     ) {
       return null;
     }
-    return normalizeQuestionnaireDefinition(parsed);
+    // Definition events written before multi-language support carry plain
+    // strings in `title`, `description`, question `prompt` and option `label`.
+    // Canonicalise them to `LocalisedText` (`{ en: "<text>" }`) on the way in so
+    // every consumer sees one shape, while definitions that already carry
+    // translations round-trip with every locale preserved. The transformation is
+    // idempotent, so it is safe that `normalizeQuestionnaireDefinition` applies
+    // the same canonicalisation again.
+    return normalizeQuestionnaireDefinition(canonicaliseQuestionnaireDefinitionText(parsed));
   } catch {
     return null;
   }
