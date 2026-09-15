@@ -1556,6 +1556,22 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       ...makeDefinition({ questionnaireId, title: "Automatic proxy config", coordinatorNpub }),
       blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindKey),
     };
+    // F1-T7 canonicalises the localisable text of every definition that enters
+    // the app, so the definition the panel syncs to the audit proxy carries
+    // `LocalisedText` for `title`, `description` and question `prompt` (and for
+    // option `label` on choice questions) instead of the bare strings this
+    // fixture is written with. The canonical shape is pinned explicitly here so
+    // the assertion still fails if the text fields, or anything else in the
+    // definition, stop reaching the worker config.
+    const canonicalDefinition = {
+      ...definition,
+      title: { en: "Automatic proxy config" },
+      description: { en: "" },
+      questions: definition.questions.map((question) => ({
+        ...question,
+        prompt: { en: question.prompt },
+      })),
+    };
     const election = {
       electionId: questionnaireId,
       title: definition.title,
@@ -1645,7 +1661,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.snapshot).toMatchObject({
       delegationId: activeDelegation.delegationId,
       blindSigningPrivateKey: { keyId: blindKey.keyId },
-      definition,
+      definition: canonicalDefinition,
       whitelistNpubs: [workerNpub],
       proxyVoterNpubs: [workerNpub],
       ballotGroupsByNpub: { [workerNpub]: "north" },

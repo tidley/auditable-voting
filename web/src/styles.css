@@ -15273,3 +15273,370 @@ body.demo-page .demo-workspace {
 .simple-resident-verify {
   margin-top: 16px;
 }
+
+/* ===========================
+   Print Layout (Paper Ballots)
+   =========================== */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  /* Hide everything that isn't the ballot-print container */
+  body > *:not(.ballot-print),
+  nav, .nav, .navigation, .sidebar, .header, footer,
+  [role="navigation"], [role="tablist"], [role="menu"],
+  .simple-theme-toggle, .simple-account-menu-trigger,
+  button, .simple-nav {
+    display: none !important;
+  }
+
+  .ballot-print {
+    display: block !important;
+    background: white !important;
+    color: black !important;
+    padding: 0;
+    margin: 0;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 11pt;
+    line-height: 1.5;
+    page-break-after: avoid;
+  }
+
+  .ballot-header {
+    text-align: center;
+    margin-bottom: 20pt;
+    border-bottom: 2px solid black;
+    padding-bottom: 10pt;
+  }
+
+  .ballot-title {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 4pt 0;
+    color: black !important;
+  }
+
+  .ballot-id {
+    font-size: 9pt;
+    color: #333 !important;
+    margin: 0;
+  }
+
+  .ballot-question {
+    margin-bottom: 14pt;
+    page-break-inside: avoid;
+  }
+
+  .ballot-question-prompt {
+    font-weight: bold;
+    margin: 0 0 6pt 0;
+    font-size: 11pt;
+    color: black !important;
+  }
+
+  .ballot-required {
+    color: #cc0000 !important;
+    margin-left: 2pt;
+  }
+
+  .ballot-yes-no {
+    margin-left: 14pt;
+  }
+
+  .ballot-option {
+    display: block;
+    margin: 4pt 0;
+    font-size: 11pt;
+    color: black !important;
+  }
+
+  .ballot-checkbox {
+    font-size: 14pt;
+    margin-right: 6pt;
+  }
+
+  .ballot-blank-lines {
+    margin-left: 14pt;
+  }
+
+  .ballot-blank-line {
+    border-bottom: 1px solid black;
+    margin: 8pt 0;
+    width: 80%;
+    height: 0;
+  }
+
+  .ballot-options {
+    margin-left: 14pt;
+  }
+
+  .ballot-rank-options {
+    margin-left: 14pt;
+  }
+
+  .ballot-rank-number {
+    font-weight: bold;
+    margin-right: 4pt;
+  }
+
+  .ballot-rank-line {
+    font-family: "Courier New", Courier, monospace;
+  }
+
+  .ballot-voter {
+    margin-top: 20pt;
+    border-top: 2px solid black;
+    padding-top: 10pt;
+    page-break-inside: avoid;
+  }
+
+  .ballot-section-title {
+    font-size: 13pt;
+    font-weight: bold;
+    margin: 0 0 8pt 0;
+    color: black !important;
+    border-bottom: 1px solid #666;
+    padding-bottom: 4pt;
+  }
+
+  .ballot-voter-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10pt;
+  }
+
+  .ballot-voter-keys {
+    flex: 1;
+    min-width: 250pt;
+  }
+
+  .ballot-key-row {
+    margin: 4pt 0;
+    font-size: 9pt;
+    line-height: 1.4;
+  }
+
+  .ballot-key-label {
+    font-weight: bold;
+    margin-right: 4pt;
+    color: black !important;
+  }
+
+  .ballot-key-value {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 8pt;
+    word-break: break-all;
+    color: black !important;
+    background: none !important;
+    padding: 0;
+  }
+
+  .ballot-qr-area {
+    flex: 0 0 auto;
+    text-align: center;
+  }
+
+  .ballot-qr-image {
+    width: 150px;
+    height: 150px;
+    image-rendering: pixelated;
+  }
+
+  .ballot-info {
+    margin-top: 14pt;
+    page-break-inside: avoid;
+  }
+
+  .ballot-invite {
+    font-size: 10pt;
+    margin: 6pt 0;
+    color: black !important;
+  }
+
+  .ballot-invite-code {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 10pt;
+    font-weight: bold;
+    background: none !important;
+    padding: 0;
+    color: black !important;
+  }
+
+  .ballot-relays {
+    margin-top: 8pt;
+  }
+
+  .ballot-relays-label {
+    font-weight: bold;
+    margin: 0 0 4pt 0;
+    font-size: 10pt;
+    color: black !important;
+  }
+
+  .ballot-relay-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .ballot-relay-item {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 8pt;
+    margin: 2pt 0;
+    color: #333 !important;
+  }
+
+  .ballot-timestamp {
+    margin-top: 16pt;
+    font-size: 8pt;
+    color: #666 !important;
+    text-align: center;
+  }
+}
+
+/* ── F3-T3: coordinator batch paper ballot generation ─────────────── */
+.simple-paper-ballot-section {
+  display: grid;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.simple-paper-ballot-count-input {
+  width: 90px;
+}
+
+.simple-paper-ballot-warning {
+  border-left: 3px solid var(--simple-border-strong, #3a4c59);
+  padding-left: 8px;
+}
+
+.simple-paper-ballot-results {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.simple-paper-ballot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.simple-paper-ballot-item {
+  border: 1px solid var(--simple-border, #2a3a46);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.simple-paper-ballot-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.simple-paper-ballot-item-title {
+  font-family: "Courier New", Courier, monospace;
+  word-break: break-all;
+}
+
+.simple-paper-ballot-preview {
+  margin-top: 12px;
+  border-top: 1px solid var(--simple-border, #2a3a46);
+  padding-top: 12px;
+  overflow-x: auto;
+}
+
+/* ── F3-T3: print-only copy of a generated paper-ballot batch ──────── */
+/*
+ * The app hides `#root` in print, and the on-screen ballot preview lives
+ * inside it, so a batch is re-rendered into a print-only root portalled to
+ * <body>.  That root carries `.ballot-print` so it survives the existing
+ * `body > *:not(.ballot-print)` rule, and stays out of the way on screen.
+ */
+@media screen {
+  .simple-paper-ballot-print-only {
+    display: none !important;
+  }
+}
+
+@media print {
+  .simple-paper-ballot-print-only > .ballot-print + .ballot-print {
+    break-before: page;
+    page-break-before: always;
+  }
+}
+
+/* ── F3-T4: paper-ballot manual entry ─────────────────────────────── */
+.simple-paper-ballot-entry {
+  display: grid;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.simple-paper-ballot-entry-warning {
+  border-left: 3px solid var(--simple-border-strong, #3a4c59);
+  padding-left: 8px;
+  font-weight: 600;
+}
+
+.simple-paper-ballot-entry-identity,
+.simple-paper-ballot-entry-answers,
+.simple-paper-ballot-entry-credential {
+  display: grid;
+  gap: 10px;
+}
+
+.simple-voter-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.simple-paper-ballot-entry-identity-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--simple-border, #2a3a46);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.simple-paper-ballot-entry-identity-details {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 220px;
+}
+
+.simple-paper-ballot-entry-identity-label {
+  margin: 0;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.simple-paper-ballot-entry-identity-npub {
+  margin: 0;
+  font-family: "Courier New", Courier, monospace;
+  word-break: break-all;
+}
+
+.simple-paper-ballot-entry-identity-hint {
+  margin: 0;
+}
+
+.simple-paper-ballot-entry-status {
+  margin: 0;
+  font-weight: 600;
+}

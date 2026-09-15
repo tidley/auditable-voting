@@ -96,7 +96,7 @@ export default function OrganiserDemoTour({ showLauncher, onPrepareDemo, onShowV
   function afterNextPaint(action: () => void) {
     action();
     return new Promise<void>((resolve) => {
-      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
     });
   }
 

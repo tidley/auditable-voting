@@ -2,6 +2,15 @@ import type {
   QuestionnaireQuestion,
   QuestionnaireResultQuestionSummary,
 } from "./questionnaireProtocol";
+import { resolveLocalised } from "./i18n/resolveLocale";
+
+/** Resolve a localisable field to a plain string (English fallback). */
+function toPlainText(value: string | { en: string } | undefined): string {
+  if (value === undefined) {
+    return "";
+  }
+  return resolveLocalised(value, "en");
+}
 
 export type HumanReadableResultEntry = {
   /** Human-facing name of the choice: an option label, or "Yes"/"No". */
@@ -78,10 +87,10 @@ function buildBreakdown(
   question: QuestionnaireQuestion | undefined,
   questionNumber: number | null,
 ): HumanReadableQuestionBreakdown {
-  const prompt = question?.prompt ?? summary.questionId;
+  const prompt = toPlainText(question?.prompt) || summary.questionId;
   const labelFor = (optionId: string): string => {
     if (question && (question.type === "multiple_choice" || question.type === "rank")) {
-      return question.options.find((option) => option.optionId === optionId)?.label ?? optionId;
+      return toPlainText(question.options.find((option) => option.optionId === optionId)?.label) || optionId;
     }
     return optionId;
   };

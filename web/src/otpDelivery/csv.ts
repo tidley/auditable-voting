@@ -72,8 +72,11 @@ export function parseResultsCsv(csvContent: string): DeliveryResultRow[] {
 
 /**
  * Parse a single CSV line, handling quoted fields (RFC 4180).
+ *
+ * Exported for the coordinator batch script's ledger/planning module
+ * (`sendLedger.ts`), which parses the same dialect.
  */
-function parseCsvLine(line: string): string[] {
+export function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
   let current = "";
   let inQuotes = false;
