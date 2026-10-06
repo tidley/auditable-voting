@@ -5,14 +5,13 @@
     (function () {
       try {
         var stored = localStorage.getItem("av-theme");
-        var theme = stored === "light" || stored === "dark"
-          ? stored
-          : window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
-            ? "light"
-            : "dark";
-        document.documentElement.dataset.theme = theme;
+        // Light is the instance default. Only an explicit choice made with the
+        // sun/moon toggle is honoured; the OS colour-scheme preference is
+        // deliberately ignored.
+        document.documentElement.dataset.theme =
+          stored === "light" || stored === "dark" ? stored : "light";
       } catch (error) {
-        document.documentElement.dataset.theme = "dark";
+        document.documentElement.dataset.theme = "light";
       }
     })();
   </script>

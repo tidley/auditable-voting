@@ -43,7 +43,7 @@ The practical target is small-organisation and controlled-pilot voting, not high
 - Coordinator **resident admission** with one-time codes: upload a resident CSV, generate per-resident or batch codes (CSPRNG, salted-hash verification, rate limiting), and verify a 6-digit code. A **delivery** abstraction lets the coordinator pick a channel per election (manual, email-nomail, SMS), export name+code pairs for out-of-band distribution, and import a results CSV to see which residents were reached. Batch email sending runs on the coordinator machine, not in the browser; the manual channel is the recommended fallback.
 - Static deployment to GitHub Pages or nsite.
 
-The interface ships in a calm dark theme by default and also offers a bright light theme. A sun/moon toggle in the corner of every screen switches between the two; the choice is remembered on the device, and first visits follow the system colour-scheme preference.
+The interface ships in a bright light theme by default and also offers a calm dark theme. A sun/moon toggle in the corner of every screen switches between the two, and the choice is remembered on the device. First visits always start light: the system colour-scheme preference is deliberately not consulted, so every instance looks the same out of the box.
 
 ## Repository Layout
 

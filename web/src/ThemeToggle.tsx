@@ -20,13 +20,13 @@ function readInitialTheme(): Theme {
         return stored;
       }
     } catch {
-      // Storage unavailable; fall through to the system preference.
-    }
-    if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: light)").matches) {
-      return "light";
+      // Storage unavailable; fall through to the instance default.
     }
   }
-  return "dark";
+  // Light is the instance default. The OS colour-scheme preference is
+  // deliberately ignored so every first visit looks the same; only an explicit
+  // toggle (persisted above) selects the dark theme.
+  return "light";
 }
 
 function applyTheme(theme: Theme) {
@@ -43,9 +43,10 @@ function applyTheme(theme: Theme) {
 }
 
 /**
- * Corner sun/moon control that flips the app between the default dark
- * theme and the light theme. The choice is remembered in localStorage
- * ("av-theme"); first visits follow the system colour-scheme preference.
+ * Corner sun/moon control that flips the app between the default light
+ * theme and the dark theme. The choice is remembered in localStorage
+ * ("av-theme"); first visits start light and do NOT follow the system
+ * colour-scheme preference.
  */
 export default function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
