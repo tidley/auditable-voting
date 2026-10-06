@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="98" stroke="#D74" stroke-width="2"
+xmlns:xlink="http://www.w3.org/1999/xlink" height="98" fill="none">
+<g id="b">
+<path id="a" d="m48,4a45,45 0 1,0 2,0m0,30a15,15 0 1,1-2,0m1,31v28"/>
+<use xlink:href="#a" transform="rotate(72 49,49)"/></g>
+<use xlink:href="#b" transform="rotate(144 49,49)"/>
+<use xlink:href="#a" transform="rotate(-72 49,49)"/>
+<circle cx="49" cy="49" r="1"/>
+</svg>
