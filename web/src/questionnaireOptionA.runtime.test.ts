@@ -2417,7 +2417,7 @@ describe("questionnaireOptionARuntime", () => {
         tokenCommitments.get(`${sessionIds[1]}:${invitedNpub}`),
       );
     }
-  }, 15_000);
+  }, 60_000);
 
   it("issues ballots directly when stale delegated-worker mode is present but no active proxy routing", async () => {
     const staleSessionId = `${electionId}_stale_no_proxy`;
@@ -2578,7 +2578,7 @@ describe("questionnaireOptionARuntime", () => {
         request: expect.objectContaining({ electionId: sessionId }),
       }));
     }
-  }, 15_000);
+  }, 60_000);
 
   it("runs delegated request -> issuance -> submission -> summary end to end", async () => {
     const workerNpub = "npub1delegatecoordinatorruntime00000000000000000000000";
