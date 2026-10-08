@@ -10,7 +10,14 @@ import { defineConfig } from "@playwright/test";
  * Uses the system-installed google-chrome-stable via channel: 'chrome'.
  * Default colorScheme is 'dark' so tests that clear localStorage get
  * the expected dark default (matches app's fallback).
+ *
+ * Set PLAYWRIGHT_USE_BUNDLED_CHROMIUM=1 to use Playwright's bundled Chromium
+ * instead of a system Chrome install. CI runners ship Chromium via
+ * `npx playwright install` but have no google-chrome-stable, so the e2e job
+ * sets this; local runs keep using the system browser.
  */
+const useBundledChromium = process.env.PLAYWRIGHT_USE_BUNDLED_CHROMIUM === "1";
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
@@ -24,13 +31,16 @@ export default defineConfig({
     baseURL: "http://localhost:5173",
     video: "on",
     screenshot: "only-on-failure",
-    channel: "chrome",
+    channel: useBundledChromium ? undefined : "chrome",
     colorScheme: "dark",
   },
   webServer: {
     command: "npm run dev",
     port: 5173,
     reuseExistingServer: true,
-    timeout: 60_000,
+    // Generous because `npm run dev` triggers the `predev` wasm build on a
+    // cold checkout. CI builds the artifacts in an earlier step so this is
+    // normally fast, but a 60s budget proved too tight on a fresh runner.
+    timeout: 180_000,
   },
 });

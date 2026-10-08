@@ -251,9 +251,16 @@ test("five wrong OTP attempts lock verification, correct code rejected too", asy
 });
 
 // ---------------------------------------------------------------------------
-// 7. Expired OTP → expired message (clock mock past the 10-minute TTL)
+// 7. Expired OTP → expired message (clock mock past the shipped admission TTL)
 // ---------------------------------------------------------------------------
 test("expired OTP shows the expired message", async ({ page }) => {
+  // The shipped admission flow validates against ADMISSION_TTL_MS (24 h):
+  // admission codes are distributed out of band (printed, emailed) and
+  // deliberately outlive the 10-minute interactive OTP_TTL_MS. See
+  // docs/otp-delivery.md and docs/resident-otp-admission-ui.md. Advancing the
+  // clock past the interactive TTL therefore proves nothing — the code is
+  // still valid — so this assertion must use the admission TTL.
+  const ADMISSION_TTL_MS = 24 * 60 * 60 * 1000;
   test.setTimeout(45_000);
   await gotoResidentAdmission(page);
   await uploadCsv(page, VALID_CSV);
@@ -261,10 +268,10 @@ test("expired OTP shows the expired message", async ({ page }) => {
   const code = await generateCode(page, 101);
 
   // Install the fake clock only once the app is fully booted (installing
-  // before load would freeze boot timers), then advance past OTP_TTL_MS
-  // (10 minutes) — margin included — so isOtpExpired() trips.
+  // before load would freeze boot timers), then advance past the 24-hour
+  // admission TTL so isOtpExpired() trips.
   await page.clock.install();
-  await page.clock.fastForward(10 * 60 * 1000 + 30_000);
+  await page.clock.fastForward(ADMISSION_TTL_MS + 60_000);
 
   await verifyCode(page, 101, code);
   await expect(verifyStatus(page)).toHaveText("This code has expired. Generate a new code.");
