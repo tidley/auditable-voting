@@ -185,8 +185,9 @@ test("GitHub Pages end-to-end voting with mocked email delivery (video)", async 
     colorScheme: "light",
     // Explicitly record video for this hand-rolled context. The config's
     // `use.video` does NOT propagate to a hand-rolled browser.newContext(), so
-    // we request the WebM capture here.
-    recordVideo: { dir: "/home/c03rad0r/reports/videos" },
+    // we request the WebM capture here. The directory is overridable because a
+    // hard-coded absolute path only ever worked on the machine that wrote it.
+    recordVideo: { dir: process.env.E2E_VIDEO_DIR ?? "test-results/videos" },
   });
   // Set light theme in localStorage + mock mailbox BEFORE any page JS runs.
   // The app's FOUC guard reads localStorage("av-theme") on page load; if

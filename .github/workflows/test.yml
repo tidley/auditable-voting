@@ -43,3 +43,74 @@ jobs:
       - name: Run web unit tests
         run: npm test
         working-directory: web
+
+  # The Playwright specs under web/e2e are the project's end-to-end behaviour
+  # contract (coordinator + voter flows, OTP admission, theme). Nothing in this
+  # repo ran them on a PR, so an e2e regression could reach main unnoticed — the
+  # specs only run if a developer remembers to run them locally.
+  e2e-smoke:
+    name: Web E2E smoke (playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Same wasm prerequisite as the vitest job: artifacts are not committed,
+      # so the pretest hook rebuilds them from source via wasm-pack.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        # Binary download, not `cargo install` — the e2e job must stay cheap
+        # (a source build of wasm-pack dominates the run time otherwise).
+        run: curl -sSfL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+
+      # Build the wasm artifacts BEFORE Playwright starts the dev server.
+      # `npm run dev` has a `predev` hook (ensure-wasm-artifacts.mjs) that builds
+      # them on demand, but on a cold runner that Rust compile blows past
+      # playwright.config.ts's webServer timeout — the job died with
+      # "Timed out waiting 60000ms from config.webServer". Building here means
+      # the predev hook is a no-op by the time the webServer starts.
+      - name: Build wasm artifacts
+        run: npm run build:wasm
+        working-directory: web
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+
+      - name: Run web e2e smoke tests
+        # Chromium (not the local `channel: chrome` default) so the job runs on
+        # the stock runner image. Videos are enabled by playwright.config.ts;
+        # they are uploaded on failure so a red run is diagnosable.
+        #
+        # Explicit spec list — e2e/github-pages-video.spec.ts is deliberately
+        # excluded. It drives the DEPLOYED GitHub Pages site via
+        # resolvePagesBaseUrl() rather than localhost, so it cannot validate a
+        # PR's code (it exercises whatever is currently deployed), and it
+        # currently times out in harvestCodes() against that site. The three
+        # specs below run against the local dev server and are the behaviour
+        # contract this job gates.
+        run: npx playwright test e2e/delivery-smoke.spec.ts e2e/resident-otp-admission.spec.ts e2e/theme-toggle.spec.ts
+        working-directory: web
+        env:
+          PLAYWRIGHT_USE_BUNDLED_CHROMIUM: "1"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-videos
+          path: web/test-results
+          retention-days: 7
+          if-no-files-found: ignore
