@@ -1,7 +1,7 @@
 import { gzipSync, gunzipSync, strFromU8, strToU8 } from "fflate";
 import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type Filter, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
-import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
+import { resolveQuestionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 import {
   sanitiseBlindBallotIssuance,
   sanitiseBlindBallotRequest,
@@ -1079,7 +1079,9 @@ function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance[] | n
           {
             ...issuance,
             definitionHash: issuance.definitionHash ?? bundle.definitionHash ?? (
-              sharedDefinition ? questionnaireDefinitionHash(sharedDefinition) : null
+              sharedDefinition
+                ? resolveQuestionnaireDefinitionHash(issuance.electionId, sharedDefinition)
+                : null
             ),
             definitionEventId: issuance.definitionEventId ?? bundle.definitionEventId ?? null,
             ...(sharedDefinition && !issuance.definition ? { definition: sharedDefinition } : {}),
@@ -2076,7 +2078,9 @@ export async function publishOptionABlindIssuanceDm(input: {
   const issuance = {
     ...inputIssuance,
     definition: undefined,
-    definitionHash: inputIssuance.definitionHash ?? (legacyDefinition ? questionnaireDefinitionHash(legacyDefinition) : null),
+    definitionHash: inputIssuance.definitionHash ?? (legacyDefinition
+      ? resolveQuestionnaireDefinitionHash(inputIssuance.electionId, legacyDefinition)
+      : null),
     definitionEventId: inputIssuance.definitionEventId ?? null,
   };
   return publishEnvelope({
@@ -2105,7 +2109,10 @@ export function buildOptionABlindIssuanceBundleEnvelope(input: {
   const sharedDefinition = input.definition ?? inputIssuances.find((issuance) => issuance.definition)?.definition ?? null;
   const definitionHash = input.definitionHash
     ?? inputIssuances.find((issuance) => issuance.definitionHash)?.definitionHash
-    ?? (sharedDefinition ? questionnaireDefinitionHash(sharedDefinition) : null);
+    ?? resolveQuestionnaireDefinitionHash(
+      inputIssuances[0]?.electionId ?? sharedDefinition?.questionnaireId,
+      sharedDefinition,
+    );
   const definitionEventId = input.definitionEventId
     ?? inputIssuances.find((issuance) => issuance.definitionEventId)?.definitionEventId
     ?? null;

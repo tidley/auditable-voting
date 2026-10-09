@@ -2836,4 +2836,75 @@ describe("questionnaireOptionARuntime", () => {
     expect(coordinator.getSnapshot()?.whitelist[voterNpub]?.claimState).toBe("whitelisted");
     expect(coordinator.getPendingAuthorizations()).toEqual([]);
   });
+  it("keeps answers for showIf-hidden questions out of the published payload (B3)", async () => {
+    const hiddenElectionId = `${electionId}_hidden_answers`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), hiddenElectionId);
+    await coordinator.loginWithSigner({ title: "Hidden", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const { invite } = await coordinator.sendInvite(voterNpub, {
+      title: "Hidden",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), hiddenElectionId);
+    await voter.loginWithSigner(invite);
+    storeCachedQuestionnaireDefinition({
+      ...buildDefinition({ electionId: hiddenElectionId, coordinatorNpub, title: "Hidden" }),
+      questions: [
+        { questionId: "q1", prompt: "Open the follow-up?", required: true, type: "yes_no" },
+        {
+          questionId: "q2",
+          prompt: "Follow-up",
+          required: true,
+          type: "yes_no",
+          showIf: { dependsOnQuestionId: "q1", requiredAnswer: { answerType: "yes_no", value: true } },
+        },
+        {
+          questionId: "q3",
+          prompt: "Chained follow-up",
+          required: true,
+          type: "yes_no",
+          showIf: { dependsOnQuestionId: "q2", requiredAnswer: { answerType: "yes_no", value: true } },
+        },
+      ],
+    });
+
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+
+    const publishedInput = () => vi.mocked(publishQuestionnaireProvisionalResponsePublic).mock.calls.at(-1)?.[0];
+    const allThree = [
+      { questionId: "q1", type: "yes_no" as const, answer: "yes" as const },
+      { questionId: "q2", type: "yes_no" as const, answer: "yes" as const },
+      { questionId: "q3", type: "yes_no" as const, answer: "yes" as const },
+    ];
+
+    // visible -> hidden: q1 = no hides q2, which in turn hides q3. The retained draft state
+    // still carries answers for all three questions.
+    voter.updateDraftResponses([
+      { questionId: "q1", type: "yes_no", answer: "no" },
+      ...allThree.slice(1),
+    ]);
+    await voter.publishProvisionalResponses(["q1", "q2", "q3"]);
+    expect(publishedInput()?.questionIds).toEqual(["q1"]);
+    expect(publishedInput()?.answers.map((answer) => answer.questionId)).toEqual(["q1"]);
+
+    // hidden -> visible: re-opening the gate publishes the follow-ups again.
+    voter.updateDraftResponses(allThree);
+    await voter.publishProvisionalResponses(["q1", "q2", "q3"]);
+    expect(publishedInput()?.questionIds).toEqual(["q1", "q2", "q3"]);
+    expect(publishedInput()?.answers.map((answer) => answer.questionId)).toEqual(["q1", "q2", "q3"]);
+
+    // Mid-chain: q2 = no hides only q3.
+    voter.updateDraftResponses([
+      allThree[0],
+      { questionId: "q2", type: "yes_no", answer: "no" },
+      allThree[2],
+    ]);
+    await voter.publishProvisionalResponses(["q1", "q2", "q3"]);
+    expect(publishedInput()?.questionIds).toEqual(["q1", "q2"]);
+    expect(publishedInput()?.answers.map((answer) => answer.questionId)).toEqual(["q1", "q2"]);
+  });
 });

@@ -20,6 +20,8 @@ export type QuestionnaireRejectedReason =
   | "free_text_too_long"
   | "duplicate_response"
   | "decryption_failed"
+  | "answer_for_hidden_question"
+  | "invalid_questionnaire"
   | "invalid_payload_shape";
 
 export function formatQuestionnaireStateLabel(state: string | null | undefined) {
@@ -175,6 +177,12 @@ function toRejectedReason(errorCode: string): QuestionnaireRejectedReason {
   }
   if (errorCode.startsWith("free_text_too_long")) {
     return "free_text_too_long";
+  }
+  if (errorCode.startsWith("answer_for_hidden_question")) {
+    return "answer_for_hidden_question";
+  }
+  if (errorCode.startsWith("invalid_questionnaire")) {
+    return "invalid_questionnaire";
   }
   return "invalid_payload_shape";
 }

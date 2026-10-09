@@ -120,12 +120,17 @@ import {
   type OptionAVoterStateSnapshot,
   type OptionABlindRequestFetchDiagnostics,
 } from "./questionnaireOptionABlindDm";
-import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition,
+  storeCachedQuestionnaireDefinitionReference,
+} from "./questionnaireDefinitionCache";
 import {
   buildQuestionnaireDefinitionReference,
   questionnaireDefinitionEventHash,
-  questionnaireDefinitionHash,
+  questionnaireDefinitionHashMatches,
+  resolveQuestionnaireDefinitionHash,
 } from "./questionnaireDefinitionReference";
+import { optionAAnswersForVisibility } from "./questionnaireOptionA";
+import { visibleQuestionIds } from "./questionConditionEvaluator";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 import type { SignerService } from "./services/signerService";
 import {
@@ -167,6 +172,7 @@ import {
   type QuestionnaireResponseAnswer,
   type QuestionnaireSubmissionDecision,
 } from "./questionnaireProtocol";
+import { resolveLocalised } from "./i18n/resolveLocale";
 import { mineGeneralInvitePow, verifyGeneralInvitePow } from "./questionnaireGeneralInvitePow";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
@@ -268,11 +274,28 @@ function getPreferredQuestionnaireDmRelays(electionId: string) {
   );
 }
 
-function cacheQuestionnaireDefinitionForRuntime(definition: QuestionnaireDefinition) {
+function cacheQuestionnaireDefinitionForRuntime(
+  definition: QuestionnaireDefinition,
+  wire?: { definitionHash?: string | null; definitionEventId?: string | null } | null,
+) {
   const storedDefinition = storeCachedQuestionnaireDefinition(definition) ?? definition;
   const electionId = storedDefinition.questionnaireId.trim();
   if (!electionId) {
     return;
+  }
+  // B1: record the hash of the wire document alongside the parsed definition.
+  // `storeCachedQuestionnaireDefinition` canonicalises text fields, so for a
+  // definition published with bare-string text the cached object is NOT the
+  // document the Rust worker hashed. Carrying the wire hash here keeps every
+  // object-derived consumer (resolveQuestionnaireDefinitionHash) in agreement
+  // with the worker instead of silently diverging.
+  const wireDefinitionHash = wire?.definitionHash?.trim() ?? "";
+  if (wireDefinitionHash) {
+    storeCachedQuestionnaireDefinitionReference(buildQuestionnaireDefinitionReference({
+      definition: storedDefinition,
+      definitionEventId: wire?.definitionEventId ?? null,
+      definitionHash: wireDefinitionHash,
+    }));
   }
   const summary = loadElectionSummary(electionId);
   const coordinatorNpub = storedDefinition.coordinatorPubkey.trim();
@@ -282,8 +305,8 @@ function cacheQuestionnaireDefinitionForRuntime(definition: QuestionnaireDefinit
   const closed = Number.isFinite(storedDefinition.closeAt) && storedDefinition.closeAt <= Math.floor(Date.now() / 1000);
   upsertElectionSummary({
     electionId,
-    title: storedDefinition.title || summary?.title || "Questionnaire",
-    description: storedDefinition.description ?? summary?.description ?? "",
+    title: resolveLocalised(storedDefinition.title, "en") || summary?.title || "Questionnaire",
+    description: resolveLocalised(storedDefinition.description ?? "", "en") || summary?.description || "",
     state: summary?.state ?? (closed ? "closed" : "open"),
     openedAt: Number.isFinite(storedDefinition.openAt) ? new Date(storedDefinition.openAt * 1000).toISOString() : summary?.openedAt ?? null,
     closedAt: Number.isFinite(storedDefinition.closeAt) ? new Date(storedDefinition.closeAt * 1000).toISOString() : summary?.closedAt ?? null,
@@ -579,8 +602,8 @@ function buildLocalPublishedElectionSummary(
     return null;
   }
   return {
-    title: summary?.title ?? definition?.title ?? existing?.title,
-    description: summary?.description ?? definition?.description ?? existing?.description,
+    title: summary?.title ?? (resolveLocalised(definition?.title ?? "", "en") || existing?.title),
+    description: summary?.description ?? (resolveLocalised(definition?.description ?? "", "en") || existing?.description),
     state: summary?.state ?? (definition ? "open" : existing?.state),
     openedAt: summary?.openedAt ?? (definition?.openAt ? new Date(definition.openAt * 1000).toISOString() : existing?.openedAt),
     closedAt: summary?.closedAt ?? (definition?.closeAt ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt),
@@ -934,11 +957,34 @@ function publicDecisionToAcceptance(decision: QuestionnaireSubmissionDecision): 
   };
 }
 
+/**
+ * Question ids that may appear in a published payload (B3).
+ *
+ * Returns `null` when there is nothing to filter — no cached definition, or a definition with no
+ * `showIf` rules — so callers keep the previous behaviour exactly for unconditional questionnaires.
+ */
+function visibleQuestionIdsForDefinition(
+  definition: QuestionnaireDefinition | null,
+  responses: QuestionnaireAnswer[],
+): Set<string> | null {
+  if (!definition || !definition.questions.some((question) => question.showIf)) {
+    return null;
+  }
+  return visibleQuestionIds(definition, optionAAnswersForVisibility(responses));
+}
+
 function toQuestionnaireResponseAnswers(
   responses: QuestionnaireAnswer[],
-  options?: { coordinatorNpub?: string; responseSecretKey?: Uint8Array | null },
+  options?: {
+    coordinatorNpub?: string;
+    responseSecretKey?: Uint8Array | null;
+    visibleQuestionIds?: ReadonlySet<string> | null;
+  },
 ): QuestionnaireResponseAnswer[] {
-  return responses.map((answer) => {
+  const publishedQuestionIdSet = options?.visibleQuestionIds ?? null;
+  return responses
+    .filter((answer) => !publishedQuestionIdSet || publishedQuestionIdSet.has(answer.questionId))
+    .map((answer) => {
     if (answer.type === "yes_no") {
       return {
         questionId: answer.questionId,
@@ -977,10 +1023,16 @@ function toQuestionnaireResponseAnswers(
       answerType: "free_text",
       text,
     };
-  });
+    });
 }
 
-function fromQuestionnaireResponseAnswers(answers: QuestionnaireResponseAnswer[]): QuestionnaireAnswer[] {
+/**
+ * Convert protocol answers (as the questionnaire panels render them) into the
+ * Option A ballot payload shape.  Shared with the paper-ballot manual entry
+ * screen so a manually entered ballot carries exactly the payload the digital
+ * voter flow would have produced.
+ */
+export function fromQuestionnaireResponseAnswers(answers: QuestionnaireResponseAnswer[]): QuestionnaireAnswer[] {
   return answers.map((answer) => {
     if (answer.answerType === "yes_no") {
       return {
@@ -1228,15 +1280,31 @@ export class QuestionnaireOptionAVoterRuntime {
         limit: 20,
         relays: relays.length > 0 ? relays : undefined,
       });
-      const latest = [...entries]
+      const latestEntry = [...entries]
         .filter((entry) => entry.definition.questionnaireId === input.state.electionId)
         .filter((entry) => {
           const expectedHash = input.state.inviteMessage?.definitionReference?.definitionHash?.trim() ?? "";
           return !expectedHash || questionnaireDefinitionEventHash(entry.event.content) === expectedHash;
         })
-        .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]?.definition ?? null;
-      if (latest) {
-        cacheQuestionnaireDefinitionForRuntime(latest);
+        .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0] ?? null;
+      if (latestEntry) {
+        // A definition fetched from relays carries the event content, so the wire hash is the
+        // document the Rust worker hashed. Aggregated/offline listings can omit it; hashing an
+        // absent payload throws, and because this whole block is inside the best-effort
+        // `catch` below, throwing here silently discarded a perfectly good fresh definition and
+        // left the stale cached blind key in place. Only pin the wire hash when we have it.
+        const definitionWireContent = typeof latestEntry.event.content === "string"
+          ? latestEntry.event.content
+          : "";
+        cacheQuestionnaireDefinitionForRuntime(
+          latestEntry.definition,
+          definitionWireContent
+            ? {
+              definitionHash: questionnaireDefinitionEventHash(definitionWireContent),
+              definitionEventId: latestEntry.event.id,
+            }
+            : null,
+        );
       }
     } catch {
       // A fresh public definition is preferred, but cached metadata is still usable offline.
@@ -1752,7 +1820,6 @@ export class QuestionnaireOptionAVoterRuntime {
       return false;
     }
     const definition = readCachedQuestionnaireDefinition(plan.electionId);
-    const definitionHash = definition ? questionnaireDefinitionHash(definition) : null;
     const definitionEventId = (definition as (QuestionnaireDefinition & { eventId?: string }) | null)?.eventId ?? null;
     const initial = this.state.blindRequest;
     const planScopeKeys = new Set(plan.ballotScopes.map(ballotScopeKey));
@@ -1760,7 +1827,7 @@ export class QuestionnaireOptionAVoterRuntime {
       !initial
       || plan.initialRequestId !== initial.requestId
       || plan.blindSigningKeyId !== initial.blindSigningKeyId
-      || (plan.definitionHash && definitionHash && plan.definitionHash !== definitionHash)
+      || (plan.definitionHash && definition && !questionnaireDefinitionHashMatches(plan.definitionHash, plan.electionId, definition))
       || (plan.definitionEventId && definitionEventId && plan.definitionEventId !== definitionEventId)
       || !planScopeKeys.has(ballotScopeKey(initial.ballotScope))
       || plan.ballotScopes.some((scope) => ballotScopeCredentialIndex(scope) > 2)
@@ -2311,6 +2378,16 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     const credentialIndex = Math.max(1, Math.floor(options?.credentialIndex ?? 1));
     const definition = readCachedQuestionnaireDefinition(this.state.electionId);
+    // B3: the public provisional payload must not reveal answers to questions the voter cannot
+    // see. Both channels are filtered together - the `questionIds` array/tags and `answers` -
+    // because publishing only one of them still leaks the conditioning signal.
+    const publishedQuestionIdSet = visibleQuestionIdsForDefinition(definition, this.state.draftResponses);
+    const publishQuestionIds = publishedQuestionIdSet
+      ? targetQuestionIds.filter((questionId) => publishedQuestionIdSet.has(questionId))
+      : targetQuestionIds;
+    if (publishQuestionIds.length === 0) {
+      return null;
+    }
     let responseSecretKey: Uint8Array;
     try {
       responseSecretKey = await deriveDeterministicResponseSecretKey({
@@ -2326,7 +2403,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const responseNsec = nip19.nsecEncode(responseSecretKey);
     const responseIdHash = await sha256Hex(stableStringify({
       electionId: this.state.electionId,
-      questionIds: targetQuestionIds,
+      questionIds: publishQuestionIds,
       credentialIndex,
       authorPubkey: nip19.npubEncode(getPublicKey(responseSecretKey)),
     }));
@@ -2336,17 +2413,18 @@ export class QuestionnaireOptionAVoterRuntime {
       questionnaireDefinitionEventId: null,
       responseId: `provisional_${responseIdHash.slice(0, 20)}`,
       submittedAt: Math.floor(Date.now() / 1000),
-      questionIds: targetQuestionIds,
+      questionIds: publishQuestionIds,
       credentialIndex,
       answers: toQuestionnaireResponseAnswers(responses, {
         coordinatorNpub: this.state.coordinatorNpub,
         responseSecretKey,
+        visibleQuestionIds: publishedQuestionIdSet,
       }),
       relays: this.getPreferredDmRelays(),
     });
     optionAFlowLog("voter", "provisional_response_public_publish_result", {
       electionId: this.state.electionId,
-      questionIds: targetQuestionIds,
+      questionIds: publishQuestionIds,
       credentialIndex,
       successes: published?.successes ?? 0,
       failures: published?.failures ?? 0,
@@ -3604,9 +3682,13 @@ export class QuestionnaireOptionAVoterRuntime {
       .map((questionId) => questionId.trim())
       .filter(Boolean))];
     const targetQuestionIdSet = new Set(targetQuestionIds);
-    const submissionResponses = targetQuestionIdSet.size > 0
-      ? this.state.draftResponses.filter((answer) => targetQuestionIdSet.has(answer.questionId))
-      : this.state.draftResponses;
+    // B3: a hidden question's retained answer must not reach the submission payload either.
+    const publishedQuestionIdSet = visibleQuestionIdsForDefinition(definition, this.state.draftResponses);
+    const submissionResponses = (
+      targetQuestionIdSet.size > 0
+        ? this.state.draftResponses.filter((answer) => targetQuestionIdSet.has(answer.questionId))
+        : this.state.draftResponses
+    ).filter((answer) => !publishedQuestionIdSet || publishedQuestionIdSet.has(answer.questionId));
     const credentialIndex = options?.credentialIndex ?? 1;
     const activeBallotGroup = voterBallotGroup({
       invite: this.state.inviteMessage ?? null,
@@ -3696,7 +3778,9 @@ export class QuestionnaireOptionAVoterRuntime {
         },
         tokenProofs: includeExistingCredentialBundle ? existingCredentialBundle.map((proof) => ({
           tokenCommitment: proof.tokenCommitment,
-          questionnaireId: this.state.electionId,
+          // INTEGRATION: this.state is narrowed by the guard above but
+          // TypeScript does not preserve that narrowing inside this closure.
+          questionnaireId: this.state!.electionId,
           signature: proof.credential,
           blindSigningKeyId: proof.blindSigningKeyId,
           questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
@@ -5656,7 +5740,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return {
       ...issuance,
       definition: undefined,
-      definitionHash: issuance.definitionHash ?? questionnaireDefinitionHash(definition),
+      definitionHash: issuance.definitionHash ?? resolveQuestionnaireDefinitionHash(definition.questionnaireId, definition),
       definitionEventId: issuance.definitionEventId ?? null,
     };
   }
@@ -6033,7 +6117,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
       await this.publishBlindRequestAckDm(request);
-      const definitionHash = cachedDefinition ? questionnaireDefinitionHash(cachedDefinition) : null;
+      const definitionHash = resolveQuestionnaireDefinitionHash(cachedDefinition?.questionnaireId, cachedDefinition);
       const existingIssuance = findIssuedBlindResponse(next, request);
       if (existingIssuance) {
         const enriched = this.enrichIssuanceWithDefinitionReference(existingIssuance);

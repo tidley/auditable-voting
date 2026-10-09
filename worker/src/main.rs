@@ -5004,6 +5004,92 @@ mod tests {
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn definition_hash_vectors_match_the_shared_fixture() {
+        // Track B / B1. `web/src/fixtures/questionnaireDefinitionHashVectors.json` carries, for
+        // every committed wire form of a questionnaire definition, the canonical JSON pre-image
+        // and the real SHA-256 of that pre-image. The web suite pins the pre-image and
+        // reproduces the digest with `node:crypto` (it cannot use the app's SHA-256 in unit
+        // tests: vite.config.ts substitutes an FNV-1a mock). This test pins the worker's half of
+        // the same contract with the real thing: it re-parses each wire form, canonicalises it
+        // through the production `canonical_json`, and checks both the pre-image and the digest
+        // against the shared fixture. If either implementation drifts, one of the two sides
+        // fails on the same committed bytes.
+        let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../web/src/fixtures/questionnaireDefinitionHashVectors.json");
+        let raw = fs::read_to_string(&fixture_path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", fixture_path.display()));
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("definition hash fixture is valid JSON");
+        assert_eq!(
+            fixture
+                .get("algorithm")
+                .and_then(serde_json::Value::as_str)
+                .map(|entry| entry.starts_with("sha256")),
+            Some(true),
+            "fixture must declare a sha256 algorithm"
+        );
+        let vectors = fixture
+            .get("vectors")
+            .and_then(serde_json::Value::as_array)
+            .expect("fixture carries a vectors array");
+        assert!(!vectors.is_empty(), "fixture must not be empty");
+
+        let mut checked_forms = 0usize;
+        for vector in vectors {
+            let name = vector
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("<unnamed>");
+            let expected_digest = vector
+                .get("sha256")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| panic!("{name}: vector is missing sha256"));
+            assert_eq!(
+                expected_digest.len(),
+                64,
+                "{name}: fixture digest is not a sha256 hex string"
+            );
+            let forms = vector
+                .get("forms")
+                .and_then(serde_json::Value::as_array)
+                .unwrap_or_else(|| panic!("{name}: vector is missing forms"));
+            assert!(!forms.is_empty(), "{name}: vector carries no wire forms");
+            for form in forms {
+                let content = form
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_else(|| panic!("{name}: form is missing content"));
+                let expected_canonical = form
+                    .get("canonical")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_else(|| panic!("{name}: form is missing canonical"));
+                let parsed: serde_json::Value = serde_json::from_str(content)
+                    .unwrap_or_else(|error| panic!("{name}: content is not valid JSON: {error}"));
+                let canonical = canonical_json(&parsed);
+                assert_eq!(
+                    canonical, expected_canonical,
+                    "{name}: canonical pre-image drifted from the shared fixture"
+                );
+                assert_eq!(
+                    sha256_hex(&canonical),
+                    expected_digest,
+                    "{name}: digest drifted from the shared fixture"
+                );
+                assert_eq!(
+                    questionnaire_definition_hash(&parsed),
+                    expected_digest,
+                    "{name}: questionnaire_definition_hash disagrees with the fixture"
+                );
+                checked_forms += 1;
+            }
+        }
+        assert!(
+            checked_forms >= 3,
+            "expected at least three shared wire forms, checked {checked_forms}"
+        );
+    }
+
+    #[test]
     fn persisted_state_is_reset_when_worker_identity_changes() {
         let state = WorkerPersistentState {
             worker_npub: "npub1oldworker".to_string(),

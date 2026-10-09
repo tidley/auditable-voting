@@ -161,7 +161,7 @@ describe("QuestionnaireResultsDashboard", () => {
     const noLabel = optionLabels.find((label) => label.textContent === "No");
     expect(yesLabel).toBeTruthy();
     expect(noLabel).toBeTruthy();
-    expect(Boolean(yesLabel?.compareDocumentPosition(noLabel!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(yesLabel!.compareDocumentPosition(noLabel!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("filters result cards instantly by question and option text", async () => {
@@ -361,7 +361,7 @@ describe("QuestionnaireResultsDashboard", () => {
     const noLabel = optionLabels.find((label) => label.textContent === "No");
     expect(yesLabel).toBeTruthy();
     expect(noLabel).toBeTruthy();
-    expect(Boolean(yesLabel?.compareDocumentPosition(noLabel!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(yesLabel!.compareDocumentPosition(noLabel!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   });
 
   it("shows submitted public responses as published before a final result summary", () => {

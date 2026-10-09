@@ -28,6 +28,7 @@
     "test:watch": "vitest",
     "test:course-feedback-preflight": "vitest run src/questionnaireProtocol.test.ts src/questionnaireRuntime.test.ts src/questionnaireResponderIdentity.test.ts src/questionnaireTransport.test.ts src/questionnaireCourseFeedbackPreflight.test.ts",
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts",
+    "otp:send-email": "tsx scripts/otp-send-email.mjs",
     "test:live-relays": "node scripts/live-simple-relay-check.js",
     "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js",
     "test:live-questionnaire-scale": "tsx scripts/live-questionnaire-scale-public.ts",
@@ -53,6 +54,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@cashu/cashu-ts": "^4.10.1",
     "@emnapi/core": "^1.10.0",
     "@emnapi/runtime": "^1.10.0",
     "@playwright/test": "^1.62.1",

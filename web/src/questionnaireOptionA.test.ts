@@ -837,4 +837,74 @@ describe("questionnaireOptionA", () => {
       generalInvitePow: { nonce: "42" },
     }).generalInvitePow).toEqual({ nonce: "42" });
   });
+  it("treats showIf-hidden questions as not required so a closed gate cannot block the ballot (B2)", () => {
+    const gatedDefinition: QuestionnaireDefinition = {
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: electionId,
+      title: "Gated questions",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 2,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "public",
+      eligibilityMode: "allowlist",
+      allowMultipleResponsesPerPubkey: false,
+      questions: [
+        { questionId: "q1", prompt: "Open the follow-up?", required: true, type: "yes_no" },
+        {
+          questionId: "q2",
+          prompt: "Follow-up",
+          required: true,
+          type: "yes_no",
+          showIf: { dependsOnQuestionId: "q1", requiredAnswer: { answerType: "yes_no", value: true } },
+        },
+        {
+          questionId: "q3",
+          prompt: "Chained follow-up",
+          required: true,
+          type: "yes_no",
+          showIf: { dependsOnQuestionId: "q2", requiredAnswer: { answerType: "yes_no", value: true } },
+        },
+      ],
+    };
+    const submissionWith = (
+      responses: Array<{ questionId: string; type: "yes_no"; answer: "yes" | "no" }>,
+    ) => ({
+      ...makeSubmission(),
+      payload: { electionId, responses },
+    });
+
+    // The gate is closed: q2 and q3 are hidden, so leaving them unanswered is not an error.
+    expect(validateBallotSubmission({
+      submission: submissionWith([{ questionId: "q1", type: "yes_no", answer: "no" }]),
+      electionId,
+      electionState: "open",
+      requiredQuestionIds: ["q1", "q2", "q3"],
+      definition: gatedDefinition,
+    })).toBe(true);
+
+    // The gate is open: q2 is visible and required, so it still has to be answered.
+    expect(validateBallotSubmission({
+      submission: submissionWith([{ questionId: "q1", type: "yes_no", answer: "yes" }]),
+      electionId,
+      electionState: "open",
+      requiredQuestionIds: ["q1", "q2", "q3"],
+      definition: gatedDefinition,
+    })).toBe(false);
+
+    // Mid-chain: q2 answered "no" hides q3, which therefore is not required.
+    expect(validateBallotSubmission({
+      submission: submissionWith([
+        { questionId: "q1", type: "yes_no", answer: "yes" },
+        { questionId: "q2", type: "yes_no", answer: "no" },
+      ]),
+      electionId,
+      electionState: "open",
+      requiredQuestionIds: ["q1", "q2", "q3"],
+      definition: gatedDefinition,
+    })).toBe(true);
+  });
 });

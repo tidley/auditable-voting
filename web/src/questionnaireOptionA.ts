@@ -8,10 +8,12 @@ import {
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
   type QuestionnaireDefinitionReference,
+  QuestionnaireResponseAnswer,
 } from "./questionnaireProtocol";
 import { verifyGeneralInvitePow, type GeneralInvitePowProof } from "./questionnaireGeneralInvitePow";
 import type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import type { QuestionnaireFlowMode, QuestionnaireResponseMode } from "./questionnaireProtocolConstants";
+import { visibleQuestionIds } from "./questionConditionEvaluator";
 
 export type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey };
 
@@ -217,6 +219,27 @@ export type QuestionnaireAnswer =
   | { questionId: string; type: "multiple_choice"; answer: string[] }
   | { questionId: string; type: "rank"; answer: string[] }
   | { questionId: string; type: "text"; answer: string; encryptForCoordinator?: boolean };
+
+/** Answers reduced to the shape `showIf` conditions are evaluated against. */
+export function optionAAnswersForVisibility(responses: QuestionnaireAnswer[]): Map<string, QuestionnaireResponseAnswer> {
+  const map = new Map<string, QuestionnaireResponseAnswer>();
+  for (const answer of responses) {
+    if (answer.type === "yes_no") {
+      map.set(answer.questionId, {
+        questionId: answer.questionId,
+        answerType: "yes_no",
+        value: answer.answer === "yes",
+      });
+    } else if (answer.type === "multiple_choice") {
+      map.set(answer.questionId, {
+        questionId: answer.questionId,
+        answerType: "multiple_choice",
+        selectedOptionIds: [...answer.answer],
+      });
+    }
+  }
+  return map;
+}
 
 export interface QuestionnaireBallotPayload {
   electionId: ElectionId;
@@ -1613,7 +1636,21 @@ export function validateBallotSubmission(input: {
     return false;
   }
   const answered = new Set(input.submission.payload.responses.map((entry) => entry.questionId));
-  if (!input.requiredQuestionIds.every((questionId) => answered.has(questionId))) {
+  // B2: a requirement only bites while the voter can actually see the question. Without this,
+  // closing a `showIf` gate on a required follow-up made every submission fail with
+  // `missing_required_answer`, because the caller still listed the hidden question as required.
+  // Visibility is evaluated with the same evaluator the voter UI uses, from the submission's own
+  // answers, and is transitive along the `showIf` chain.
+  const visibleQuestionIdSet = input.definition
+    ? visibleQuestionIds(
+      input.definition,
+      optionAAnswersForVisibility(input.submission.payload.responses),
+    )
+    : null;
+  const enforceableRequiredQuestionIds = input.requiredQuestionIds.filter(
+    (questionId) => visibleQuestionIdSet === null || visibleQuestionIdSet.has(questionId),
+  );
+  if (!enforceableRequiredQuestionIds.every((questionId) => answered.has(questionId))) {
     return false;
   }
   if (Array.isArray(input.submission.credentialBundle) && input.submission.credentialBundle.length > 0) {

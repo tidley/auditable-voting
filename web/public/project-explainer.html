@@ -502,6 +502,7 @@
               <li>Open an invite or request ballot access.</li>
               <li>Wait for ballot credentials.</li>
               <li>Submit each questionnaire with fresh scoped blind credentials, using the top questionnaire selector and Answer next when several invited questionnaires are waiting.</li>
+              <li>Enter a ballot that was filled in on paper from the <strong>Enter paper ballot</strong> tab: type the <code>nsec</code> printed on the ballot with its invite code, confirm the identity shown back, then answer the questions with the same controls as a digital vote.</li>
             </ul>
           </article>
           <article class="role-card">
@@ -511,6 +512,7 @@
               <li>Invite voters once, then apply that roster to later questionnaires and publish one roster-free public announcement.</li>
               <li>Invite voters or approve requests.</li>
               <li>Issue scoped blind credentials and watch results arrive.</li>
+              <li>Generate and print paper ballots for voters who cannot use the digital client, one fresh voter identity per ballot.</li>
             </ul>
           </article>
           <article class="role-card">
@@ -627,6 +629,7 @@
           <li>Backup creates an encrypted full-state snapshot for the current app namespace, including local questionnaire, invite, response, relay, proxy, and actor-state records. Restoring it replaces the current namespace state on the device.</li>
           <li>Account menus, response rows, and backup filenames show a deterministic three-word label from the BIP39 English word list for matching a profile, anonymous response identity, or backup. It is not a BIP39/NIP-06 recovery mnemonic and cannot restore the private key without the nsec or backup file.</li>
           <li>The built-in Messages view needs a local nsec identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.</li>
+          <li>A filled-in paper ballot is entered through the voter <strong>Enter paper ballot</strong> tab, which needs the <code>nsec</code> printed on the ballot. The QR code on a printed ballot encodes the <code>npub</code>, so scanning alone identifies the ballot but cannot sign in; the private key still has to be typed or pasted. A ballot entered on a device that holds no credential for it continues into the digital vote screen to request one, and a generated batch is still not persisted, so an unprinted batch is lost when the tab is closed or reloaded.</li>
           <li>The cryptographic design needs external review before production use.</li>
           <li>Large multi-organiser runs are not yet reliable on the current public relay set.</li>
         </ul>
