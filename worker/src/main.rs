@@ -5,6 +5,8 @@ mod store;
 use crate::config::WorkerConfig;
 #[cfg(test)]
 use crate::model::IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION;
+#[cfg(test)]
+use crate::model::{PrivateBallotPayload, PrivateBallotSubmissionPayload};
 use crate::model::{
     is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance,
     BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotPlan,
@@ -12,6 +14,8 @@ use crate::model::{
     BlindBallotRequestEnvelope, BlindIssuanceAck, BlindIssuanceAckEnvelope, BlindTokenProof,
     CompressedBundleEnvelope, ElectionRuntimeState, GeneralInvitePowProof,
     OptionAParticipantStatus, OptionAParticipantStatusEnvelope, OptionAParticipantStatusState,
+    PrivateBallotReceipt, PrivateBallotSubmission, PrivateQueueProgress,
+    PrivateBatchPublication, PrivateBatchReleaseReason, PrivateQueuedSubmissionPublication,
     QuestionnaireBlindPrivateKey, QuestionnaireBlindResponseEvent,
     QuestionnairePublishedResponseRef, QuestionnaireSubmissionDecisionEvent, WorkerCapability,
     WorkerDelegationCertificate, WorkerDelegationEnvelope, WorkerDelegationRevocation,
@@ -22,6 +26,7 @@ use crate::model::{
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
 };
 use crate::store::WorkerStore;
+use ::rand::seq::SliceRandom;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
@@ -72,6 +77,7 @@ const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
 const COMPRESSED_BUNDLE_MESSAGE_TYPE: &str = "optiona_compressed_bundle_dm";
 const COMPRESSED_BUNDLE_ENCODING: &str = "gzip+base64url";
 const BUNDLE_COMPRESSION_THRESHOLD_BYTES: usize = 8 * 1024;
+const IMPLEMENTATION_KIND_QUESTIONNAIRE_PRIVATE_BATCH: u16 = 6429;
 const COMPRESSED_BUNDLE_MAX_BYTES: usize = 256 * 1024;
 const UNCOMPRESSED_BUNDLE_MAX_BYTES: usize = 1024 * 1024;
 const GENERAL_INVITE_POW_DOMAIN: &str = "auditable-voting-general-invite-pow:v1";
@@ -224,6 +230,300 @@ fn sha256_hex_bytes(value: &[u8]) -> String {
 
 fn questionnaire_definition_hash(definition: &serde_json::Value) -> String {
     sha256_hex(&canonical_json(definition))
+}
+
+#[derive(Debug, Clone)]
+struct PrivateWorkerReleaseConfig {
+    dm_relays: Vec<String>,
+    batch_threshold: u64,
+    open_at: chrono::DateTime<Utc>,
+    submission_deadline: chrono::DateTime<Utc>,
+}
+
+fn private_worker_config_from_definition(
+    definition: &serde_json::Value,
+    expected_worker_npub: &str,
+) -> Result<Option<PrivateWorkerReleaseConfig>> {
+    let Some(worker) = definition.get("privateWorker") else {
+        return Ok(None);
+    };
+    let worker = worker
+        .as_object()
+        .context("privateWorker must be an object")?;
+    let npub = worker
+        .get("npub")
+        .and_then(|entry| entry.as_str())
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .context("privateWorker.npub is required")?;
+    PublicKey::from_bech32(npub).context("privateWorker.npub is invalid")?;
+    if npub != expected_worker_npub {
+        anyhow::bail!("privateWorker.npub does not match the configured worker")
+    }
+    let relays = worker
+        .get("dmRelays")
+        .and_then(|entry| entry.as_array())
+        .context("privateWorker.dmRelays must be an array")?
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::trim)
+                .filter(|relay| !relay.is_empty())
+        })
+        .collect::<Option<Vec<_>>>()
+        .context("privateWorker.dmRelays contains an invalid relay")?;
+    if relays.is_empty() {
+        anyhow::bail!("privateWorker.dmRelays must not be empty")
+    }
+    let mut dm_relays = Vec::with_capacity(relays.len());
+    for relay in relays {
+        let parsed = RelayUrl::parse(relay)
+            .with_context(|| format!("privateWorker.dmRelays contains invalid relay: {relay}"))?;
+        let relay = parsed.to_string();
+        if dm_relays.contains(&relay) {
+            anyhow::bail!("privateWorker.dmRelays contains a duplicate relay")
+        }
+        dm_relays.push(relay);
+    }
+    let batch_threshold = worker
+        .get("batchThreshold")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|value| *value > 0)
+        .context("privateWorker.batchThreshold must be a positive integer")?;
+    let submission_deadline = worker
+        .get("submissionDeadline")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|entry| chrono::DateTime::parse_from_rfc3339(entry).ok())
+        .map(|entry| entry.with_timezone(&Utc))
+        .context("privateWorker.submissionDeadline must be an ISO 8601 timestamp")?;
+    let open_at = definition
+        .get("openAt")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|timestamp| chrono::DateTime::<Utc>::from_timestamp(timestamp, 0))
+        .context("openAt must be a Unix timestamp")?;
+    if submission_deadline <= open_at {
+        anyhow::bail!("privateWorker.submissionDeadline must be after openAt")
+    }
+    if let Some(close_at) = definition.get("closeAt") {
+        let close_at = close_at
+            .as_i64()
+            .and_then(|timestamp| chrono::DateTime::<Utc>::from_timestamp(timestamp, 0))
+            .context("closeAt must be a Unix timestamp")?;
+        if submission_deadline >= close_at {
+            anyhow::bail!("privateWorker.submissionDeadline must be before closeAt")
+        }
+    }
+    Ok(Some(PrivateWorkerReleaseConfig {
+        dm_relays,
+        batch_threshold,
+        open_at,
+        submission_deadline,
+    }))
+}
+
+fn private_queue_should_release(
+    queued_count: usize,
+    config: &PrivateWorkerReleaseConfig,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    now >= config.open_at
+        && queued_count > 0
+        && (queued_count >= config.batch_threshold as usize || now >= config.submission_deadline)
+}
+
+fn private_queue_release_reason(
+    queued_count: usize,
+    config: &PrivateWorkerReleaseConfig,
+    now: chrono::DateTime<Utc>,
+) -> Option<PrivateBatchReleaseReason> {
+    if now < config.open_at || queued_count == 0 {
+        None
+    } else if queued_count >= config.batch_threshold as usize {
+        Some(PrivateBatchReleaseReason::Threshold)
+    } else if now >= config.submission_deadline {
+        Some(PrivateBatchReleaseReason::Deadline)
+    } else {
+        None
+    }
+}
+
+fn private_queue_definition_hash(election: &ElectionRuntimeState) -> String {
+    election.definition_hash.clone().unwrap_or_else(|| {
+        election
+            .definition
+            .as_ref()
+            .map(questionnaire_definition_hash)
+            .unwrap_or_default()
+    })
+}
+
+fn signed_private_ballot_relays(
+    election: &ElectionRuntimeState,
+    worker_npub: &str,
+) -> Result<Option<Vec<RelayUrl>>> {
+    let Some(definition) = election.definition.as_ref() else {
+        return Ok(None);
+    };
+    let Some(config) = private_worker_config_from_definition(definition, worker_npub)? else {
+        return Ok(None);
+    };
+    config
+        .dm_relays
+        .iter()
+        .map(|relay| {
+            RelayUrl::parse(relay)
+                .with_context(|| format!("signed private worker relay is invalid: {relay}"))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+fn private_queue_progress(
+    election_id: &str,
+    election: &ElectionRuntimeState,
+    config: &PrivateWorkerReleaseConfig,
+) -> PrivateQueueProgress {
+    PrivateQueueProgress {
+        message_type: "private_queue_progress".to_string(),
+        schema_version: 1,
+        election_id: election_id.to_string(),
+        accepted_count: election.accepted_response_count,
+        rejected_count: election.rejected_response_count,
+        queued_count: election
+            .private_queued_submissions
+            .keys()
+            .filter(|submission_id| {
+                election
+                    .private_submission_publications
+                    .get(*submission_id)
+                    .is_none_or(|publication| publication.event_id.is_none())
+            })
+            .count() as u64,
+        batch_threshold: config.batch_threshold,
+        submission_deadline: config.submission_deadline.to_rfc3339(),
+    }
+}
+
+fn private_queue_entry_is_current(
+    election: &ElectionRuntimeState,
+    publication: &PrivateQueuedSubmissionPublication,
+) -> bool {
+    !election.revoked
+        && publication.event_id.is_none()
+        && publication.delegation_id == election.delegation_id
+        && publication.definition_hash == private_queue_definition_hash(election)
+}
+
+fn prepare_private_batch_release(
+    election: &mut ElectionRuntimeState,
+    config: &PrivateWorkerReleaseConfig,
+    now: chrono::DateTime<Utc>,
+) -> Vec<(String, PrivateBallotSubmission)> {
+    if election.revoked {
+        return Vec::new();
+    }
+    let current_queued_ids = election
+        .private_queued_submissions
+        .keys()
+        .filter(|submission_id| {
+            election
+                .private_submission_publications
+                .get(*submission_id)
+                .is_some_and(|publication| private_queue_entry_is_current(election, publication))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut incomplete_batch_ids = current_queued_ids
+        .iter()
+        .filter_map(|submission_id| {
+            election
+                .private_submission_publications
+                .get(submission_id)
+                .filter(|publication| {
+                    publication.event_id.is_none() && !publication.batch_id.is_empty()
+                })
+                .map(|publication| publication.batch_id.clone())
+        })
+        .collect::<Vec<_>>();
+    incomplete_batch_ids.sort();
+    incomplete_batch_ids.dedup();
+    let (queued_ids, batch_id, release_reason) = if let Some(batch_id) = incomplete_batch_ids.first() {
+        let queued_ids = current_queued_ids
+            .into_iter()
+            .filter(|submission_id| {
+                election
+                    .private_submission_publications
+                    .get(submission_id)
+                    .is_some_and(|publication| publication.batch_id == *batch_id)
+            })
+            .collect::<Vec<_>>();
+        let release_reason = election
+            .private_batch_publications
+            .get(batch_id)
+            .map(|batch| batch.release_reason.clone())
+            .unwrap_or(PrivateBatchReleaseReason::Threshold);
+        (queued_ids, batch_id.clone(), release_reason)
+    } else {
+        let queued_ids = current_queued_ids;
+        let Some(release_reason) = private_queue_release_reason(queued_ids.len(), config, now) else {
+            return Vec::new();
+        };
+        let batch_id = {
+            let mut ids = queued_ids.clone();
+            ids.sort();
+            let digest = sha256_hex(&format!(
+                "{}:{}:{}:{}",
+                election.election_id,
+                election.delegation_id,
+                now.timestamp_nanos_opt().unwrap_or_default(),
+                ids.join(","),
+            ));
+            format!("private_batch_{}", &digest[..24])
+        };
+        (queued_ids, batch_id, release_reason)
+    };
+    let count = queued_ids.len() as u64;
+    election
+        .private_batch_publications
+        .entry(batch_id.clone())
+        .or_insert_with(|| PrivateBatchPublication {
+            batch_id: batch_id.clone(),
+            release_reason,
+            count,
+            attempts: 0,
+            prepared_event_json: None,
+            event_id: None,
+            published_at: None,
+        });
+    queued_ids
+        .into_iter()
+        .filter_map(|submission_id| {
+            let submission = election
+                .private_queued_submissions
+                .get(&submission_id)?
+                .clone();
+            let publication = election
+                .private_submission_publications
+                .get_mut(&submission_id)?;
+            if publication.batch_id.is_empty() {
+                publication.batch_id = batch_id.clone();
+            }
+            publication.attempts = publication.attempts.saturating_add(1);
+            Some((submission_id, submission))
+        })
+        .collect()
+}
+
+fn release_private_ballot_response(
+    private: &PrivateBallotSubmission,
+    worker_npub: &str,
+    released_at: i64,
+) -> Result<QuestionnaireBlindResponseEvent> {
+    let mut response = private_ballot_submission_to_response(private)?;
+    response.author_pubkey = worker_npub.to_string();
+    response.submitted_at = released_at;
+    Ok(response)
 }
 
 fn get_scope_string(scope: &serde_json::Value, camel_key: &str, snake_key: &str) -> Option<String> {
@@ -479,7 +779,8 @@ fn unwrap_compressed_bundle_value(value: serde_json::Value) -> Result<serde_json
     if compressed.len() != envelope.compressed_length {
         anyhow::bail!("compressed bundle length mismatch");
     }
-    let mut decoder = GzDecoder::new(compressed.as_slice()).take((UNCOMPRESSED_BUNDLE_MAX_BYTES + 1) as u64);
+    let mut decoder =
+        GzDecoder::new(compressed.as_slice()).take((UNCOMPRESSED_BUNDLE_MAX_BYTES + 1) as u64);
     let mut content = String::new();
     decoder
         .read_to_string(&mut content)
@@ -1026,6 +1327,146 @@ fn blind_response_token_commitments(submission: &QuestionnaireBlindResponseEvent
         .collect::<Vec<_>>()
 }
 
+fn private_ballot_submission_to_response(
+    private: &PrivateBallotSubmission,
+) -> Result<QuestionnaireBlindResponseEvent> {
+    let ballot = &private.submission;
+    if private.message_type != "private_ballot_submission"
+        || private.schema_version != 1
+        || private.election_id.trim().is_empty()
+        || private.submission_id.trim().is_empty()
+        || ballot.message_type != "ballot_submission"
+        || ballot.schema_version != 1
+        || ballot.election_id != private.election_id
+        || ballot.submission_id != private.submission_id
+        || ballot.payload.election_id != private.election_id
+        || ballot.token_commitment.trim().is_empty()
+        || ballot.blind_signing_key_id.trim().is_empty()
+        || ballot.credential.trim().is_empty()
+        || ballot.nullifier.trim().is_empty()
+    {
+        anyhow::bail!("invalid private ballot submission")
+    }
+    let submitted_at = chrono::DateTime::parse_from_rfc3339(&ballot.submitted_at)
+        .context("private ballot submittedAt must be RFC 3339")?
+        .timestamp();
+    let answers = ballot
+        .payload
+        .responses
+        .iter()
+        .map(private_answer_to_public_answer)
+        .collect::<Result<Vec<_>>>()?;
+    let primary_proof = BlindTokenProof {
+        token_commitment: ballot.token_commitment.clone(),
+        questionnaire_id: private.election_id.clone(),
+        signature: ballot.credential.clone(),
+        question_id: None,
+        ballot_scope: None,
+    };
+    let credential_bundle = ballot
+        .credential_bundle
+        .as_ref()
+        .filter(|bundle| !bundle.is_empty());
+    let token_proofs = credential_bundle
+        .map(|bundle| {
+            bundle
+                .iter()
+                .map(|proof| BlindTokenProof {
+                    token_commitment: proof.token_commitment.clone(),
+                    questionnaire_id: private.election_id.clone(),
+                    signature: proof.credential.clone(),
+                    question_id: proof.question_id.clone(),
+                    ballot_scope: proof.ballot_scope.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let token_nullifiers = credential_bundle
+        .map(|bundle| {
+            bundle
+                .iter()
+                .map(|proof| crate::model::BlindTokenNullifier {
+                    question_id: proof.question_id.clone(),
+                    token_nullifier: proof.nullifier.clone(),
+                    ballot_scope: proof.ballot_scope.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(QuestionnaireBlindResponseEvent {
+        schema_version: 1,
+        event_type: "questionnaire_response_blind".to_string(),
+        questionnaire_id: private.election_id.clone(),
+        response_id: private.submission_id.clone(),
+        submitted_at,
+        author_pubkey: ballot
+            .response_npub
+            .as_deref()
+            .unwrap_or(&ballot.invited_npub)
+            .to_string(),
+        token_nullifier: ballot.nullifier.clone(),
+        token_nullifiers,
+        token_proof: primary_proof,
+        token_proofs,
+        answers,
+    })
+}
+
+fn private_answer_to_public_answer(answer: &serde_json::Value) -> Result<serde_json::Value> {
+    let object = answer
+        .as_object()
+        .context("private ballot answer must be an object")?;
+    let question_id = object
+        .get("questionId")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .context("private ballot answer is missing questionId")?;
+    match object.get("type").and_then(|value| value.as_str()) {
+        Some("yes_no") => match object.get("answer").and_then(|value| value.as_str()) {
+            Some("yes") => Ok(
+                serde_json::json!({ "questionId": question_id, "answerType": "yes_no", "value": true }),
+            ),
+            Some("no") => Ok(
+                serde_json::json!({ "questionId": question_id, "answerType": "yes_no", "value": false }),
+            ),
+            _ => anyhow::bail!("private yes/no answer is invalid"),
+        },
+        Some("multiple_choice") => Ok(serde_json::json!({
+            "questionId": question_id,
+            "answerType": "multiple_choice",
+            "selectedOptionIds": object.get("answer").context("private multiple-choice answer is missing")?,
+        })),
+        Some("rank") => Ok(serde_json::json!({
+            "questionId": question_id,
+            "answerType": "rank",
+            "rankedOptionIds": object.get("answer").context("private rank answer is missing")?,
+        })),
+        Some("text") => Ok(serde_json::json!({
+            "questionId": question_id,
+            "answerType": "free_text",
+            "text": object.get("answer").and_then(|value| value.as_str()).context("private text answer is invalid")?,
+        })),
+        _ => anyhow::bail!("private ballot answer type is invalid"),
+    }
+}
+
+fn private_ballot_receipt(
+    private: &PrivateBallotSubmission,
+    accepted: bool,
+    received_at: String,
+    reason: Option<String>,
+) -> PrivateBallotReceipt {
+    PrivateBallotReceipt {
+        message_type: "private_ballot_receipt".to_string(),
+        schema_version: 1,
+        election_id: private.election_id.clone(),
+        submission_id: private.submission_id.clone(),
+        accepted,
+        received_at,
+        reason,
+    }
+}
+
 fn public_response_event_is_authentic(
     event: &Event,
     submission: &QuestionnaireBlindResponseEvent,
@@ -1505,7 +1946,8 @@ fn authorize_blind_request(
                 };
             }
             "available" => {
-                let max_redemptions = normalize_bearer_invite_max_redemptions(entry.max_redemptions);
+                let max_redemptions =
+                    normalize_bearer_invite_max_redemptions(entry.max_redemptions);
                 if entry.redeemed_npubs.len() >= max_redemptions {
                     entry.state = "redeemed".to_string();
                     return BlindRequestAuthorization::Rejected;
@@ -2221,6 +2663,9 @@ fn spawn_housekeeping_task(runtime: WorkerRuntime) -> JoinHandle<()> {
             if let Err(error) = runtime.finalize_completed_elections().await {
                 warn!("housekeeping completion check failed: {error}");
             }
+            if let Err(error) = runtime.flush_private_submission_batches().await {
+                warn!("housekeeping private batch release failed: {error}");
+            }
             if let Err(error) = runtime.process_eligible_deferred_blind_requests().await {
                 warn!("housekeeping deferred blind request retry failed: {error}");
             }
@@ -2400,6 +2845,9 @@ impl WorkerRuntime {
                     WorkerCapability::PublishSubmissionDecisions,
                     WorkerCapability::CloseQuestionnaire,
                     WorkerCapability::PublishResultSummary,
+                    WorkerCapability::QueuePrivateSubmissions,
+                    WorkerCapability::ReportPrivateProgress,
+                    WorkerCapability::ReleaseSubmissionBatches,
                 ],
                 advertised_relays: self
                     .config
@@ -2430,13 +2878,39 @@ impl WorkerRuntime {
         content: String,
         label: &str,
     ) -> Result<usize> {
+        let relays = self.effective_worker_private_relays().await;
+        self.send_private_msg_to_relays_best_effort(recipient, content, label, relays)
+            .await
+    }
+
+    async fn send_private_ballot_msg_best_effort(
+        &self,
+        election_id: &str,
+        recipient: PublicKey,
+        content: String,
+        label: &str,
+    ) -> Result<usize> {
+        let relays = self.effective_private_ballot_relays(election_id).await;
+        if relays.is_empty() {
+            anyhow::bail!("{label} private DM relay set is unavailable")
+        }
+        self.send_private_msg_to_relays_best_effort(recipient, content, label, relays)
+            .await
+    }
+
+    async fn send_private_msg_to_relays_best_effort(
+        &self,
+        recipient: PublicKey,
+        content: String,
+        label: &str,
+        relays: Vec<RelayUrl>,
+    ) -> Result<usize> {
         let signer = self.client.signer().await?;
         let event =
             EventBuilder::private_msg(&signer, recipient, content, std::iter::empty::<Tag>())
                 .await
                 .with_context(|| format!("{label} gift-wrap construction failed"))?;
         let mut tasks = tokio::task::JoinSet::new();
-        let relays = self.effective_worker_private_relays().await;
         self.ensure_relays_connected(&relays).await;
         for relay in relays {
             let client = self.client.clone();
@@ -2908,9 +3382,13 @@ impl WorkerRuntime {
         label: &str,
     ) -> Result<String> {
         let event = self.client.sign_event_builder(builder).await?;
+        self.publish_public_event(&event, label).await
+    }
+
+    async fn publish_public_event(&self, event: &Event, label: &str) -> Result<String> {
         let relays = self.effective_worker_relays().await;
         self.ensure_relays_connected(&relays).await;
-        let output = self.client.send_event_to(relays.clone(), &event).await?;
+        let output = self.client.send_event_to(relays.clone(), event).await?;
         for relay in output.success.iter() {
             self.record_relay_attempt_result(relay, true, label, None)
                 .await;
@@ -2932,7 +3410,7 @@ impl WorkerRuntime {
                 output.failed
             );
         }
-        self.enqueue_public_archive_event(&event, label);
+        self.enqueue_public_archive_event(event, label);
         Ok(event.id.to_hex())
     }
 
@@ -3160,7 +3638,19 @@ impl WorkerRuntime {
     }
 
     async fn effective_worker_private_relays(&self) -> Vec<RelayUrl> {
-        let relays = self.config.worker_dm_relays.clone();
+        let mut relays = self.config.worker_dm_relays.clone();
+        let state = self.state.lock().await;
+        for election in state.elections.values() {
+            if election.revoked || is_expired(&election.expires_at) {
+                continue;
+            }
+            if let Ok(Some(private_relays)) =
+                signed_private_ballot_relays(election, &self.worker_npub)
+            {
+                relays.extend(private_relays);
+            }
+        }
+        drop(state);
 
         let filtered = filter_private_dm_relays(dedupe_relays(relays));
         let fallback_relays = if filtered.is_empty() {
@@ -3175,6 +3665,30 @@ impl WorkerRuntime {
             filtered
         };
         filter_private_dm_relays(self.select_relay_retry_batch(fallback_relays).await)
+    }
+
+    async fn effective_private_ballot_relays(&self, election_id: &str) -> Vec<RelayUrl> {
+        let relays = {
+            let state = self.state.lock().await;
+            let Some(election) = state.elections.get(election_id) else {
+                return Vec::new();
+            };
+            match signed_private_ballot_relays(election, &self.worker_npub) {
+                Ok(Some(relays)) => relays,
+                Ok(None) => return Vec::new(),
+                Err(error) => {
+                    warn!(
+                        "private ballot relay set is unavailable because signed configuration is invalid: election_id={election_id}, error={error}"
+                    );
+                    return Vec::new();
+                }
+            }
+        };
+        let relays = filter_private_dm_relays(dedupe_relays(relays));
+        if relays.is_empty() {
+            return Vec::new();
+        }
+        self.select_relay_retry_batch(relays).await
     }
 
     async fn ensure_relays_connected(&self, relays: &[RelayUrl]) {
@@ -3395,6 +3909,29 @@ impl WorkerRuntime {
                     debug!("ignored invalid blind issuance acknowledgement");
                 }
             }
+            "private_ballot_submission" => {
+                let private: PrivateBallotSubmission = match serde_json::from_value(value) {
+                    Ok(parsed) => parsed,
+                    Err(_) => return Ok(ControlMessageAction::Processed(true)),
+                };
+                if authenticated_sender != private.submission.invited_npub {
+                    warn!(
+                        "private ballot ignored because authenticated sender does not match submission sender: election_id={}, submission_id={}",
+                        private.election_id, private.submission_id
+                    );
+                    return Ok(ControlMessageAction::Processed(true));
+                }
+                let recipient = PublicKey::from_bech32(authenticated_sender)
+                    .context("private ballot sender has invalid npub")?;
+                let receipt = self.handle_private_ballot_submission(private).await?;
+                self.send_private_ballot_msg_best_effort(
+                    &receipt.election_id,
+                    recipient,
+                    serde_json::to_string(&receipt)?,
+                    "private ballot receipt",
+                )
+                .await?;
+            }
             _ => return Ok(ControlMessageAction::Processed(true)),
         }
         Ok(ControlMessageAction::Processed(true))
@@ -3600,10 +4137,7 @@ impl WorkerRuntime {
             };
 
         if !public_response_event_is_authentic(event, &submission) {
-            warn!(
-                "ignored unauthenticated blind response event {}",
-                event.id
-            );
+            warn!("ignored unauthenticated blind response event {}", event.id);
             return Ok(false);
         }
 
@@ -3638,6 +4172,14 @@ impl WorkerRuntime {
     }
 
     async fn handle_submission(&self, submission: QuestionnaireBlindResponseEvent) -> Result<bool> {
+        self.handle_submission_with_decision(submission, true).await
+    }
+
+    async fn handle_submission_with_decision(
+        &self,
+        submission: QuestionnaireBlindResponseEvent,
+        publish_decision: bool,
+    ) -> Result<bool> {
         let decision = {
             let mut state = self.state.lock().await;
             let Some(election) = state.elections.get_mut(&submission.questionnaire_id) else {
@@ -3719,9 +4261,10 @@ impl WorkerRuntime {
                 });
             election.last_vote_verification_at = Some(now_iso());
 
-            let decision = if election
-                .capabilities
-                .contains(&WorkerCapability::PublishSubmissionDecisions)
+            let decision = if publish_decision
+                && election
+                    .capabilities
+                    .contains(&WorkerCapability::PublishSubmissionDecisions)
             {
                 Some(QuestionnaireSubmissionDecisionEvent {
                     schema_version: 1,
@@ -3756,6 +4299,536 @@ impl WorkerRuntime {
             }
         }
         Ok(true)
+    }
+
+    async fn handle_private_ballot_submission(
+        &self,
+        private: PrivateBallotSubmission,
+    ) -> Result<PrivateBallotReceipt> {
+        let received_at = now_iso();
+        let response = match private_ballot_submission_to_response(&private) {
+            Ok(response) => response,
+            Err(error) => {
+                return Ok(private_ballot_receipt(
+                    &private,
+                    false,
+                    received_at,
+                    Some(error.to_string()),
+                ))
+            }
+        };
+        let queue_enabled = {
+            let state = self.state.lock().await;
+            state
+                .elections
+                .get(&private.election_id)
+                .is_some_and(|election| {
+                    !election.revoked
+                        && !is_expired(&election.expires_at)
+                        && election
+                            .capabilities
+                            .contains(&WorkerCapability::QueuePrivateSubmissions)
+                        && election
+                            .capabilities
+                            .contains(&WorkerCapability::ReleaseSubmissionBatches)
+                        && election.definition.as_ref().is_some_and(|definition| {
+                            private_worker_config_from_definition(definition, &self.worker_npub)
+                                .ok()
+                                .flatten()
+                                .is_some()
+                        })
+                })
+        };
+        if !queue_enabled {
+            return Ok(private_ballot_receipt(
+                &private,
+                false,
+                received_at,
+                Some("private_queue_unavailable".to_string()),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        let Some(election) = state.elections.get_mut(&private.election_id) else {
+            return Ok(private_ballot_receipt(
+                &private,
+                false,
+                received_at,
+                Some("private_queue_unavailable".to_string()),
+            ));
+        };
+        let private_config = election.definition.as_ref().and_then(|definition| {
+            private_worker_config_from_definition(definition, &self.worker_npub)
+                .ok()
+                .flatten()
+        });
+        if election.revoked
+            || is_expired(&election.expires_at)
+            || !election
+                .capabilities
+                .contains(&WorkerCapability::QueuePrivateSubmissions)
+            || !election
+                .capabilities
+                .contains(&WorkerCapability::ReleaseSubmissionBatches)
+            || private_config.is_none()
+        {
+            return Ok(private_ballot_receipt(
+                &private,
+                false,
+                received_at,
+                Some("private_queue_unavailable".to_string()),
+            ));
+        }
+        let private_config = private_config.expect("checked above");
+        if election
+            .private_queued_submissions
+            .contains_key(&private.submission_id)
+        {
+            return Ok(private_ballot_receipt(&private, true, received_at, None));
+        }
+        let now = Utc::now();
+        if now < private_config.open_at {
+            return Ok(private_ballot_receipt(
+                &private,
+                false,
+                received_at,
+                Some("private_submission_not_open".to_string()),
+            ));
+        }
+        if now >= private_config.submission_deadline {
+            return Ok(private_ballot_receipt(
+                &private,
+                false,
+                received_at,
+                Some("private_submission_deadline_passed".to_string()),
+            ));
+        }
+        let nullifiers = blind_response_nullifiers(&response);
+        let commitments = blind_response_token_commitments(&response);
+        let queued_responses = election
+            .private_queued_submissions
+            .values()
+            .filter_map(|queued| private_ballot_submission_to_response(queued).ok())
+            .collect::<Vec<_>>();
+        let queued_nullifiers = queued_responses
+            .iter()
+            .flat_map(blind_response_nullifiers)
+            .collect::<HashSet<_>>();
+        let queued_commitments = queued_responses
+            .iter()
+            .flat_map(blind_response_token_commitments)
+            .collect::<HashSet<_>>();
+        let valid = !nullifiers.is_empty()
+            && !commitments.is_empty()
+            && nullifiers.iter().collect::<HashSet<_>>().len() == nullifiers.len()
+            && commitments.iter().collect::<HashSet<_>>().len() == commitments.len()
+            && verify_blind_response_proofs(election, &response)
+            && submission_answers_authorized_for_proofs(election, &response)
+            && !nullifiers
+                .iter()
+                .any(|nullifier| election.accepted_nullifiers.contains(nullifier))
+            && !commitments
+                .iter()
+                .any(|commitment| election.accepted_token_commitments.contains(commitment))
+            && !election
+                .processed_submission_ids
+                .contains(&private.submission_id)
+            && !nullifiers
+                .iter()
+                .any(|nullifier| queued_nullifiers.contains(nullifier))
+            && !commitments
+                .iter()
+                .any(|commitment| queued_commitments.contains(commitment));
+        if !valid {
+            return Ok(private_ballot_receipt(
+                &private,
+                false,
+                received_at,
+                Some("invalid_private_ballot".to_string()),
+            ));
+        }
+        election
+            .private_queued_submissions
+            .insert(private.submission_id.clone(), private.clone());
+        election.private_submission_publications.insert(
+            private.submission_id.clone(),
+            PrivateQueuedSubmissionPublication {
+                batch_id: String::new(),
+                created_at: Utc::now().timestamp(),
+                delegation_id: election.delegation_id.clone(),
+                definition_hash: private_queue_definition_hash(election),
+                attempts: 0,
+                event_id: None,
+                published_at: None,
+                prepared_event_json: None,
+            },
+        );
+        self.store.save(&state)?;
+        drop(state);
+        self.publish_private_queue_progress(&private.election_id)
+            .await;
+        Ok(private_ballot_receipt(&private, true, received_at, None))
+    }
+
+    async fn complete_private_batch_submission_publish(
+        &self,
+        election_id: &str,
+        submission_id: &str,
+        event_id: String,
+        response: QuestionnaireBlindResponseEvent,
+    ) -> Result<()> {
+        let publication = {
+            let state = self.state.lock().await;
+            state
+                .elections
+                .get(election_id)
+                .and_then(|election| election.private_submission_publications.get(submission_id))
+                .cloned()
+                .context("private batch publication disappeared before completion")?
+        };
+
+        if let Err(error) = self.handle_submission_with_decision(response, false).await {
+            warn!("released private ballot processing deferred to public subscription: {error}");
+        }
+
+        let mut state = self.state.lock().await;
+        if let Some(current_publication) = state
+            .elections
+            .get_mut(election_id)
+            .and_then(|election| {
+                election
+                    .private_submission_publications
+                    .get_mut(submission_id)
+            })
+            .filter(|current| {
+                current.delegation_id == publication.delegation_id
+                    && current.definition_hash == publication.definition_hash
+            })
+        {
+            current_publication.event_id = Some(event_id);
+            current_publication.published_at = Some(now_iso());
+            self.store.save(&state)?;
+        }
+        Ok(())
+    }
+
+    async fn prepare_private_batch_submission_event(
+        &self,
+        election_id: &str,
+        submission_id: &str,
+        response: &QuestionnaireBlindResponseEvent,
+        definition_event_id: Option<&str>,
+    ) -> Result<Event> {
+        let existing = {
+            let state = self.state.lock().await;
+            state.elections.get(election_id)
+                .and_then(|election| election.private_submission_publications.get(submission_id))
+                .and_then(|publication| publication.prepared_event_json.clone())
+        };
+        if let Some(event_json) = existing {
+            return serde_json::from_str(&event_json)
+                .context("stored private batch event is invalid");
+        }
+        let mut builder = EventBuilder::new(
+            Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND),
+            serde_json::to_string(response)?,
+        )
+        .custom_created_at(Timestamp::from(response.submitted_at.max(0) as u64));
+        for tag in [
+            vec!["t", "questionnaire_response_blind"],
+            vec!["q", election_id],
+            vec!["questionnaire", election_id],
+            vec!["schema", "1"],
+            vec!["etype", "questionnaire_response_blind"],
+            vec!["nullifier", response.token_nullifier.as_str()],
+        ] {
+            builder = builder.tag(Tag::parse(tag)?);
+        }
+        if let Some(definition_event_id) = definition_event_id {
+            builder = builder.tag(Tag::parse(["e", definition_event_id])?);
+        }
+        let event = self.client.sign_event_builder(builder).await?;
+        let mut state = self.state.lock().await;
+        let publication = state.elections.get_mut(election_id)
+            .and_then(|election| election.private_submission_publications.get_mut(submission_id))
+            .context("private batch publication disappeared before event preparation")?;
+        if publication.prepared_event_json.is_none() {
+            publication.prepared_event_json = Some(event.as_json());
+            self.store.save(&state)?;
+            return Ok(event);
+        }
+        serde_json::from_str(
+            publication.prepared_event_json.as_deref().expect("checked above"),
+        ).context("stored private batch event is invalid")
+    }
+
+    async fn publish_private_batch_record(&self, election_id: &str, batch_id: &str) -> Result<()> {
+        let prepared = {
+            let state = self.state.lock().await;
+            let election = state.elections.get(election_id).context("private batch election disappeared")?;
+            let batch = election.private_batch_publications.get(batch_id)
+                .context("private batch record disappeared")?;
+            if batch.event_id.is_some() || election.private_submission_publications.values().any(|entry| {
+                entry.batch_id == batch_id && entry.event_id.is_none()
+            }) {
+                return Ok(());
+            }
+            batch.prepared_event_json.clone()
+        };
+        let event = if let Some(event_json) = prepared {
+            serde_json::from_str(&event_json).context("stored private batch record is invalid")?
+        } else {
+            let (release_reason, count) = {
+                let state = self.state.lock().await;
+                let batch = state.elections.get(election_id)
+                    .and_then(|election| election.private_batch_publications.get(batch_id))
+                    .context("private batch record disappeared")?;
+                (batch.release_reason.clone(), batch.count)
+            };
+            let content = serde_json::json!({
+                "schemaVersion": 1,
+                "eventType": "private_submission_batch",
+                "electionId": election_id,
+                "batchId": batch_id,
+                "releaseReason": release_reason,
+                "count": count,
+            });
+            let mut builder = EventBuilder::new(
+                Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_PRIVATE_BATCH),
+                serde_json::to_string(&content)?,
+            );
+            for tag in [
+                vec!["t", "private_submission_batch"],
+                vec!["q", election_id],
+                vec!["questionnaire", election_id],
+                vec!["batch-id", batch_id],
+                vec!["schema", "1"],
+                vec!["etype", "private_submission_batch"],
+            ] {
+                builder = builder.tag(Tag::parse(tag)?);
+            }
+            let event = self.client.sign_event_builder(builder).await?;
+            let mut state = self.state.lock().await;
+            let batch = state.elections.get_mut(election_id)
+                .and_then(|election| election.private_batch_publications.get_mut(batch_id))
+                .context("private batch record disappeared before preparation")?;
+            if batch.prepared_event_json.is_none() {
+                batch.prepared_event_json = Some(event.as_json());
+                batch.attempts = batch.attempts.saturating_add(1);
+                self.store.save(&state)?;
+                event
+            } else {
+                serde_json::from_str(batch.prepared_event_json.as_deref().expect("checked above"))
+                    .context("stored private batch record is invalid")?
+            }
+        };
+        let event_id = self.publish_public_event(&event, "private submission batch record").await?;
+        let mut state = self.state.lock().await;
+        if let Some(batch) = state.elections.get_mut(election_id)
+            .and_then(|election| election.private_batch_publications.get_mut(batch_id)) {
+            batch.event_id = Some(event_id);
+            batch.published_at = Some(now_iso());
+            self.store.save(&state)?;
+        }
+        Ok(())
+    }
+
+    async fn flush_private_submission_batches(&self) -> Result<()> {
+        struct ReleaseJob {
+            election_id: String,
+            submission_id: String,
+            submission: PrivateBallotSubmission,
+            definition_event_id: Option<String>,
+            delegation_id: String,
+            definition_hash: String,
+        }
+
+        let mut jobs = {
+            let mut state = self.state.lock().await;
+            let now = Utc::now();
+            let mut jobs = Vec::new();
+            for election in state.elections.values_mut() {
+                if election.revoked
+                    || is_expired(&election.expires_at)
+                    || !election
+                        .capabilities
+                        .contains(&WorkerCapability::ReleaseSubmissionBatches)
+                {
+                    continue;
+                }
+                let Some(definition) = election.definition.as_ref() else {
+                    continue;
+                };
+                let Ok(Some(config)) =
+                    private_worker_config_from_definition(definition, &self.worker_npub)
+                else {
+                    continue;
+                };
+                let definition_event_id = election.definition_event_id.clone();
+                for (submission_id, submission) in
+                    prepare_private_batch_release(election, &config, now)
+                {
+                    let publication = election
+                        .private_submission_publications
+                        .get(&submission_id)
+                        .expect("publication state is persisted before release");
+                    jobs.push(ReleaseJob {
+                        election_id: election.election_id.clone(),
+                        submission_id,
+                        submission,
+                        definition_event_id: definition_event_id.clone(),
+                        delegation_id: publication.delegation_id.clone(),
+                        definition_hash: publication.definition_hash.clone(),
+                    });
+                }
+            }
+            if !jobs.is_empty() {
+                self.store.save(&state)?;
+            }
+            jobs
+        };
+        jobs.shuffle(&mut ::rand::rng());
+
+        let mut released_batches = HashSet::new();
+        for job in jobs {
+            let release_is_current = {
+                let state = self.state.lock().await;
+                state
+                    .elections
+                    .get(&job.election_id)
+                    .is_some_and(|election| {
+                        !is_expired(&election.expires_at)
+                            && election
+                                .capabilities
+                                .contains(&WorkerCapability::ReleaseSubmissionBatches)
+                            && election
+                                .private_submission_publications
+                                .get(&job.submission_id)
+                                .is_some_and(|publication| {
+                                    publication.delegation_id == job.delegation_id
+                                        && publication.definition_hash == job.definition_hash
+                                        && private_queue_entry_is_current(election, publication)
+                                })
+                    })
+            };
+            if !release_is_current {
+                continue;
+            }
+            let released_at = Utc::now().timestamp();
+            let response = match release_private_ballot_response(
+                &job.submission,
+                &self.worker_npub,
+                released_at,
+            ) {
+                Ok(response) => response,
+                Err(error) => {
+                    warn!(
+                        "private batch entry is invalid and remains retryable: election_id={}, submission_id={}, error={error}",
+                        job.election_id, job.submission_id
+                    );
+                    continue;
+                }
+            };
+            let event = self.prepare_private_batch_submission_event(
+                &job.election_id,
+                &job.submission_id,
+                &response,
+                job.definition_event_id.as_deref(),
+            ).await?;
+            let published_response: QuestionnaireBlindResponseEvent = serde_json::from_str(&event.content)
+                .context("stored private batch ballot content is invalid")?;
+            match self.publish_public_event(&event, "private submission batch ballot").await {
+                Ok(event_id) => {
+                    self.complete_private_batch_submission_publish(
+                        &job.election_id,
+                        &job.submission_id,
+                        event_id,
+                        published_response,
+                    )
+                    .await?;
+                    self.publish_private_queue_progress(&job.election_id).await;
+                    let batch_id = {
+                        let state = self.state.lock().await;
+                        state.elections.get(&job.election_id)
+                            .and_then(|election| election.private_submission_publications.get(&job.submission_id))
+                            .map(|publication| publication.batch_id.clone())
+                    };
+                    if let Some(batch_id) = batch_id {
+                        released_batches.insert((job.election_id.clone(), batch_id));
+                    }
+                }
+                Err(error) => warn!(
+                    "private batch ballot publish failed and will be retried: election_id={}, submission_id={}, error={error}",
+                    job.election_id, job.submission_id
+                ),
+            }
+        }
+        let pending_batch_records = {
+            let state = self.state.lock().await;
+            state
+                .elections
+                .iter()
+                .flat_map(|(election_id, election)| {
+                    election.private_batch_publications.iter().filter_map(move |(batch_id, batch)| {
+                        (batch.event_id.is_none()
+                            && !election.private_submission_publications.values().any(|entry| {
+                                entry.batch_id == *batch_id && entry.event_id.is_none()
+                            }))
+                        .then(|| (election_id.clone(), batch_id.clone()))
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        released_batches.extend(pending_batch_records);
+        for (election_id, batch_id) in released_batches {
+            if let Err(error) = self.publish_private_batch_record(&election_id, &batch_id).await {
+                warn!("private batch record publish failed and will be retried: election_id={election_id}, batch_id={batch_id}, error={error}");
+            }
+        }
+        Ok(())
+    }
+
+    async fn publish_private_queue_progress(&self, election_id: &str) {
+        let progress = {
+            let state = self.state.lock().await;
+            let Some(election) = state.elections.get(election_id) else {
+                return;
+            };
+            if !election
+                .capabilities
+                .contains(&WorkerCapability::ReportPrivateProgress)
+            {
+                return;
+            }
+            let Some(definition) = election.definition.as_ref() else {
+                return;
+            };
+            let config = match private_worker_config_from_definition(definition, &self.worker_npub)
+            {
+                Ok(Some(config)) => config,
+                Ok(None) => return,
+                Err(error) => {
+                    warn!("private queue progress configuration is invalid: election_id={election_id}, error={error}");
+                    return;
+                }
+            };
+            private_queue_progress(election_id, election, &config)
+        };
+        match serde_json::to_string(&progress) {
+            Ok(content) => {
+                if let Err(error) = self
+                    .send_private_ballot_msg_best_effort(
+                        election_id,
+                        self.coordinator_pubkey,
+                        content,
+                        "private queue progress",
+                    )
+                    .await
+                {
+                    warn!("private queue progress publish failed: {error}");
+                }
+            }
+            Err(error) => warn!("private queue progress serialisation failed: {error}"),
+        }
     }
 
     async fn finalize_completed_elections(&self) -> Result<()> {
@@ -4174,6 +5247,17 @@ impl WorkerRuntime {
                 snapshot.election_id, snapshot.delegation_id
             );
             return Ok(());
+        }
+        if let Some(definition) = snapshot.definition.as_ref() {
+            if let Err(error) =
+                private_worker_config_from_definition(definition, &snapshot.worker_npub)
+            {
+                warn!(
+                    "worker election config ignored because signed private worker configuration is invalid: election_id={}, delegation_id={}, error={error}",
+                    snapshot.election_id, snapshot.delegation_id
+                );
+                return Ok(());
+            }
         }
         if worker_election_config_has_blind_key_mismatch(&snapshot) {
             warn!(
@@ -4765,10 +5849,7 @@ fn csv_cell(value: &str) -> String {
     } else {
         value.to_string()
     };
-    if safe
-        .chars()
-        .any(|ch| matches!(ch, ',' | '"' | '\r' | '\n'))
-    {
+    if safe.chars().any(|ch| matches!(ch, ',' | '"' | '\r' | '\n')) {
         format!("\"{}\"", safe.replace('"', "\"\""))
     } else {
         safe
@@ -5216,6 +6297,8 @@ mod tests {
             "questionnaireId": questionnaire_id,
             "title": "Delegated definition",
             "description": "Public definition",
+            "openAt": 1,
+            "closeAt": 4_102_444_800_i64,
             "blindSigningPublicKey": {
                 "scheme": "rsabssa-sha384-pss-deterministic-v1",
                 "keyId": "key_test_public",
@@ -5683,6 +6766,778 @@ mod tests {
     }
 
     #[test]
+    fn signed_private_worker_config_requires_matching_worker_and_valid_release_settings() {
+        let worker_npub = Keys::generate().public_key().to_bech32().unwrap();
+        let definition = json!({
+            "openAt": 1796083200,
+            "closeAt": 1796169600,
+            "privateWorker": {
+                "npub": worker_npub,
+                "dmRelays": ["wss://worker.example"],
+                "batchThreshold": 2,
+                "submissionDeadline": "2026-12-01T12:00:00Z"
+            }
+        });
+
+        let config = private_worker_config_from_definition(&definition, &worker_npub)
+            .expect("valid signed private worker config")
+            .expect("private worker config is present");
+        assert_eq!(config.batch_threshold, 2);
+        assert_eq!(config.dm_relays.len(), 1);
+        assert!(private_queue_should_release(
+            2,
+            &config,
+            chrono::DateTime::parse_from_rfc3339("2026-12-01T01:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        ));
+        assert!(!private_queue_should_release(
+            2,
+            &config,
+            chrono::DateTime::parse_from_rfc3339("2026-09-30T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        ));
+        assert!(private_queue_should_release(
+            1,
+            &config,
+            chrono::DateTime::parse_from_rfc3339("2026-12-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        ));
+
+        assert!(private_worker_config_from_definition(&definition, "npub1other").is_err());
+        assert!(private_worker_config_from_definition(
+            &json!({
+                "openAt": 1796083200,
+                "closeAt": 1796169600,
+                "privateWorker": {
+                    "npub": worker_npub,
+                    "dmRelays": [],
+                    "batchThreshold": 0,
+                    "submissionDeadline": "not-a-date"
+                }
+            }),
+            &worker_npub
+        )
+        .is_err());
+        assert!(private_worker_config_from_definition(
+            &json!({
+                "openAt": 1796083200,
+                "closeAt": 1796169600,
+                "privateWorker": {
+                    "npub": worker_npub,
+                    "dmRelays": ["wss://worker.example", "wss://worker.example"],
+                    "batchThreshold": 1,
+                    "submissionDeadline": "2026-12-01T12:00:00Z"
+                }
+            }),
+            &worker_npub
+        )
+        .is_err());
+        assert!(private_worker_config_from_definition(
+            &json!({
+                "openAt": 1796083200,
+                "closeAt": 1796169600,
+                "privateWorker": {
+                    "npub": worker_npub,
+                    "dmRelays": ["wss://worker.example"],
+                    "batchThreshold": 1,
+                    "submissionDeadline": "2026-12-01T00:00:00Z"
+                }
+            }),
+            &worker_npub
+        )
+        .is_err());
+        assert!(private_worker_config_from_definition(
+            &json!({
+                "openAt": 1796083200,
+                "closeAt": 1796169600,
+                "privateWorker": {
+                    "npub": worker_npub,
+                    "dmRelays": ["wss://worker.example"],
+                    "batchThreshold": 1,
+                    "submissionDeadline": "2026-12-02T00:00:00Z"
+                }
+            }),
+            &worker_npub
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn signed_private_ballot_relays_use_only_the_definition_allowlist() {
+        let worker_npub = Keys::generate().public_key().to_bech32().unwrap();
+        let definition = json!({
+            "openAt": 1796083200,
+            "closeAt": 1796169600,
+            "privateWorker": {
+                "npub": worker_npub,
+                "dmRelays": ["wss://private-one.example", "wss://private-two.example"],
+                "batchThreshold": 2,
+                "submissionDeadline": "2026-12-01T12:00:00Z"
+            }
+        });
+        let election = ElectionRuntimeState {
+            definition: Some(definition),
+            ..ElectionRuntimeState::default()
+        };
+
+        let relays = signed_private_ballot_relays(&election, &worker_npub)
+            .expect("valid signed private worker config")
+            .expect("private relay allowlist");
+        let relays = relays
+            .into_iter()
+            .map(|relay| normalize_relay_key(&relay.to_string()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            relays,
+            vec![
+                "wss://private-one.example".to_string(),
+                "wss://private-two.example".to_string(),
+            ]
+        );
+        assert!(!relays.contains(&"wss://relay.example.com".to_string()));
+        assert!(!relays.contains(&"wss://nip17.tomdwyer.uk".to_string()));
+        assert!(!relays.contains(&"wss://nip17.com".to_string()));
+    }
+
+    #[test]
+    fn signed_private_ballot_relays_are_empty_without_valid_configuration() {
+        let worker_npub = Keys::generate().public_key().to_bech32().unwrap();
+        let election = ElectionRuntimeState::default();
+
+        assert!(signed_private_ballot_relays(&election, &worker_npub)
+            .expect("missing private worker config is not an error")
+            .is_none());
+    }
+
+    #[test]
+    fn private_queue_progress_is_aggregate_only() {
+        let election = ElectionRuntimeState {
+            accepted_response_count: 4,
+            rejected_response_count: 1,
+            private_queued_submissions: HashMap::from([
+                (
+                    "submission_waiting".to_string(),
+                    sample_private_submission("q_private_progress", "submission_waiting"),
+                ),
+                (
+                    "submission_released".to_string(),
+                    sample_private_submission("q_private_progress", "submission_released"),
+                ),
+            ]),
+            private_submission_publications: HashMap::from([(
+                "submission_released".to_string(),
+                PrivateQueuedSubmissionPublication {
+                    batch_id: "batch_1".to_string(),
+                    created_at: 1_800_000_000,
+                    delegation_id: "delegation_1".to_string(),
+                    definition_hash: "definition_1".to_string(),
+                    attempts: 1,
+                        event_id: Some("event_1".to_string()),
+                        published_at: Some("2026-10-08T12:00:00Z".to_string()),
+                        prepared_event_json: None,
+                },
+            )]),
+            ..ElectionRuntimeState::default()
+        };
+        let config = PrivateWorkerReleaseConfig {
+            dm_relays: vec!["wss://private.example".to_string()],
+            batch_threshold: 10,
+            open_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            submission_deadline: chrono::DateTime::parse_from_rfc3339("2026-10-09T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+
+        let progress = private_queue_progress("q_private_progress", &election, &config);
+        let json = serde_json::to_value(progress).expect("serialise progress");
+
+        assert_eq!(json["type"], "private_queue_progress");
+        assert_eq!(json["acceptedCount"], 4);
+        assert_eq!(json["rejectedCount"], 1);
+        assert_eq!(json["queuedCount"], 1);
+        assert_eq!(json["batchThreshold"], 10);
+        assert_eq!(json["submissionDeadline"], "2026-10-09T12:00:00+00:00");
+        assert!(json.get("submissionId").is_none());
+        assert!(json.get("invitedNpub").is_none());
+        assert!(!json.to_string().contains("submission_waiting"));
+    }
+
+    fn sample_private_submission(
+        election_id: &str,
+        submission_id: &str,
+    ) -> PrivateBallotSubmission {
+        PrivateBallotSubmission {
+            message_type: "private_ballot_submission".to_string(),
+            schema_version: 1,
+            election_id: election_id.to_string(),
+            submission_id: submission_id.to_string(),
+            submission: PrivateBallotSubmissionPayload {
+                message_type: "ballot_submission".to_string(),
+                schema_version: 1,
+                election_id: election_id.to_string(),
+                submission_id: submission_id.to_string(),
+                invited_npub: "npub1voter".to_string(),
+                response_npub: None,
+                token_commitment: "commitment".to_string(),
+                blind_signing_key_id: "key".to_string(),
+                credential: "credential".to_string(),
+                nullifier: "nullifier".to_string(),
+                credential_bundle: None,
+                payload: PrivateBallotPayload {
+                    election_id: election_id.to_string(),
+                    responses: vec![],
+                },
+                submitted_at: "2026-10-08T12:00:00Z".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn private_batch_release_persists_a_shared_batch_and_retry_state_before_publication() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_private_batch".to_string(),
+            delegation_id: "delegation_private_batch".to_string(),
+            definition_hash: Some("definition_private_batch".to_string()),
+            private_queued_submissions: HashMap::from([
+                (
+                    "submission_a".to_string(),
+                    sample_private_submission("q_private_batch", "submission_a"),
+                ),
+                (
+                    "submission_b".to_string(),
+                    sample_private_submission("q_private_batch", "submission_b"),
+                ),
+            ]),
+            private_submission_publications: HashMap::from([
+                (
+                    "submission_a".to_string(),
+                    PrivateQueuedSubmissionPublication {
+                        batch_id: String::new(),
+                        created_at: 1_800_000_000,
+                        delegation_id: "delegation_private_batch".to_string(),
+                        definition_hash: "definition_private_batch".to_string(),
+                        attempts: 0,
+                        event_id: None,
+                        published_at: None,
+                        prepared_event_json: None,
+                    },
+                ),
+                (
+                    "submission_b".to_string(),
+                    PrivateQueuedSubmissionPublication {
+                        batch_id: String::new(),
+                        created_at: 1_800_000_000,
+                        delegation_id: "delegation_private_batch".to_string(),
+                        definition_hash: "definition_private_batch".to_string(),
+                        attempts: 0,
+                        event_id: None,
+                        published_at: None,
+                        prepared_event_json: None,
+                    },
+                ),
+            ]),
+            ..ElectionRuntimeState::default()
+        };
+        let config = PrivateWorkerReleaseConfig {
+            dm_relays: vec!["wss://worker.example/".to_string()],
+            batch_threshold: 2,
+            open_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            submission_deadline: chrono::DateTime::parse_from_rfc3339("2026-12-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+
+        let batch = prepare_private_batch_release(
+            &mut election,
+            &config,
+            chrono::DateTime::parse_from_rfc3339("2026-11-30T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
+
+        assert_eq!(batch.len(), 2);
+        let publications = election.private_submission_publications;
+        assert_eq!(publications.len(), 2);
+        assert_eq!(
+            publications["submission_a"].batch_id,
+            publications["submission_b"].batch_id
+        );
+        assert_eq!(publications["submission_a"].attempts, 1);
+        assert!(publications.values().all(|entry| entry.event_id.is_none()));
+        assert_eq!(election.private_batch_publications.len(), 1);
+        let batch_record = election.private_batch_publications.values().next().expect("batch record");
+        assert_eq!(batch_record.release_reason, PrivateBatchReleaseReason::Threshold);
+        assert_eq!(batch_record.count, 2);
+        assert!(batch_record.prepared_event_json.is_none());
+    }
+
+    #[test]
+    fn private_batch_retry_keeps_its_original_members_after_a_partial_publish() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_private_immutable_batch".to_string(),
+            delegation_id: "delegation_private_immutable_batch".to_string(),
+            definition_hash: Some("definition_private_immutable_batch".to_string()),
+            private_queued_submissions: HashMap::from([
+                (
+                    "submission_a".to_string(),
+                    sample_private_submission("q_private_immutable_batch", "submission_a"),
+                ),
+                (
+                    "submission_b".to_string(),
+                    sample_private_submission("q_private_immutable_batch", "submission_b"),
+                ),
+            ]),
+            private_submission_publications: HashMap::from([
+                (
+                    "submission_a".to_string(),
+                    PrivateQueuedSubmissionPublication {
+                        batch_id: String::new(),
+                        created_at: 1_800_000_000,
+                        delegation_id: "delegation_private_immutable_batch".to_string(),
+                        definition_hash: "definition_private_immutable_batch".to_string(),
+                        attempts: 0,
+                        event_id: None,
+                        published_at: None,
+                        prepared_event_json: None,
+                    },
+                ),
+                (
+                    "submission_b".to_string(),
+                    PrivateQueuedSubmissionPublication {
+                        batch_id: String::new(),
+                        created_at: 1_800_000_000,
+                        delegation_id: "delegation_private_immutable_batch".to_string(),
+                        definition_hash: "definition_private_immutable_batch".to_string(),
+                        attempts: 0,
+                        event_id: None,
+                        published_at: None,
+                        prepared_event_json: None,
+                    },
+                ),
+            ]),
+            ..ElectionRuntimeState::default()
+        };
+        let config = PrivateWorkerReleaseConfig {
+            dm_relays: vec!["wss://worker.example/".to_string()],
+            batch_threshold: 2,
+            open_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            submission_deadline: chrono::DateTime::parse_from_rfc3339("2026-12-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+        let before_deadline = chrono::DateTime::parse_from_rfc3339("2026-11-30T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert_eq!(prepare_private_batch_release(&mut election, &config, before_deadline).len(), 2);
+        let batch_id = election.private_submission_publications["submission_a"].batch_id.clone();
+        election.private_submission_publications.get_mut("submission_a").unwrap().event_id = Some("event_a".to_string());
+        election.private_queued_submissions.insert(
+            "submission_c".to_string(),
+            sample_private_submission("q_private_immutable_batch", "submission_c"),
+        );
+        election.private_submission_publications.insert(
+            "submission_c".to_string(),
+            PrivateQueuedSubmissionPublication {
+                batch_id: String::new(),
+                created_at: 1_800_000_001,
+                delegation_id: "delegation_private_immutable_batch".to_string(),
+                definition_hash: "definition_private_immutable_batch".to_string(),
+                attempts: 0,
+                event_id: None,
+                published_at: None,
+                prepared_event_json: None,
+            },
+        );
+
+        let retry = prepare_private_batch_release(&mut election, &config, before_deadline);
+
+        assert_eq!(retry.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), vec!["submission_b"]);
+        assert_eq!(election.private_submission_publications["submission_b"].batch_id, batch_id);
+        assert!(election.private_submission_publications["submission_c"].batch_id.is_empty());
+        assert_eq!(election.private_batch_publications[&batch_id].count, 2);
+    }
+
+    #[test]
+    fn private_batch_release_withholds_a_ballot_below_the_threshold() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_private_threshold".to_string(),
+            delegation_id: "delegation_private_threshold".to_string(),
+            definition_hash: Some("definition_private_threshold".to_string()),
+            private_queued_submissions: HashMap::from([(
+                "submission_waiting".to_string(),
+                sample_private_submission("q_private_threshold", "submission_waiting"),
+            )]),
+            private_submission_publications: HashMap::from([(
+                "submission_waiting".to_string(),
+                PrivateQueuedSubmissionPublication {
+                    batch_id: String::new(),
+                    created_at: 1_800_000_000,
+                    delegation_id: "delegation_private_threshold".to_string(),
+                    definition_hash: "definition_private_threshold".to_string(),
+                    attempts: 0,
+                    event_id: None,
+                    published_at: None,
+                    prepared_event_json: None,
+                },
+            )]),
+            ..ElectionRuntimeState::default()
+        };
+        let config = PrivateWorkerReleaseConfig {
+            dm_relays: vec!["wss://worker.example/".to_string()],
+            batch_threshold: 2,
+            open_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            submission_deadline: chrono::DateTime::parse_from_rfc3339("2026-12-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+        let before_deadline = chrono::DateTime::parse_from_rfc3339("2026-11-30T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert!(prepare_private_batch_release(&mut election, &config, before_deadline).is_empty());
+        assert_eq!(
+            election.private_submission_publications["submission_waiting"].attempts,
+            0
+        );
+        assert!(
+            election.private_submission_publications["submission_waiting"]
+                .batch_id
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn private_batch_release_releases_a_ballot_below_the_threshold_at_deadline() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_private_deadline".to_string(),
+            delegation_id: "delegation_private_deadline".to_string(),
+            definition_hash: Some("definition_private_deadline".to_string()),
+            private_queued_submissions: HashMap::from([(
+                "submission_deadline".to_string(),
+                sample_private_submission("q_private_deadline", "submission_deadline"),
+            )]),
+            private_submission_publications: HashMap::from([(
+                "submission_deadline".to_string(),
+                PrivateQueuedSubmissionPublication {
+                    batch_id: String::new(),
+                    created_at: 1_800_000_000,
+                    delegation_id: "delegation_private_deadline".to_string(),
+                    definition_hash: "definition_private_deadline".to_string(),
+                    attempts: 0,
+                    event_id: None,
+                    published_at: None,
+                    prepared_event_json: None,
+                },
+            )]),
+            ..ElectionRuntimeState::default()
+        };
+        let deadline = chrono::DateTime::parse_from_rfc3339("2026-12-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let config = PrivateWorkerReleaseConfig {
+            dm_relays: vec!["wss://worker.example/".to_string()],
+            batch_threshold: 2,
+            open_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            submission_deadline: deadline,
+        };
+
+        assert_eq!(
+            prepare_private_batch_release(&mut election, &config, deadline).len(),
+            1
+        );
+        assert_eq!(
+            election.private_submission_publications["submission_deadline"].attempts,
+            1
+        );
+    }
+
+    #[test]
+    fn private_batch_retry_recovers_after_restart_and_does_not_requeue_a_recorded_publication() {
+        let state_dir = unique_worker_state_dir("private-batch-retry");
+        let store = WorkerStore::open(&state_dir).expect("open worker store");
+        let deadline = chrono::DateTime::parse_from_rfc3339("2026-12-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let config = PrivateWorkerReleaseConfig {
+            dm_relays: vec!["wss://worker.example/".to_string()],
+            batch_threshold: 1,
+            open_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            submission_deadline: deadline,
+        };
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_private_retry".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_private_retry".to_string(),
+                delegation_id: "delegation_private_retry".to_string(),
+                definition_hash: Some("definition_private_retry".to_string()),
+                private_queued_submissions: HashMap::from([(
+                    "submission_retry".to_string(),
+                    sample_private_submission("q_private_retry", "submission_retry"),
+                )]),
+                private_submission_publications: HashMap::from([(
+                    "submission_retry".to_string(),
+                    PrivateQueuedSubmissionPublication {
+                        batch_id: String::new(),
+                        created_at: 1_800_000_000,
+                        delegation_id: "delegation_private_retry".to_string(),
+                        definition_hash: "definition_private_retry".to_string(),
+                        attempts: 0,
+                        event_id: None,
+                        published_at: None,
+                        prepared_event_json: None,
+                    },
+                )]),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let release_time = chrono::DateTime::parse_from_rfc3339("2026-11-30T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let election = state
+            .elections
+            .get_mut("q_private_retry")
+            .expect("election");
+        assert_eq!(
+            prepare_private_batch_release(election, &config, release_time).len(),
+            1
+        );
+        let batch_id = election.private_submission_publications["submission_retry"]
+            .batch_id
+            .clone();
+        store
+            .save(&state)
+            .expect("persist pending publication before crash");
+
+        let mut recovered = store.load().expect("recover pending publication");
+        let election = recovered
+            .elections
+            .get_mut("q_private_retry")
+            .expect("election");
+        assert_eq!(
+            prepare_private_batch_release(election, &config, release_time).len(),
+            1
+        );
+        let publication = election
+            .private_submission_publications
+            .get_mut("submission_retry")
+            .expect("publication");
+        assert_eq!(publication.batch_id, batch_id);
+        assert_eq!(publication.attempts, 2);
+        publication.event_id = Some("published_private_ballot".to_string());
+        store.save(&recovered).expect("persist publication result");
+
+        let mut recovered_after_publish = store.load().expect("recover publication result");
+        let election = recovered_after_publish
+            .elections
+            .get_mut("q_private_retry")
+            .expect("election");
+        assert!(prepare_private_batch_release(election, &config, release_time).is_empty());
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[test]
+    fn private_batch_retry_keeps_a_persisted_prepared_public_event() {
+        let state_dir = unique_worker_state_dir("private-batch-prepared-event");
+        let store = WorkerStore::open(&state_dir).expect("open worker store");
+        let event_json = r#"{"id":"event_private_batch","pubkey":"worker","created_at":1800000000,"kind":6424,"tags":[["q","q_private_prepared"]],"content":"{}","sig":"signature"}"#;
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_private_prepared".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_private_prepared".to_string(),
+                private_submission_publications: HashMap::from([(
+                    "submission_prepared".to_string(),
+                    PrivateQueuedSubmissionPublication {
+                        batch_id: "private_batch_prepared".to_string(),
+                        created_at: 1_800_000_000,
+                        delegation_id: "delegation_private_prepared".to_string(),
+                        definition_hash: "definition_private_prepared".to_string(),
+                        attempts: 1,
+                        event_id: None,
+                        published_at: None,
+                        prepared_event_json: Some(event_json.to_string()),
+                    },
+                )]),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        store.save(&state).expect("persist prepared event before publish");
+
+        let recovered = store.load().expect("recover prepared event after crash");
+        let publication = &recovered.elections["q_private_prepared"].private_submission_publications
+            ["submission_prepared"];
+        assert_eq!(publication.prepared_event_json.as_deref(), Some(event_json));
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn successful_private_batch_publish_completes_without_hanging() {
+        let questionnaire_id = "q_private_publish";
+        let submission_id = "submission_private_publish";
+        let (definition, keypair) = test_definition_and_keypair(questionnaire_id);
+        let coordinator_keys = Keys::generate();
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            questionnaire_id.to_string(),
+            ElectionRuntimeState {
+                election_id: questionnaire_id.to_string(),
+                definition: Some(definition),
+                private_submission_publications: HashMap::from([(
+                    submission_id.to_string(),
+                    PrivateQueuedSubmissionPublication {
+                        batch_id: "private_batch".to_string(),
+                        created_at: 1_800_000_000,
+                        delegation_id: "delegation_private_publish".to_string(),
+                        definition_hash: "definition_private_publish".to_string(),
+                        attempts: 1,
+                        event_id: None,
+                        published_at: None,
+                        prepared_event_json: None,
+                    },
+                )]),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let response = signed_submission(
+            &keypair,
+            questionnaire_id,
+            submission_id,
+            "commitment_private_publish",
+            "nullifier_private_publish",
+        );
+
+        timeout(
+            Duration::from_millis(100),
+            runtime.complete_private_batch_submission_publish(
+                questionnaire_id,
+                submission_id,
+                "event_private_publish".to_string(),
+                response.clone(),
+            ),
+        )
+        .await
+        .expect("published private batch must not deadlock")
+        .expect("process published private batch");
+
+        runtime
+            .complete_private_batch_submission_publish(
+                questionnaire_id,
+                submission_id,
+                "event_private_publish_retry".to_string(),
+                response,
+            )
+            .await
+            .expect("retry completed private batch publication");
+
+        let state = runtime.state.lock().await;
+        let election = state
+            .elections
+            .get(questionnaire_id)
+            .expect("configured election");
+        assert_eq!(election.accepted_response_count, 1);
+        assert_eq!(election.rejected_response_count, 0);
+        assert_eq!(
+            election.private_submission_publications[submission_id]
+                .event_id
+                .as_deref(),
+            Some("event_private_publish_retry")
+        );
+        drop(state);
+        fs::remove_dir_all(state_dir).ok();
+    }
+
+    #[test]
+    fn private_batch_release_does_not_release_entries_after_delegation_or_config_replacement() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_private_binding".to_string(),
+            delegation_id: "delegation_original".to_string(),
+            definition_hash: Some("definition_original".to_string()),
+            private_queued_submissions: HashMap::from([(
+                "submission_a".to_string(),
+                sample_private_submission("q_private_binding", "submission_a"),
+            )]),
+            private_submission_publications: HashMap::from([(
+                "submission_a".to_string(),
+                PrivateQueuedSubmissionPublication {
+                    batch_id: String::new(),
+                    created_at: 1_800_000_000,
+                    delegation_id: "delegation_original".to_string(),
+                    definition_hash: "definition_original".to_string(),
+                    attempts: 0,
+                    event_id: None,
+                    published_at: None,
+                    prepared_event_json: None,
+                },
+            )]),
+            ..ElectionRuntimeState::default()
+        };
+        let config = PrivateWorkerReleaseConfig {
+            dm_relays: vec!["wss://worker.example/".to_string()],
+            batch_threshold: 1,
+            open_at: chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            submission_deadline: chrono::DateTime::parse_from_rfc3339("2026-12-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-30T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert_eq!(
+            prepare_private_batch_release(&mut election, &config, now).len(),
+            1
+        );
+        election.delegation_id = "delegation_replacement".to_string();
+        assert!(prepare_private_batch_release(&mut election, &config, now).is_empty());
+
+        election.delegation_id = "delegation_original".to_string();
+        election.definition_hash = Some("definition_replacement".to_string());
+        assert!(prepare_private_batch_release(&mut election, &config, now).is_empty());
+
+        election.definition_hash = Some("definition_original".to_string());
+        election.revoked = true;
+        assert!(prepare_private_batch_release(&mut election, &config, now).is_empty());
+        assert!(election
+            .private_queued_submissions
+            .contains_key("submission_a"));
+    }
+
+    #[test]
+    fn released_private_ballot_uses_the_release_time_not_voter_submitted_at() {
+        let released_at = 1_800_000_000;
+        let private = sample_private_submission("q_private_release", "submission_release");
+        let response = release_private_ballot_response(&private, "npub1worker", released_at)
+            .expect("valid private ballot");
+        let content = serde_json::to_string(&response).expect("serialise released ballot");
+
+        assert_eq!(response.author_pubkey, "npub1worker");
+        assert_eq!(response.submitted_at, released_at);
+        assert!(!content.contains(&private.submission.submitted_at));
+    }
+
+    #[test]
     fn worker_election_config_rejects_mismatched_blind_private_key() {
         let mut election = ElectionRuntimeState::default();
         let snapshot = WorkerElectionConfigSnapshot {
@@ -6088,6 +7943,10 @@ mod tests {
                 eligibility_configured: true,
                 eligibility_required: true,
                 whitelist_npubs: HashSet::from(["npub1oldvoter".to_string()]),
+                private_queued_submissions: HashMap::from([(
+                    "submission_preserved".to_string(),
+                    sample_private_submission(election_id, "submission_preserved"),
+                )]),
                 expected_invitee_count: Some(1),
                 last_election_config_version: 7,
                 ..ElectionRuntimeState::default()
@@ -6119,6 +7978,9 @@ mod tests {
             .expect("election stored");
         assert_eq!(election.last_election_config_version, 0);
         assert!(!election.eligibility_configured);
+        assert!(election
+            .private_queued_submissions
+            .contains_key("submission_preserved"));
         assert!(apply_worker_election_config(
             election,
             &WorkerElectionConfigSnapshot {
@@ -6658,7 +8520,10 @@ mod tests {
         )
         .sign_with_keys(&other_keys)
         .expect("sign mismatched response event");
-        assert!(!public_response_event_is_authentic(&mismatched_event, &submission));
+        assert!(!public_response_event_is_authentic(
+            &mismatched_event,
+            &submission
+        ));
     }
 
     #[tokio::test]
@@ -6737,6 +8602,248 @@ mod tests {
             assert!(!election.accepted_nullifiers.contains("nullifier_changed"));
         }
 
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[test]
+    fn private_ballot_submission_converts_to_the_existing_blind_response_format() {
+        let private = PrivateBallotSubmission {
+            message_type: "private_ballot_submission".to_string(),
+            schema_version: 1,
+            election_id: "q_private".to_string(),
+            submission_id: "submission_private".to_string(),
+            submission: PrivateBallotSubmissionPayload {
+                message_type: "ballot_submission".to_string(),
+                schema_version: 1,
+                election_id: "q_private".to_string(),
+                submission_id: "submission_private".to_string(),
+                invited_npub: "npub1voter".to_string(),
+                response_npub: Some("npub1response".to_string()),
+                token_commitment: "commitment_private".to_string(),
+                blind_signing_key_id: "key_private".to_string(),
+                credential: "credential_private".to_string(),
+                nullifier: "nullifier_private".to_string(),
+                credential_bundle: None,
+                payload: PrivateBallotPayload {
+                    election_id: "q_private".to_string(),
+                    responses: vec![json!({
+                        "questionId": "q1",
+                        "type": "yes_no",
+                        "answer": "yes"
+                    })],
+                },
+                submitted_at: "2026-10-08T12:00:00Z".to_string(),
+            },
+        };
+
+        let response =
+            private_ballot_submission_to_response(&private).expect("valid private submission");
+
+        assert_eq!(response.questionnaire_id, "q_private");
+        assert_eq!(response.response_id, "submission_private");
+        assert_eq!(response.author_pubkey, "npub1response");
+        assert_eq!(response.token_proof.signature, "credential_private");
+        assert_eq!(
+            response.answers,
+            vec![json!({
+                "questionId": "q1",
+                "answerType": "yes_no",
+                "value": true
+            })]
+        );
+    }
+
+    #[tokio::test]
+    async fn private_ballot_submission_is_persisted_before_a_receipt_is_issued() {
+        let questionnaire_id = "q_private_receipt";
+        let (definition, keypair) = test_definition_and_keypair(questionnaire_id);
+        let coordinator_keys = Keys::generate();
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            questionnaire_id.to_string(),
+            ElectionRuntimeState {
+                election_id: questionnaire_id.to_string(),
+                delegation_id: "delegation_private_receipt".to_string(),
+                capabilities: vec![
+                    WorkerCapability::QueuePrivateSubmissions,
+                    WorkerCapability::ReleaseSubmissionBatches,
+                ],
+                expires_at: "2099-01-01T00:00:00Z".to_string(),
+                definition: Some(definition),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        {
+            let mut state = runtime.state.lock().await;
+            state
+                .elections
+                .get_mut(questionnaire_id)
+                .expect("configured election")
+                .definition
+                .as_mut()
+                .expect("configured definition")["privateWorker"] = json!({
+                "npub": runtime.worker_npub,
+                "dmRelays": ["wss://relay.example.com"],
+                "batchThreshold": 10,
+                "submissionDeadline": "2099-01-01T00:00:00Z"
+            });
+            runtime
+                .store
+                .save(&state)
+                .expect("persist private worker config");
+        }
+        let signature = sign_test_token(
+            &keypair,
+            questionnaire_id,
+            "commitment_private_receipt",
+            None,
+        );
+        let private = PrivateBallotSubmission {
+            message_type: "private_ballot_submission".to_string(),
+            schema_version: 1,
+            election_id: questionnaire_id.to_string(),
+            submission_id: "submission_private_receipt".to_string(),
+            submission: PrivateBallotSubmissionPayload {
+                message_type: "ballot_submission".to_string(),
+                schema_version: 1,
+                election_id: questionnaire_id.to_string(),
+                submission_id: "submission_private_receipt".to_string(),
+                invited_npub: "npub1voter".to_string(),
+                response_npub: Some("npub1response".to_string()),
+                token_commitment: "commitment_private_receipt".to_string(),
+                blind_signing_key_id: "test-key".to_string(),
+                credential: signature,
+                nullifier: "nullifier_private_receipt".to_string(),
+                credential_bundle: None,
+                payload: PrivateBallotPayload {
+                    election_id: questionnaire_id.to_string(),
+                    responses: vec![json!({
+                        "questionId": "q1",
+                        "type": "yes_no",
+                        "answer": "yes"
+                    })],
+                },
+                submitted_at: "2026-10-08T12:00:00Z".to_string(),
+            },
+        };
+
+        {
+            let mut state = runtime.state.lock().await;
+            state
+                .elections
+                .get_mut(questionnaire_id)
+                .expect("configured election")
+                .definition
+                .as_mut()
+                .expect("configured definition")["openAt"] = json!(1_893_456_000_i64);
+        }
+        let before_open_receipt = runtime
+            .handle_private_ballot_submission(private.clone())
+            .await
+            .expect("reject private ballot before open");
+        assert!(!before_open_receipt.accepted);
+        assert_eq!(
+            before_open_receipt.reason.as_deref(),
+            Some("private_submission_not_open")
+        );
+        {
+            let mut state = runtime.state.lock().await;
+            state
+                .elections
+                .get_mut(questionnaire_id)
+                .expect("configured election")
+                .definition
+                .as_mut()
+                .expect("configured definition")["openAt"] = json!(1);
+        }
+
+        let receipt = runtime
+            .handle_private_ballot_submission(private.clone())
+            .await
+            .expect("handle private ballot");
+
+        assert!(receipt.accepted);
+        {
+            let state = runtime.state.lock().await;
+            let publication = state
+                .elections
+                .get(questionnaire_id)
+                .and_then(|election| {
+                    election
+                        .private_submission_publications
+                        .get(&private.submission_id)
+                })
+                .expect("bound private queue publication");
+            assert_eq!(publication.delegation_id, "delegation_private_receipt");
+            assert_eq!(
+                publication.definition_hash,
+                questionnaire_definition_hash(
+                    state
+                        .elections
+                        .get(questionnaire_id)
+                        .and_then(|election| election.definition.as_ref())
+                        .expect("configured definition")
+                )
+            );
+        }
+        let duplicate = PrivateBallotSubmission {
+            submission_id: "submission_private_duplicate".to_string(),
+            submission: PrivateBallotSubmissionPayload {
+                submission_id: "submission_private_duplicate".to_string(),
+                ..private.submission.clone()
+            },
+            ..private.clone()
+        };
+        let duplicate_receipt = runtime
+            .handle_private_ballot_submission(duplicate)
+            .await
+            .expect("handle duplicate private ballot");
+        assert!(!duplicate_receipt.accepted);
+
+        {
+            let mut state = runtime.state.lock().await;
+            state
+                .elections
+                .get_mut(questionnaire_id)
+                .expect("configured election")
+                .definition
+                .as_mut()
+                .expect("configured definition")["privateWorker"]["submissionDeadline"] =
+                json!("2000-01-01T00:00:00Z");
+        }
+        let expired_receipt = runtime
+            .handle_private_ballot_submission(PrivateBallotSubmission {
+                submission_id: "submission_private_after_deadline".to_string(),
+                submission: PrivateBallotSubmissionPayload {
+                    submission_id: "submission_private_after_deadline".to_string(),
+                    ..private.submission.clone()
+                },
+                ..private.clone()
+            })
+            .await
+            .expect("handle expired private ballot");
+        assert!(!expired_receipt.accepted);
+        assert_eq!(
+            expired_receipt.reason.as_deref(),
+            Some("private_submission_deadline_passed")
+        );
+        let retry_receipt = runtime
+            .handle_private_ballot_submission(private.clone())
+            .await
+            .expect("retry queued private ballot after deadline");
+        assert!(retry_receipt.accepted);
+        assert!(retry_receipt.reason.is_none());
+        let persisted = runtime.store.load().expect("load persisted state");
+        let election = persisted
+            .elections
+            .get(questionnaire_id)
+            .expect("persisted election");
+        assert_eq!(election.accepted_response_count, 0);
+        assert!(election
+            .private_queued_submissions
+            .contains_key("submission_private_receipt"));
+        assert_eq!(election.private_queued_submissions.len(), 1);
         let _ = fs::remove_dir_all(state_dir);
     }
 
@@ -7063,7 +9170,8 @@ mod tests {
             &mut election,
             &[BearerInviteCodeEntry {
                 election_id: "q_worker_definition".to_string(),
-                code_hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string(),
+                code_hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                    .to_string(),
                 created_at: now_iso(),
                 state: "available".to_string(),
                 credentials_per_voter: None,
@@ -7886,6 +9994,7 @@ mod tests {
     #[tokio::test]
     async fn effective_private_relays_do_not_inherit_delegated_control_relays() {
         let coordinator_keys = Keys::generate();
+        let worker_npub = Keys::generate().public_key().to_bech32().unwrap();
         let mut state = WorkerPersistentState::default();
         state.elections.insert(
             "q_worker_definition".to_string(),
@@ -7897,10 +10006,31 @@ mod tests {
                     "wss://relay.nostr.net".to_string(),
                     "wss://nos.lol".to_string(),
                 ],
+                definition: Some(json!({
+                    "openAt": 1,
+                    "closeAt": 4_102_444_800_i64,
+                    "privateWorker": {
+                        "npub": worker_npub,
+                        "dmRelays": ["wss://private-election.example"],
+                        "batchThreshold": 2,
+                        "submissionDeadline": "2099-01-01T00:00:00Z"
+                    }
+                })),
                 ..ElectionRuntimeState::default()
             },
         );
         let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        {
+            let mut state = runtime.state.lock().await;
+            state
+                .elections
+                .get_mut("q_worker_definition")
+                .expect("configured election")
+                .definition
+                .as_mut()
+                .expect("private worker definition")["privateWorker"]["npub"] =
+                json!(runtime.worker_npub);
+        }
 
         let relays = runtime
             .effective_worker_private_relays()
@@ -7911,6 +10041,7 @@ mod tests {
 
         assert!(!relays.contains(&"wss://relay.nostr.info".to_string()));
         assert!(relays.contains(&"wss://relay.example.com".to_string()));
+        assert!(relays.contains(&"wss://private-election.example".to_string()));
         assert!(!relays.contains(&"wss://relay.nostr.net".to_string()));
         assert!(!relays.contains(&"wss://nos.lol".to_string()));
 

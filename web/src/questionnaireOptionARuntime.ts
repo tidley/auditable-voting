@@ -91,6 +91,7 @@ import {
   publishOptionABallotSubmissionAckDm,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
+  sendPrivateBallotSubmission,
   publishOptionACoordinatorStateDm,
   publishOptionAVoterStateDm,
   publishOptionABlindIssuanceAckDm,
@@ -101,6 +102,8 @@ import {
   publishOptionABlindRequestDm,
   publishOptionAParticipantStatusDm,
   subscribeOptionABallotAcceptanceDms,
+  subscribePrivateBallotReceiptDms,
+  subscribePrivateBallotReceiptDmsWithNsec,
   subscribeOptionABallotSubmissionAckDms,
   subscribeOptionABallotSubmissionDms,
   subscribeOptionABlindIssuanceAckDms,
@@ -119,6 +122,7 @@ import {
   type OptionAParticipantStatus,
   type OptionAVoterStateSnapshot,
   type OptionABlindRequestFetchDiagnostics,
+  type PrivateBallotReceipt,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import {
@@ -162,6 +166,7 @@ import {
   questionBallotCredentialScope,
   questionnaireCredentialsPerVoter,
   questionnaireUsesPerQuestionCredentials,
+  validateQuestionnaireDefinition,
   type QuestionnaireCredentialsPerVoter,
   type QuestionnaireDefinition,
   type QuestionnaireResponseAnswer,
@@ -1024,6 +1029,42 @@ function timestampMs(value: string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function privateReceiptStatus(state: {
+  privateSubmissionQueued?: boolean;
+  privateSubmissionReceiptAccepted?: boolean | null;
+  privateSubmissionReceiptReason?: string | null;
+}) {
+  return state.privateSubmissionReceiptAccepted
+    ?? (state.privateSubmissionQueued ? true : state.privateSubmissionReceiptReason ? false : null);
+}
+
+function isNewerPrivateReceipt(
+  state: {
+    privateSubmissionQueued?: boolean;
+    privateSubmissionReceiptAccepted?: boolean | null;
+    privateSubmissionReceiptAt?: string | null;
+    privateSubmissionReceiptReason?: string | null;
+    submissionAcceptedAt?: string | null;
+    lastUpdatedAt: string;
+  },
+  accepted: boolean,
+  receivedAt: string,
+) {
+  const currentStatus = privateReceiptStatus(state);
+  if (currentStatus === null) {
+    return true;
+  }
+  const currentAtMs = timestampMs(state.privateSubmissionReceiptAt ?? state.submissionAcceptedAt ?? state.lastUpdatedAt);
+  const receivedAtMs = timestampMs(receivedAt);
+  if (receivedAtMs === null) {
+    return false;
+  }
+  if (currentAtMs === null) {
+    return true;
+  }
+  return receivedAtMs > currentAtMs || (receivedAtMs === currentAtMs && !accepted && currentStatus);
+}
+
 function canReplaySubmissionAfterClose(input: {
   submission: BallotSubmission;
   election: ElectionSummary;
@@ -1085,6 +1126,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private stopBlindBallotPlanSubscription: (() => void) | null = null;
   private stopSubmissionAckSubscription: (() => void) | null = null;
   private stopAcceptanceSubscription: (() => void) | null = null;
+  private stopPrivateReceiptSubscription: (() => void) | null = null;
   private bearerInviteCode: string | null = null;
   private privateInviteCredentialsPerVoter: QuestionnaireCredentialsPerVoter | null = null;
   private privateInviteBallotGroup: string | null = null;
@@ -1168,6 +1210,8 @@ export class QuestionnaireOptionAVoterRuntime {
     this.stopSubmissionAckSubscription = null;
     this.stopAcceptanceSubscription?.();
     this.stopAcceptanceSubscription = null;
+    this.stopPrivateReceiptSubscription?.();
+    this.stopPrivateReceiptSubscription = null;
   }
 
   private getPreferredDmRelays() {
@@ -1408,6 +1452,118 @@ export class QuestionnaireOptionAVoterRuntime {
     return fallbackToHint ? hinted : null;
   }
 
+  private async resolvePrivateBallotRoute() {
+    if (!this.state?.coordinatorNpub?.trim()) {
+      return null;
+    }
+    const signedDefinition = await fetchLatestQuestionnaireDefinitionByCoordinator({
+      questionnaireId: this.electionId,
+      coordinatorNpub: this.state.coordinatorNpub,
+      relays: getPreferredQuestionnaireRelays(this.electionId),
+    }).catch(() => null);
+    const definition = signedDefinition?.definition;
+    const worker = definition?.privateWorker;
+    if (!definition || !worker || !validateQuestionnaireDefinition(definition).valid) {
+      return null;
+    }
+    const [queueDelegation, releaseDelegation] = await Promise.all([
+      fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: this.electionId,
+        capability: "queue_private_submissions",
+        relays: definition.questionnaireRelays,
+        coordinatorNpub: this.state.coordinatorNpub,
+      }).catch(() => null),
+      fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: this.electionId,
+        capability: "release_submission_batches",
+        relays: definition.questionnaireRelays,
+        coordinatorNpub: this.state.coordinatorNpub,
+      }).catch(() => null),
+    ]);
+    if (
+      !queueDelegation
+      || !releaseDelegation
+      || queueDelegation.delegationId !== releaseDelegation.delegationId
+      || toNpub(queueDelegation.workerNpub) !== worker.npub.trim()
+      || toNpub(releaseDelegation.workerNpub) !== worker.npub.trim()
+    ) {
+      return null;
+    }
+    return { workerNpub: worker.npub.trim(), relays: [...worker.dmRelays] };
+  }
+
+  private startPrivateReceiptSubscription(route: { workerNpub: string; relays: string[] }) {
+    this.stopPrivateReceiptSubscription?.();
+    const input = {
+      workerNpub: route.workerNpub,
+      electionId: this.electionId,
+      relays: route.relays,
+      onReceipt: (receipt: PrivateBallotReceipt) => this.applyPrivateBallotReceipt(receipt),
+    };
+    // Private ballot receipts are addressed to the anonymous response identity.
+    const voterNsec = this.state?.responseNsec?.trim();
+    this.stopPrivateReceiptSubscription = voterNsec
+      ? subscribePrivateBallotReceiptDmsWithNsec({ ...input, nsec: voterNsec })
+      : subscribePrivateBallotReceiptDms({
+        ...input,
+        signer: this.signer,
+        since: Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS),
+      });
+  }
+
+  private applyPrivateBallotReceipt(receipt: PrivateBallotReceipt) {
+    if (!this.state?.submission || receipt.electionId !== this.electionId || receipt.submissionId !== this.state.submission.submissionId) {
+      return false;
+    }
+    if (!isNewerPrivateReceipt(this.state, receipt.accepted, receipt.receivedAt)) {
+      return false;
+    }
+    const next = receipt.accepted
+      ? reduceVoterEvent(this.state, {
+        type: "PRIVATE_BALLOT_SUBMISSION_QUEUED",
+        submissionId: receipt.submissionId,
+        receivedAt: receipt.receivedAt,
+      })
+      : reduceVoterEvent(this.state, {
+        type: "BALLOT_SUBMISSION_REJECTED",
+        submissionId: receipt.submissionId,
+        reason: receipt.reason?.trim() || "Private worker rejected the submission.",
+        decidedAt: receipt.receivedAt,
+      });
+    if (!next.ok) {
+      return false;
+    }
+    this.state = next.state;
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "private_ballot_receipt" });
+    this.refreshPrivateReceiptSubscription();
+    this.notifyStateChanged();
+    return true;
+  }
+
+  private refreshPrivateReceiptSubscription() {
+    const state = this.state;
+    const shouldSubscribe = Boolean(
+      state?.submission
+      && state.responseNsec?.trim()
+      && state.submissionAccepted === null,
+    );
+    if (!shouldSubscribe) {
+      this.stopPrivateReceiptSubscription?.();
+      this.stopPrivateReceiptSubscription = null;
+      return;
+    }
+    if (this.stopPrivateReceiptSubscription) {
+      return;
+    }
+    void this.resolvePrivateBallotRoute().then((route) => {
+      if (!route || !this.state?.submission || this.state.submissionAccepted !== null) {
+        return;
+      }
+      this.startPrivateReceiptSubscription(route);
+    }).catch(() => undefined);
+  }
+
   private rememberPrivateRelaySuccesses(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
     const relays = extractSuccessfulRelays(result);
     if (relays.length > 0) {
@@ -1439,6 +1595,10 @@ export class QuestionnaireOptionAVoterRuntime {
       submissions: state.submissions ?? {},
       submissionAccepted: state.submissionAccepted ?? null,
       submissionAcceptedAt: state.submissionAcceptedAt ?? null,
+      privateSubmissionQueued: state.privateSubmissionQueued ?? false,
+      privateSubmissionReceiptAccepted: state.privateSubmissionReceiptAccepted ?? null,
+      privateSubmissionReceiptAt: state.privateSubmissionReceiptAt ?? null,
+      privateSubmissionReceiptReason: state.privateSubmissionReceiptReason ?? null,
       submissionDecisions: state.submissionDecisions ?? {},
       lastUpdatedAt: state.lastUpdatedAt,
     };
@@ -1551,6 +1711,11 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     const currentUpdatedAtMs = Date.parse(this.state.lastUpdatedAt);
     const snapshotUpdatedAtMs = Date.parse(snapshot.lastUpdatedAt);
+    const currentReceiptStatus = privateReceiptStatus(this.state);
+    const snapshotReceiptStatus = privateReceiptStatus(snapshot);
+    const snapshotReceiptAt = snapshot.privateSubmissionReceiptAt ?? snapshot.submissionAcceptedAt ?? snapshot.lastUpdatedAt;
+    const snapshotHasNewerReceipt = snapshotReceiptStatus !== null
+      && isNewerPrivateReceipt(this.state, snapshotReceiptStatus, snapshotReceiptAt);
     const snapshotLooksNewer = Number.isFinite(snapshotUpdatedAtMs) && (
       !Number.isFinite(currentUpdatedAtMs) || snapshotUpdatedAtMs >= currentUpdatedAtMs
     );
@@ -1559,7 +1724,8 @@ export class QuestionnaireOptionAVoterRuntime {
       || (!this.state.credentialReady && snapshot.credentialReady)
       || (!this.state.submission && Boolean(snapshot.submission))
       || (Object.keys(this.state.submissions ?? {}).length === 0 && Object.keys(snapshot.submissions ?? {}).length > 0)
-      || (this.state.submissionAccepted == null && snapshot.submissionAccepted != null)
+      || (snapshotReceiptStatus === null && this.state.submissionAccepted == null && snapshot.submissionAccepted != null)
+      || snapshotHasNewerReceipt
     );
     if (!snapshotLooksNewer && !fillsMissingProgress) {
       return false;
@@ -1597,14 +1763,35 @@ export class QuestionnaireOptionAVoterRuntime {
         ...(snapshot.submissions ?? {}),
         ...(this.state.submissions ?? {}),
       },
-      submissionAccepted: this.state.submissionAccepted ?? snapshot.submissionAccepted ?? null,
-      submissionAcceptedAt: this.state.submissionAcceptedAt ?? snapshot.submissionAcceptedAt ?? null,
+      submissionAccepted: this.state.submissionAccepted ?? (snapshotReceiptStatus === null ? snapshot.submissionAccepted ?? null : null),
+      submissionAcceptedAt: this.state.submissionAcceptedAt ?? (snapshotReceiptStatus === null ? snapshot.submissionAcceptedAt ?? null : null),
+      privateSubmissionQueued: this.state.privateSubmissionQueued ?? false,
+      privateSubmissionReceiptAccepted: currentReceiptStatus,
+      privateSubmissionReceiptAt: this.state.privateSubmissionReceiptAt ?? null,
+      privateSubmissionReceiptReason: this.state.privateSubmissionReceiptReason ?? null,
       submissionDecisions: {
-        ...(snapshot.submissionDecisions ?? {}),
+        ...(snapshotReceiptStatus === null ? snapshot.submissionDecisions ?? {} : {}),
         ...(this.state.submissionDecisions ?? {}),
       },
       lastUpdatedAt: snapshotLooksNewer ? snapshot.lastUpdatedAt : this.state.lastUpdatedAt,
     };
+    if (snapshotHasNewerReceipt && next.submission) {
+      const recoveredReceipt = snapshotReceiptStatus
+        ? reduceVoterEvent(next, {
+          type: "PRIVATE_BALLOT_SUBMISSION_QUEUED",
+          submissionId: next.submission.submissionId,
+          receivedAt: snapshotReceiptAt,
+        })
+        : reduceVoterEvent(next, {
+          type: "BALLOT_SUBMISSION_REJECTED",
+          submissionId: next.submission.submissionId,
+          reason: snapshot.privateSubmissionReceiptReason?.trim() || "Private worker rejected the submission.",
+          decidedAt: snapshotReceiptAt,
+        });
+      if (recoveredReceipt.ok) {
+        next = recoveredReceipt.state;
+      }
+    }
     next = reconcileVoterCredentialReadyForDefinition(next, readCachedQuestionnaireDefinition(next.electionId));
     if (next.blindIssuance && voterHasTokenSecretForIssuance(next, next.blindIssuance)) {
       storeBlindIssuance(next.blindIssuance);
@@ -1931,6 +2118,7 @@ export class QuestionnaireOptionAVoterRuntime {
         },
       });
     }
+    this.refreshPrivateReceiptSubscription();
   }
 
   private isBlindIssuanceAcked(issuance: BlindBallotIssuance) {
@@ -3633,7 +3821,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     if (targetQuestionIds.length === 0 && this.state.submission && this.state.responseNsec && this.state.responseNpub) {
-      if (this.state.submissionAccepted === true || this.state.submissionAccepted === false) {
+      if (this.state.submissionAccepted === true || this.state.submissionAccepted === false || this.state.privateSubmissionQueued) {
         optionAFlowLog("voter", "submit_vote_republish_skipped_decided", {
           electionId: this.state.electionId,
           submissionId: this.state.submission.submissionId,
@@ -3666,6 +3854,22 @@ export class QuestionnaireOptionAVoterRuntime {
         return this.state;
       }
       this.submissionRepublishAttemptAtBySubmissionId.set(submissionId, nowMs);
+      const privateRoute = await this.resolvePrivateBallotRoute();
+      if (privateRoute) {
+        const privatePublished = await sendPrivateBallotSubmission({
+          signer: this.signer,
+          workerNpub: privateRoute.workerNpub,
+          relays: privateRoute.relays,
+          payload: this.state.submission,
+          fallbackNsec: this.state.responseNsec ?? this.fallbackNsec,
+        });
+        if (privatePublished.successes <= 0) {
+          throw new OptionARuntimeError("dm_delivery_failed", "No private worker relay accepted the ballot submission.");
+        }
+        this.startPrivateReceiptSubscription(privateRoute);
+        void this.publishVoterStateSelfDm({ reason: "submit_vote_republish_private", force: true });
+        return this.state;
+      }
       optionAFlowLog("voter", "submit_vote_republish_existing_public_submission", {
         electionId: this.state.electionId,
         submissionId,
@@ -3696,7 +3900,7 @@ export class QuestionnaireOptionAVoterRuntime {
         },
         tokenProofs: includeExistingCredentialBundle ? existingCredentialBundle.map((proof) => ({
           tokenCommitment: proof.tokenCommitment,
-          questionnaireId: this.state.electionId,
+          questionnaireId: this.electionId,
           signature: proof.credential,
           blindSigningKeyId: proof.blindSigningKeyId,
           questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
@@ -3788,6 +3992,28 @@ export class QuestionnaireOptionAVoterRuntime {
     this.startVoterDmSubscriptions();
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     void this.publishVoterStateSelfDm({ reason: "submit_vote_created", force: true });
+    const privateRoute = await this.resolvePrivateBallotRoute();
+    if (privateRoute) {
+      const privatePublished = await sendPrivateBallotSubmission({
+        signer: this.signer,
+        workerNpub: privateRoute.workerNpub,
+        relays: privateRoute.relays,
+        payload: submission,
+        fallbackNsec: responseNsec,
+      });
+      optionAFlowLog("voter", "submit_vote_private_publish_result", {
+        electionId: this.state.electionId,
+        submissionId: submission.submissionId,
+        successes: privatePublished.successes,
+        failures: privatePublished.failures,
+      });
+      if (privatePublished.successes <= 0) {
+        throw new OptionARuntimeError("dm_delivery_failed", "No private worker relay accepted the ballot submission.");
+      }
+      this.startPrivateReceiptSubscription(privateRoute);
+      void this.publishVoterStateSelfDm({ reason: "submit_vote_private_completed", force: true });
+      return this.state;
+    }
     const published = await publishQuestionnaireBlindResponsePublic({
       responseNsec,
       questionnaireId: this.state.electionId,

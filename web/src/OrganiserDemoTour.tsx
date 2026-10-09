@@ -93,19 +93,19 @@ export default function OrganiserDemoTour({ showLauncher, onPrepareDemo, onShowV
     }, 100);
   }
 
-  function afterNextPaint(action: () => void) {
+  function runAndWaitForPaint(action: () => void) {
     action();
     return new Promise<void>((resolve) => {
-      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
     });
   }
 
   function showVoters() {
-    return afterNextPaint(onShowVoters);
+    return runAndWaitForPaint(onShowVoters);
   }
 
   function showResults() {
-    return afterNextPaint(onShowResults);
+    return runAndWaitForPaint(onShowResults);
   }
 
   return (

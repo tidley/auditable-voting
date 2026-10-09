@@ -6,6 +6,7 @@ import {
   sanitiseBlindBallotIssuance,
   sanitiseBlindBallotRequest,
   type BallotAcceptanceResult,
+  type BallotCredentialProof,
   type BallotSubmission,
   type BearerInviteCodeEntry,
   type BlindBallotIssuance,
@@ -13,6 +14,7 @@ import {
   sanitiseBlindBallotPlan,
   type BlindBallotRequest,
   type CoordinatorElectionState,
+  type QuestionnaireAnswer,
   type VoterElectionLocalState,
 } from "./questionnaireOptionA";
 import type {
@@ -154,6 +156,40 @@ export type BallotSubmissionAck = {
   ackedAt: string;
 };
 
+export type PrivateBallotSubmission = {
+  type: "private_ballot_submission";
+  schemaVersion: 1;
+  electionId: string;
+  submissionId: string;
+  submission: BallotSubmission;
+};
+
+export type PrivateBallotReceipt = {
+  type: "private_ballot_receipt";
+  schemaVersion: 1;
+  electionId: string;
+  submissionId: string;
+  accepted: boolean;
+  receivedAt: string;
+  reason?: string;
+};
+
+export type PrivateQueueProgress = {
+  type: "private_queue_progress";
+  schemaVersion: 1;
+  electionId: string;
+  acceptedCount: number;
+  rejectedCount: number;
+  queuedCount: number;
+  batchThreshold: number;
+  submissionDeadline: string;
+};
+
+export type PrivateQueueMessage =
+  | PrivateBallotSubmission
+  | PrivateBallotReceipt
+  | PrivateQueueProgress;
+
 type BlindIssuanceAckDmEnvelope = {
   type: "optiona_blind_issuance_ack_dm";
   schemaVersion: 1;
@@ -212,6 +248,10 @@ export type OptionAVoterStateSnapshot = {
   submissions?: Record<string, BallotSubmission>;
   submissionAccepted?: boolean | null;
   submissionAcceptedAt?: string | null;
+  privateSubmissionQueued?: boolean;
+  privateSubmissionReceiptAccepted?: boolean | null;
+  privateSubmissionReceiptAt?: string | null;
+  privateSubmissionReceiptReason?: string | null;
   submissionDecisions?: Record<string, {
     submissionId: string;
     accepted: boolean;
@@ -367,12 +407,14 @@ function base64UrlToBytes(value: string) {
   return bytes;
 }
 
-function isCompressibleBundleEnvelope(envelope: Pick<OptionABlindDmEnvelope, "type">) {
+function isCompressibleBundleEnvelope(
+  envelope: OptionABlindDmEnvelope | PrivateQueueMessage,
+): envelope is BlindRequestBundleDmEnvelope | BlindIssuanceBundleDmEnvelope {
   return envelope.type === "optiona_blind_request_bundle_dm"
     || envelope.type === "optiona_blind_issuance_bundle_dm";
 }
 
-export function encodeOptionADmEnvelopeContent(envelope: OptionABlindDmEnvelope) {
+export function encodeOptionADmEnvelopeContent(envelope: OptionABlindDmEnvelope | PrivateQueueMessage) {
   const plainContent = JSON.stringify(envelope);
   if (!isCompressibleBundleEnvelope(envelope)) {
     return plainContent;
@@ -1201,6 +1243,169 @@ function parseBallotAcceptanceDmContent(content: string): BallotAcceptanceResult
   }
 }
 
+function isQuestionnaireAnswer(value: unknown): value is QuestionnaireAnswer {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const answer = value as Record<string, unknown>;
+  if (typeof answer.questionId !== "string") {
+    return false;
+  }
+  if (answer.type === "yes_no") {
+    return answer.answer === "yes" || answer.answer === "no";
+  }
+  if (answer.type === "multiple_choice" || answer.type === "rank") {
+    return Array.isArray(answer.answer) && answer.answer.every((entry) => typeof entry === "string");
+  }
+  return answer.type === "text"
+    && typeof answer.answer === "string"
+    && (answer.encryptForCoordinator === undefined || typeof answer.encryptForCoordinator === "boolean");
+}
+
+function isBallotScope(value: unknown) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const scope = value as Record<string, unknown>;
+  const isNullableString = (entry: unknown) => entry === null || typeof entry === "string";
+  const isNullableNumber = (entry: unknown) => entry === null || (typeof entry === "number" && Number.isFinite(entry));
+  return (scope.questionId === undefined || isNullableString(scope.questionId))
+    && (scope.slotId === undefined || isNullableString(scope.slotId))
+    && (scope.slotIndex === undefined || isNullableNumber(scope.slotIndex))
+    && (scope.version === undefined || isNullableNumber(scope.version))
+    && (scope.credentialIndex === undefined || isNullableNumber(scope.credentialIndex))
+    && (scope.allowedScopes === undefined || scope.allowedScopes === null || (
+      Array.isArray(scope.allowedScopes) && scope.allowedScopes.every((entry) => typeof entry === "string")
+    ))
+    && (scope.ballotGroup === undefined || isNullableString(scope.ballotGroup));
+}
+
+function isBallotCredentialProof(value: unknown): value is BallotCredentialProof {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proof = value as Record<string, unknown>;
+  return typeof proof.tokenCommitment === "string"
+    && typeof proof.blindSigningKeyId === "string"
+    && typeof proof.credential === "string"
+    && typeof proof.nullifier === "string"
+    && (proof.questionId === undefined || proof.questionId === null || typeof proof.questionId === "string")
+    && isBallotScope(proof.ballotScope);
+}
+
+export function parsePrivateQueueMessage(content: string): PrivateQueueMessage | null {
+  try {
+    const message = parseOptionADmEnvelopeContent(content);
+    if (
+      !message
+      || typeof message !== "object"
+      || Array.isArray(message)
+    ) {
+      return null;
+    }
+    const candidate = message as Record<string, unknown>;
+    if (
+      candidate.schemaVersion !== 1
+      || typeof candidate.electionId !== "string"
+    ) {
+      return null;
+    }
+    if (candidate.type === "private_ballot_submission") {
+      const submission = candidate.submission;
+      if (
+        !submission
+        || typeof submission !== "object"
+        || Array.isArray(submission)
+      ) {
+        return null;
+      }
+      const ballot = submission as Record<string, unknown>;
+      const payload = ballot.payload;
+      if (
+        ballot.type !== "ballot_submission"
+        || ballot.schemaVersion !== 1
+        || ballot.electionId !== candidate.electionId
+        || typeof candidate.submissionId !== "string"
+        || ballot.submissionId !== candidate.submissionId
+        || typeof ballot.invitedNpub !== "string"
+        || (ballot.responseNpub !== undefined && typeof ballot.responseNpub !== "string")
+        || typeof ballot.tokenCommitment !== "string"
+        || typeof ballot.blindSigningKeyId !== "string"
+        || typeof ballot.credential !== "string"
+        || typeof ballot.nullifier !== "string"
+        || (ballot.credentialBundle !== undefined && (
+          !Array.isArray(ballot.credentialBundle)
+          || !ballot.credentialBundle.every(isBallotCredentialProof)
+        ))
+        || !payload
+        || typeof payload !== "object"
+        || Array.isArray(payload)
+        || (payload as Record<string, unknown>).electionId !== candidate.electionId
+        || !Array.isArray((payload as Record<string, unknown>).responses)
+        || !((payload as Record<string, unknown>).responses as unknown[]).every(isQuestionnaireAnswer)
+        || typeof ballot.submittedAt !== "string"
+      ) {
+        return null;
+      }
+      return candidate as unknown as PrivateBallotSubmission;
+    }
+    if (candidate.type === "private_ballot_receipt") {
+      if (
+        typeof candidate.submissionId !== "string"
+        || typeof candidate.accepted !== "boolean"
+        || typeof candidate.receivedAt !== "string"
+        || (candidate.reason !== undefined && typeof candidate.reason !== "string")
+      ) {
+        return null;
+      }
+      return candidate as unknown as PrivateBallotReceipt;
+    }
+    if (candidate.type === "private_queue_progress") {
+      const progressFields = new Set([
+        "type",
+        "schemaVersion",
+        "electionId",
+        "acceptedCount",
+        "rejectedCount",
+        "queuedCount",
+        "batchThreshold",
+        "submissionDeadline",
+      ]);
+      const counts = [
+        candidate.acceptedCount,
+        candidate.rejectedCount,
+        candidate.queuedCount,
+        candidate.batchThreshold,
+      ];
+      if (
+        Object.keys(candidate).some((key) => !progressFields.has(key))
+        || candidate.type !== "private_queue_progress"
+        ||
+        counts.some((count) => typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
+        || typeof candidate.submissionDeadline !== "string"
+      ) {
+        return null;
+      }
+      return {
+        type: "private_queue_progress",
+        schemaVersion: 1,
+        electionId: candidate.electionId,
+        acceptedCount: candidate.acceptedCount as number,
+        rejectedCount: candidate.rejectedCount as number,
+        queuedCount: candidate.queuedCount as number,
+        batchThreshold: candidate.batchThreshold as number,
+        submissionDeadline: candidate.submissionDeadline,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function parseBlindIssuanceAckDmContent(content: string): BlindIssuanceAck | null {
   try {
     const parsed = JSON.parse(content) as Partial<BlindIssuanceAckDmEnvelope> | BlindIssuanceAck;
@@ -1448,7 +1653,7 @@ function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConf
 }
 
 function optionABlindDmSubject(
-  envelope: OptionABlindDmEnvelope,
+  envelope: OptionABlindDmEnvelope | PrivateQueueMessage,
 ) {
   switch (envelope.type) {
     case "optiona_blind_request_dm":
@@ -1485,6 +1690,12 @@ function optionABlindDmSubject(
       return "Auditable Voting worker delegation revocation";
     case "optiona_worker_election_config_dm":
       return "Auditable Voting worker election config";
+    case "private_ballot_submission":
+      return "Auditable Voting private ballot submission";
+    case "private_ballot_receipt":
+      return "Auditable Voting private ballot receipt";
+    case "private_queue_progress":
+      return "Auditable Voting private queue progress";
   }
 }
 
@@ -1493,7 +1704,7 @@ function createRumor(input: {
   recipientHex: string;
   relayUrl?: string;
   subject: string;
-  envelope: OptionABlindDmEnvelope;
+  envelope: OptionABlindDmEnvelope | PrivateQueueMessage;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -1692,6 +1903,7 @@ function createSignerGiftWrapSubscription<T>(input: {
   onValue: (value: T) => void;
   onError?: (error: Error) => void;
   validate?: (value: T, decoded: { rumorContent: string; sealPubkey: string }) => boolean;
+  strictRelays?: boolean;
 }) {
   if (!input.signer.nip44Decrypt) {
     return () => undefined;
@@ -1753,7 +1965,9 @@ function createSignerGiftWrapSubscription<T>(input: {
       const recipientRaw = await input.signer.getPublicKey();
       const recipientNpub = toNpub(recipientRaw);
       const recipientHex = toHexPubkey(recipientRaw);
-      const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+      const relays = input.strictRelays
+        ? normalizeRelaysRust(input.relays ?? [])
+        : await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
       if (closed) {
         return;
       }
@@ -1797,6 +2011,7 @@ function createSecretKeyGiftWrapSubscription<T>(input: {
   onValue: (value: T) => void;
   onError?: (error: Error) => void;
   validate?: (value: T, decoded: { rumorContent: string; sealPubkey: string }) => boolean;
+  strictRelays?: boolean;
 }) {
   let secretKey: Uint8Array;
   try {
@@ -1863,7 +2078,9 @@ function createSecretKeyGiftWrapSubscription<T>(input: {
 
   void (async () => {
     try {
-      const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+      const relays = input.strictRelays
+        ? normalizeRelaysRust(input.relays ?? [])
+        : await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
       if (closed) {
         return;
       }
@@ -1898,13 +2115,16 @@ function createSecretKeyGiftWrapSubscription<T>(input: {
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
-  envelope: OptionABlindDmEnvelope;
+  envelope: OptionABlindDmEnvelope | PrivateQueueMessage;
   fallbackNsec?: string;
   relays?: string[];
   channel: string;
+  strictRelays?: boolean;
 }) {
   const recipientHex = toHexPubkey(input.recipientNpub);
-  const relays = await resolveRecipientPublishRelays(recipientHex, buildRelays(input.relays));
+  const relays = input.strictRelays
+    ? normalizeRelaysRust(input.relays ?? [])
+    : await resolveRecipientPublishRelays(recipientHex, buildRelays(input.relays));
   optionABlindDmLog("publish_started", {
     channel: input.channel,
     recipientNpub: input.recipientNpub,
@@ -2201,6 +2421,30 @@ export async function publishOptionABallotSubmissionDm(input: {
       schemaVersion: 1,
       submission: input.submission,
       sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function sendPrivateBallotSubmission(input: {
+  signer: SignerService;
+  workerNpub: string;
+  relays?: string[];
+  payload: BallotSubmission;
+  fallbackNsec?: string;
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.workerNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    strictRelays: true,
+    channel: `optiona-private-ballot-submission:${input.payload.electionId}:${input.payload.submissionId}`,
+    envelope: {
+      type: "private_ballot_submission",
+      schemaVersion: 1,
+      electionId: input.payload.electionId,
+      submissionId: input.payload.submissionId,
+      submission: input.payload,
     },
   });
 }
@@ -4121,6 +4365,90 @@ export function subscribeOptionABallotAcceptanceDms(input: {
     keyOf: (value) => `${value.electionId}:${value.submissionId}`,
     onValue: input.onAcceptance,
     onError: input.onError,
+  });
+}
+
+export function subscribePrivateBallotReceiptDms(input: {
+  signer: SignerService;
+  workerNpub: string;
+  electionId: string;
+  relays: string[];
+  since?: number;
+  onReceipt: (receipt: PrivateBallotReceipt) => void;
+  onError?: (error: Error) => void;
+}) {
+  const workerNpub = input.workerNpub.trim();
+  return createSignerGiftWrapSubscription<PrivateBallotReceipt>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    strictRelays: true,
+    since: input.since,
+    stage: "subscribe_private_ballot_receipts",
+    parse: (content) => {
+      const message = parsePrivateQueueMessage(content);
+      return message?.type === "private_ballot_receipt" ? message : null;
+    },
+    keyOf: (value) => `${value.electionId}:${value.submissionId}:${value.receivedAt}`,
+    onValue: input.onReceipt,
+    onError: input.onError,
+    validate: (value, decoded) => (
+      value.type === "private_ballot_receipt" && toNpub(decoded.sealPubkey) === workerNpub
+    ),
+  });
+}
+
+export function subscribePrivateBallotReceiptDmsWithNsec(input: {
+  nsec: string;
+  workerNpub: string;
+  electionId: string;
+  relays: string[];
+  onReceipt: (receipt: PrivateBallotReceipt) => void;
+  onError?: (error: Error) => void;
+}) {
+  const workerNpub = input.workerNpub.trim();
+  return createSecretKeyGiftWrapSubscription<PrivateBallotReceipt>({
+    nsec: input.nsec,
+    electionId: input.electionId,
+    relays: input.relays,
+    strictRelays: true,
+    stage: "subscribe_private_ballot_receipts_nsec",
+    parse: (content) => {
+      const message = parsePrivateQueueMessage(content);
+      return message?.type === "private_ballot_receipt" ? message : null;
+    },
+    keyOf: (value) => `${value.electionId}:${value.submissionId}:${value.receivedAt}`,
+    onValue: input.onReceipt,
+    onError: input.onError,
+    validate: (value, decoded) => (
+      toNpub(decoded.sealPubkey) === workerNpub
+    ),
+  });
+}
+
+export function subscribePrivateQueueProgressDmsWithNsec(input: {
+  nsec: string;
+  workerNpub: string;
+  electionId: string;
+  relays: string[];
+  onProgress: (progress: PrivateQueueProgress) => void;
+  onError?: (error: Error) => void;
+}) {
+  const workerNpub = input.workerNpub.trim();
+  return createSecretKeyGiftWrapSubscription<PrivateQueueProgress>({
+    nsec: input.nsec,
+    electionId: input.electionId,
+    relays: input.relays,
+    strictRelays: true,
+    stage: "subscribe_private_queue_progress_nsec",
+    parse: (content) => {
+      const message = parsePrivateQueueMessage(content);
+      return message?.type === "private_queue_progress" ? message : null;
+    },
+    keyOf: (value) => `${value.electionId}:${value.acceptedCount}:${value.rejectedCount}:${value.queuedCount}:${value.submissionDeadline}`,
+    onValue: input.onProgress,
+    onError: input.onError,
+    validate: (_value, decoded) => toNpub(decoded.sealPubkey) === workerNpub,
   });
 }
 

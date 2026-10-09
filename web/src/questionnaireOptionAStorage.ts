@@ -491,6 +491,10 @@ export function saveVoterState(input: {
   writeJson(keys.acceptance, {
     submissionAccepted: input.state.submissionAccepted,
     submissionAcceptedAt: input.state.submissionAcceptedAt,
+    privateSubmissionQueued: input.state.privateSubmissionQueued ?? false,
+    privateSubmissionReceiptAccepted: input.state.privateSubmissionReceiptAccepted ?? null,
+    privateSubmissionReceiptAt: input.state.privateSubmissionReceiptAt ?? null,
+    privateSubmissionReceiptReason: input.state.privateSubmissionReceiptReason ?? null,
     submissionDecisions: input.state.submissionDecisions ?? {},
     lastUpdatedAt: input.state.lastUpdatedAt,
   });
@@ -565,6 +569,10 @@ export function loadVoterState(input: {
   const acceptance = readJson<{
     submissionAccepted?: boolean | null;
     submissionAcceptedAt?: string | null;
+    privateSubmissionQueued?: boolean;
+    privateSubmissionReceiptAccepted?: boolean | null;
+    privateSubmissionReceiptAt?: string | null;
+    privateSubmissionReceiptReason?: string | null;
     submissionDecisions?: VoterElectionLocalState["submissionDecisions"];
     lastUpdatedAt?: string;
   }>(keys.acceptance, {
@@ -618,6 +626,10 @@ export function loadVoterState(input: {
     submissions,
     submissionAccepted: acceptance.submissionAccepted ?? null,
     submissionAcceptedAt: acceptance.submissionAcceptedAt ?? null,
+    privateSubmissionQueued: acceptance.privateSubmissionQueued ?? false,
+    privateSubmissionReceiptAccepted: acceptance.privateSubmissionReceiptAccepted ?? null,
+    privateSubmissionReceiptAt: acceptance.privateSubmissionReceiptAt ?? null,
+    privateSubmissionReceiptReason: acceptance.privateSubmissionReceiptReason ?? null,
     submissionDecisions: acceptance.submissionDecisions ?? {},
     lastUpdatedAt: acceptance.lastUpdatedAt ?? new Date().toISOString(),
   };

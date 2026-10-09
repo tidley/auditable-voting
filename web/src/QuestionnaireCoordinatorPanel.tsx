@@ -11,6 +11,7 @@ import {
   validateQuestionnaireDefinition,
   questionnaireCredentialsPerVoter,
   type QuestionnaireDefinition,
+  type QuestionnairePrivateWorker,
   type QuestionnairePublishedResponseRef,
   type QuestionnaireQuestion,
   type QuestionnaireResponseAnswer,
@@ -58,9 +59,11 @@ import { findCoordinatorBlindSigningPrivateKey, listElectionSummaries, loadCoord
 import { UiButton, UiIcon, UiSelect, UiSwitch, UiTextArea, UiTextField } from "./ui/DesignLayer";
 import {
   type WorkerElectionConfigSnapshot,
+  type PrivateQueueProgress,
   fetchOptionAWorkerStatusDmsWithNsec,
   publishOptionAWorkerDelegationDm,
   publishOptionAWorkerElectionConfigDm,
+  subscribePrivateQueueProgressDmsWithNsec,
   publishOptionAWorkerDelegationRevocationDm,
 } from "./questionnaireOptionABlindDm";
 import {
@@ -575,6 +578,10 @@ type StoredQuestionnaireDraft = {
   delegatedWorkerExpiryEnabled?: boolean;
   delegatedWorkerExpiryMinutes?: string;
   delegatedWorkerCapabilities?: WorkerCapability[];
+  privateWorkerEnabled?: boolean;
+  privateWorkerDmRelays?: string;
+  privateWorkerBatchThreshold?: string;
+  privateWorkerSubmissionDeadline?: string;
   generatedWorkerNsec?: string;
   generatedWorkerNpub?: string;
   generatedWorkerCoordinatorNpub?: string;
@@ -624,7 +631,11 @@ const CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES: WorkerCapability[] = [
   "publish_submission_decisions",
   "close_questionnaire",
   "publish_result_summary",
+  "queue_private_submissions",
+  "report_private_progress",
+  "release_submission_batches",
 ];
+const DEFAULT_WORKER_CAPABILITIES = CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES.slice(0, 5);
 
 function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] {
   if (!Array.isArray(input) || input.length === 0) {
@@ -809,7 +820,11 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
         ? parsed.delegatedWorkerCapabilities.filter((entry): entry is WorkerCapability => (
           CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES.includes(entry as WorkerCapability)
         ))
-        : [...CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES],
+        : [...DEFAULT_WORKER_CAPABILITIES],
+      privateWorkerEnabled: parsed.privateWorkerEnabled === true,
+      privateWorkerDmRelays: typeof parsed.privateWorkerDmRelays === "string" ? parsed.privateWorkerDmRelays : DEFAULT_WORKER_DM_RELAYS.join(", "),
+      privateWorkerBatchThreshold: typeof parsed.privateWorkerBatchThreshold === "string" ? parsed.privateWorkerBatchThreshold : "10",
+      privateWorkerSubmissionDeadline: typeof parsed.privateWorkerSubmissionDeadline === "string" ? parsed.privateWorkerSubmissionDeadline : "",
       generatedWorkerNsec: generatedWorkerNpubFromNsec ? parsedGeneratedWorkerNsec : "",
       generatedWorkerNpub: generatedWorkerNpubFromNsec || parsedGeneratedWorkerNpub,
       generatedWorkerCoordinatorNpub: normaliseWorkerNpub(
@@ -1464,6 +1479,7 @@ function buildDefinition(input: {
   questions: QuestionnaireQuestionDraft[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   generalInvitePowDifficulty?: number;
+  privateWorker?: QuestionnairePrivateWorker;
 }): QuestionnaireDefinition {
   const createdAt = nowUnix();
   const closeAfterMinutes = Number.isFinite(input.closeAfterMinutes)
@@ -1490,6 +1506,7 @@ function buildDefinition(input: {
     ballotCredentialMode: "questionnaire",
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     ...(input.questionnaireRelays?.length ? { questionnaireRelays: input.questionnaireRelays } : {}),
+    ...(input.privateWorker ? { privateWorker: input.privateWorker } : {}),
     voterGroups: input.voterGroups ?? [],
     questions: alignQuestionBallotGroups(input.questions).map(withNormalisedQuestionBallotGroup),
   };
@@ -1626,11 +1643,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [delegatedWorkerExpiryMinutes, setDelegatedWorkerExpiryMinutes] = useState(storedDraft.delegatedWorkerExpiryMinutes ?? "");
   const [delegatedWorkerCapabilities, setDelegatedWorkerCapabilities] = useState<WorkerCapability[]>(
     (() => {
-      const filtered = (storedDraft.delegatedWorkerCapabilities ?? [...CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES])
+      const filtered = (storedDraft.delegatedWorkerCapabilities ?? DEFAULT_WORKER_CAPABILITIES)
         .filter((entry): entry is WorkerCapability => CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES.includes(entry));
-      return filtered.length > 0 ? filtered : [...CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES];
+      return filtered.length > 0 ? filtered : [...DEFAULT_WORKER_CAPABILITIES];
     })(),
   );
+  const [privateWorkerEnabled, setPrivateWorkerEnabled] = useState(storedDraft.privateWorkerEnabled ?? false);
+  const [privateWorkerDmRelays, setPrivateWorkerDmRelays] = useState(storedDraft.privateWorkerDmRelays ?? DEFAULT_WORKER_DM_RELAYS.join(", "));
+  const [privateWorkerBatchThreshold, setPrivateWorkerBatchThreshold] = useState(storedDraft.privateWorkerBatchThreshold ?? "10");
+  const [privateWorkerSubmissionDeadline, setPrivateWorkerSubmissionDeadline] = useState(storedDraft.privateWorkerSubmissionDeadline ?? "");
+  const [privateQueueProgress, setPrivateQueueProgress] = useState<PrivateQueueProgress | null>(null);
   const [workerMoreOptionsCollapsed, setWorkerMoreOptionsCollapsed] = useState(true);
   const [auditProxyExpandSignal, setAuditProxyExpandSignal] = useState(0);
   const [selectedWorkerDownloadTarget, setSelectedWorkerDownloadTarget] = useState<WorkerLauncherTargetKey>("linuxX64");
@@ -2050,6 +2072,23 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       window.clearInterval(intervalId);
     };
   }, [coordinatorNpub, coordinatorNsec]);
+
+  useEffect(() => {
+    const privateWorker = activePublishedDefinition?.privateWorker;
+    const electionId = activePublishedDefinition?.questionnaireId ?? questionnaireId.trim();
+    const pinnedWorker = normaliseWorkerNpub(activeWorkerDelegation?.workerNpub ?? "");
+    if (!coordinatorNsec.trim() || !privateWorker || !electionId || !pinnedWorker || privateWorker.npub !== pinnedWorker) {
+      setPrivateQueueProgress(null);
+      return;
+    }
+    return subscribePrivateQueueProgressDmsWithNsec({
+      nsec: coordinatorNsec.trim(),
+      workerNpub: pinnedWorker,
+      electionId,
+      relays: privateWorker.dmRelays,
+      onProgress: setPrivateQueueProgress,
+    }).close;
+  }, [activePublishedDefinition, activeWorkerDelegation, coordinatorNsec, questionnaireId]);
 
   const selectAvailableWorkerStatus = useCallback((snapshot: WorkerStatusSnapshot) => {
     const workerNpub = normaliseWorkerNpub(snapshot.workerNpub);
@@ -2964,6 +3003,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       delegatedWorkerExpiryEnabled,
       delegatedWorkerExpiryMinutes,
       delegatedWorkerCapabilities,
+      privateWorkerEnabled,
+      privateWorkerDmRelays,
+      privateWorkerBatchThreshold,
+      privateWorkerSubmissionDeadline,
       generatedWorkerNsec,
       generatedWorkerNpub,
       generatedWorkerCoordinatorNpub,
@@ -2986,6 +3029,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     delegatedWorkerNpub,
     delegationMode,
     description,
+    privateWorkerBatchThreshold,
+    privateWorkerDmRelays,
+    privateWorkerEnabled,
+    privateWorkerSubmissionDeadline,
     generatedWorkerNpub,
     generatedWorkerNsec,
     generatedWorkerCoordinatorNpub,
@@ -3211,6 +3258,12 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     if (generalInvitePowEnabled && (!Number.isInteger(powDifficulty) || powDifficulty < 0 || powDifficulty > 24)) {
       return null;
     }
+    const privateWorker = privateWorkerEnabled ? {
+      npub: normaliseWorkerNpub(delegatedWorkerNpub),
+      dmRelays: sanitizeWorkerRelays(privateWorkerDmRelays),
+      batchThreshold: Number.parseInt(privateWorkerBatchThreshold, 10),
+      submissionDeadline: privateWorkerSubmissionDeadline.trim(),
+    } : undefined;
     return buildDefinition({
       questionnaireId: questionnaireId.trim(),
       coordinatorPubkey: coordinatorNpub,
@@ -3222,8 +3275,9 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       questions,
       blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
       generalInvitePowDifficulty: generalInvitePowEnabled ? powDifficulty : 0,
+      privateWorker,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, closeTimerUnit, coordinatorNpub, description, effectiveBlindSigningPublicKey, generalInvitePowDifficulty, generalInvitePowEnabled, questionnaireId, questionnaireRelayMetadata, questions, title, voterGroups]);
+  }, [closeAfterMinutes, closeTimerEnabled, closeTimerUnit, coordinatorNpub, delegatedWorkerNpub, description, effectiveBlindSigningPublicKey, generalInvitePowDifficulty, generalInvitePowEnabled, privateWorkerBatchThreshold, privateWorkerDmRelays, privateWorkerEnabled, privateWorkerSubmissionDeadline, questionnaireId, questionnaireRelayMetadata, questions, title, voterGroups]);
 
   const selectedWorkerStatus = useMemo(() => {
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
@@ -3806,6 +3860,20 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     if (!publishPreconditionsReady) {
       setStatus("Publish draft is blocked until all readiness checks are complete.");
       return;
+    }
+    if (privateWorkerEnabled) {
+      if (delegationMode !== "delegated_worker") {
+        setStatus("Private ballot queue needs an audit proxy delegation.");
+        return;
+      }
+      if (![
+        "queue_private_submissions",
+        "report_private_progress",
+        "release_submission_batches",
+      ].every((capability) => delegatedWorkerCapabilities.includes(capability as WorkerCapability))) {
+        setStatus("Private ballot queue needs queue, progress, and release capabilities.");
+        return;
+      }
     }
 
     const ensuredKey = await props.onEnsureBlindSigningPublicKey?.().catch(() => null);
@@ -5932,6 +6000,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <p className='simple-voter-note'><strong>Last blind issuance</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastBlindIssuanceAt, "Not reported")}</span></p>
                     <p className='simple-voter-note'><strong>Last vote verification</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastVoteVerificationAt, "Not reported")}</span></p>
                     <p className='simple-voter-note'><strong>Last decision publish</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastDecisionPublishAt, "Not reported")}</span></p>
+                    {privateQueueProgress ? <p className='simple-voter-note'><strong>Private queue</strong><span>{privateQueueProgress.queuedCount} queued, {privateQueueProgress.acceptedCount} accepted, {privateQueueProgress.rejectedCount} rejected. Releases at {privateQueueProgress.batchThreshold} queued or {formatWorkerTime(privateQueueProgress.submissionDeadline, "the deadline")}.</span></p> : null}
                   </div>
                   <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
                     <UiButton
@@ -6036,7 +6105,66 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                             isSelected={delegatedWorkerCapabilities.includes("publish_result_summary")}
                             onChange={() => toggleWorkerCapability("publish_result_summary")}
                           />
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Queue private submissions'
+                            isSelected={delegatedWorkerCapabilities.includes("queue_private_submissions")}
+                            onChange={() => toggleWorkerCapability("queue_private_submissions")}
+                          />
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Report private queue progress'
+                            isSelected={delegatedWorkerCapabilities.includes("report_private_progress")}
+                            onChange={() => toggleWorkerCapability("report_private_progress")}
+                          />
+                          <UiSwitch
+                            className='simple-delegate-capability-row'
+                            label='Release private submission batches'
+                            isSelected={delegatedWorkerCapabilities.includes("release_submission_batches")}
+                            onChange={() => toggleWorkerCapability("release_submission_batches")}
+                          />
                         </div>
+                      </section>
+
+                      <section className='simple-delegate-section'>
+                        <h4 className='simple-delegate-title'>Private ballot queue</h4>
+                        <UiSwitch
+                          className='simple-delegate-capability-row'
+                          label='Enable private ballot queue'
+                          isSelected={privateWorkerEnabled}
+                          onChange={setPrivateWorkerEnabled}
+                        />
+                        {privateWorkerEnabled ? (
+                          <>
+                            <UiTextArea
+                              label='Private ballot relays'
+                              textAreaClassName='simple-voter-input'
+                              textAreaProps={{
+                                rows: 2,
+                                value: privateWorkerDmRelays,
+                                onChange: (event) => setPrivateWorkerDmRelays(event.target.value),
+                              }}
+                            />
+                            <UiTextField
+                              label='Private batch threshold'
+                              inputClassName='simple-voter-input'
+                              inputProps={{
+                                value: privateWorkerBatchThreshold,
+                                inputMode: 'numeric',
+                                onChange: (event) => setPrivateWorkerBatchThreshold(event.target.value),
+                              }}
+                            />
+                            <UiTextField
+                              label='Private submission deadline'
+                              inputClassName='simple-voter-input'
+                              inputProps={{
+                                value: privateWorkerSubmissionDeadline,
+                                placeholder: '2027-01-01T12:00:00Z',
+                                onChange: (event) => setPrivateWorkerSubmissionDeadline(event.target.value),
+                              }}
+                            />
+                          </>
+                        ) : null}
                       </section>
                     </div>
                   </div>

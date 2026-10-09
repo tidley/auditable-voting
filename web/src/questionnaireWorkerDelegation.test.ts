@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   loadStoredWorkerDelegation,
+  isDelegatedWorkerCapabilityEnabled,
   nextWorkerElectionConfigVersion,
   selectWorkerDelegationForConfig,
   upsertStoredWorkerDelegation,
@@ -61,6 +62,32 @@ describe("worker delegation storage", () => {
 
     expect(stored?.activeDelegation?.delegationId).toBe(newer.delegationId);
     expect(loadStoredWorkerDelegation(newer.electionId)?.activeDelegation?.delegationId).toBe(newer.delegationId);
+  });
+
+  it("authorises private ballot batching only when it is delegated", () => {
+    const active = {
+      ...delegation("delegation_private_batch", "2026-07-13T11:47:50.000Z"),
+      capabilities: ["queue_private_submissions"] as const,
+      expiresAt: "2026-07-14T12:00:00.000Z",
+    };
+    upsertStoredWorkerDelegation({
+      electionId: active.electionId,
+      mode: "delegated_worker",
+      activeDelegation: active,
+      lastRevocation: null,
+      lastUpdatedAt: active.issuedAt,
+    });
+
+    expect(isDelegatedWorkerCapabilityEnabled({
+      electionId: active.electionId,
+      capability: "queue_private_submissions",
+      now: new Date("2026-07-13T12:00:00.000Z"),
+    })).toBe(true);
+    expect(isDelegatedWorkerCapabilityEnabled({
+      electionId: active.electionId,
+      capability: "publish_submission_decisions",
+      now: new Date("2026-07-13T12:00:00.000Z"),
+    })).toBe(false);
   });
 
   it("monotonically versions rapid proxy and ballot-group config updates", () => {
