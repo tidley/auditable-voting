@@ -837,4 +837,24 @@ describe("questionnaireOptionA", () => {
       generalInvitePow: { nonce: "42" },
     }).generalInvitePow).toEqual({ nonce: "42" });
   });
+
+  it("keeps paper admission identifiers out of ballot submissions", () => {
+    const request = sanitiseBlindBallotRequest({
+      ...makeBlindRequest(),
+      paperBallotAdmissionKey: ` ${"A".repeat(64)} `,
+    });
+
+    expect(request).toMatchObject({ paperBallotAdmissionKey: "a".repeat(64) });
+    expect(JSON.stringify(makeSubmission())).not.toContain("paperBallot");
+  });
+
+  it("rejects malformed paper admission registry keys", () => {
+    expect(validateBlindBallotRequest({
+      request: { ...makeBlindRequest(), paperBallotAdmissionKey: "not-a-hash" },
+      electionState: "open",
+      isWhitelisted: true,
+      loginVerified: true,
+      requestSeen: false,
+    })).toBe(false);
+  });
 });

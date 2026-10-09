@@ -124,6 +124,8 @@ pub struct WorkerElectionConfigSnapshot {
     #[serde(default)]
     pub bearer_invite_codes: Option<Vec<BearerInviteCodeEntry>>,
     #[serde(default)]
+    pub paper_ballot_admissions: Option<Vec<PaperBallotAdmissionEntry>>,
+    #[serde(default)]
     pub eligibility_required: Option<bool>,
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
     #[serde(default)]
@@ -295,6 +297,22 @@ pub struct BearerInviteCodeEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PaperBallotAdmissionEntry {
+    pub election_id: String,
+    #[serde(default)]
+    pub registry_key: String,
+    pub expires_at: String,
+    pub state: String,
+    #[serde(default)]
+    pub redeemed_at: Option<String>,
+    #[serde(default)]
+    pub redeemed_request_id: Option<String>,
+    #[serde(default)]
+    pub redeemed_issuance_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkerElectionConfigEnvelope {
     #[serde(rename = "type")]
     pub message_type: String,
@@ -327,6 +345,8 @@ pub struct BlindBallotRequest {
     pub created_at: String,
     #[serde(default)]
     pub invite_code_hash: Option<String>,
+    #[serde(default)]
+    pub paper_ballot_admission_key: Option<String>,
     #[serde(default)]
     pub general_invite_pow: Option<GeneralInvitePowProof>,
     #[serde(default)]
@@ -633,6 +653,8 @@ pub struct ElectionRuntimeState {
     pub ballot_groups_by_npub: HashMap<String, String>,
     #[serde(default)]
     pub bearer_invite_codes: HashMap<String, BearerInviteCodeEntry>,
+    #[serde(default)]
+    pub paper_ballot_admissions: HashMap<String, PaperBallotAdmissionEntry>,
     #[serde(default)]
     pub eligibility_configured: bool,
     #[serde(default)]

@@ -21,6 +21,7 @@ import type {
   QuestionnaireBlindPrivateKey,
 } from "./questionnaireBlindSignature";
 import type { QuestionnaireDefinition, QuestionnaireDefinitionReference } from "./questionnaireProtocol";
+import type { PaperBallotAdmissionEntry } from "./paperBallotAdmission";
 import type { SignerService } from "./services/signerService";
 import type {
   WorkerDelegationCertificate,
@@ -339,6 +340,7 @@ export type WorkerElectionConfigSnapshot = {
   proxyVoterNpubs?: string[];
   ballotGroupsByNpub?: Record<string, string>;
   bearerInviteCodes?: BearerInviteCodeEntry[];
+  paperBallotAdmissions?: PaperBallotAdmissionEntry[];
   eligibilityRequired?: boolean;
   blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
   definitionReference?: QuestionnaireDefinitionReference | null;

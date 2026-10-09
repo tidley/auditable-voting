@@ -5841,6 +5841,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
         proxyVoterNpubs,
         ballotGroupsByNpub,
         bearerInviteCodes: workerBearerInviteCodes,
+        paperBallotAdmissions: Object.values(coordinatorState.paperBallotAdmissions ?? {}),
         eligibilityRequired: delegation.capabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegation.capabilities.includes("issue_blind_tokens")
           ? blindSigningPrivateKey

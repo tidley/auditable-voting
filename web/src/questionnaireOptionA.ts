@@ -11,6 +11,7 @@ import {
 } from "./questionnaireProtocol";
 import { verifyGeneralInvitePow, type GeneralInvitePowProof } from "./questionnaireGeneralInvitePow";
 import type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import type { PaperBallotAdmissionEntry } from "./paperBallotAdmission";
 import type { QuestionnaireFlowMode, QuestionnaireResponseMode } from "./questionnaireProtocolConstants";
 
 export type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey };
@@ -173,6 +174,8 @@ export interface BlindBallotRequest {
   clientNonce: string;
   createdAt: IsoTime;
   inviteCodeHash?: Hex | null;
+  /** Opaque paper-admission registry key. Present only in the encrypted request, never in a ballot. */
+  paperBallotAdmissionKey?: Hex | null;
   generalInvitePow?: GeneralInvitePowProof | null;
   ballotScope?: BallotScope | null;
   lastSentAt?: IsoTime | null;
@@ -313,6 +316,7 @@ export interface CoordinatorElectionState {
   election: ElectionSummary;
   whitelist: Record<Npub, WhitelistEntry>;
   bearerInviteCodes: Record<Hex, BearerInviteCodeEntry>;
+  paperBallotAdmissions?: Record<string, PaperBallotAdmissionEntry>;
   pendingBlindRequests: Record<RequestId, BlindBallotRequest>;
   issuedBlindResponses: Record<RequestId, BlindBallotIssuance>;
   receivedSubmissions: Record<SubmissionId, BallotSubmission>;
@@ -393,6 +397,7 @@ function cloneCoordinatorState(state: CoordinatorElectionState): CoordinatorElec
     ...state,
     whitelist: { ...state.whitelist },
     bearerInviteCodes: { ...(state.bearerInviteCodes ?? {}) },
+    paperBallotAdmissions: { ...(state.paperBallotAdmissions ?? {}) },
     pendingBlindRequests: sanitiseBlindBallotRequestRecord(state.pendingBlindRequests),
     issuedBlindResponses: sanitiseBlindBallotIssuanceRecord(state.issuedBlindResponses),
     receivedSubmissions: { ...state.receivedSubmissions },
@@ -484,6 +489,9 @@ export function sanitiseBlindBallotRequest(request: BlindBallotRequest): BlindBa
   };
   if (request.inviteCodeHash !== undefined) {
     next.inviteCodeHash = request.inviteCodeHash ?? null;
+  }
+  if (request.paperBallotAdmissionKey !== undefined) {
+    next.paperBallotAdmissionKey = request.paperBallotAdmissionKey?.trim().toLowerCase() || null;
   }
   if (request.generalInvitePow !== undefined) {
     next.generalInvitePow = request.generalInvitePow && typeof request.generalInvitePow.nonce === "string"
@@ -1595,6 +1603,7 @@ export function validateBlindBallotRequest(input: {
   request: BlindBallotRequest;
   electionState: ElectionState;
   isWhitelisted: boolean;
+  hasRedeemedPaperAdmission?: boolean;
   loginVerified: boolean;
   requestSeen: boolean;
   definition?: QuestionnaireDefinition | null;
@@ -1602,10 +1611,14 @@ export function validateBlindBallotRequest(input: {
   if (input.electionState !== "open") {
     return false;
   }
-  if (!input.isWhitelisted || !input.loginVerified) {
+  if ((!input.isWhitelisted && !input.hasRedeemedPaperAdmission) || !input.loginVerified) {
     return false;
   }
   if (!input.requestSeen && !input.request.blindedMessage.trim()) {
+    return false;
+  }
+  const paperAdmissionKey = input.request.paperBallotAdmissionKey?.trim().toLowerCase() ?? "";
+  if (paperAdmissionKey && !/^[0-9a-f]{64}$/.test(paperAdmissionKey)) {
     return false;
   }
   const difficulty = input.definition?.generalInvitePowDifficulty ?? 0;

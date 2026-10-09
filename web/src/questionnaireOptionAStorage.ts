@@ -18,6 +18,7 @@ import {
 } from "./questionnaireOptionA";
 import { normaliseQuestionnaireBallotGroup } from "./questionnaireProtocol";
 import { buildNamespacedLocalStorageKey as buildSimpleNamespacedLocalStorageKey } from "./appStorageNamespace";
+import { sanitisePaperBallotAdmissions } from "./paperBallotAdmission";
 
 function getKey(key: string) {
   return buildSimpleNamespacedLocalStorageKey(key);
@@ -357,6 +358,10 @@ export function saveCoordinatorState(input: {
   writeJson(keys.election, input.state.election);
   writeJson(keys.whitelist, input.state.whitelist);
   writeJson(keys.bearerInviteCodes, input.state.bearerInviteCodes ?? {});
+  writeJson(
+    `${keys.election}:paperBallotAdmissions`,
+    sanitisePaperBallotAdmissions(input.state.paperBallotAdmissions),
+  );
   writeJson(keys.requests, sanitiseBlindBallotRequestRecord(input.state.pendingBlindRequests));
   writeJson(keys.issuances, sanitiseBlindBallotIssuanceRecord(input.state.issuedBlindResponses));
   writeJson(keys.submissions, input.state.receivedSubmissions);
@@ -382,6 +387,9 @@ export function loadCoordinatorState(input: {
   });
   const whitelist = readJson<Record<Npub, WhitelistEntry>>(keys.whitelist, {});
   const bearerInviteCodes = readJson<Record<string, BearerInviteCodeEntry>>(keys.bearerInviteCodes, {});
+  const paperBallotAdmissions = sanitisePaperBallotAdmissions(
+    readJson<Record<string, unknown>>(`${keys.election}:paperBallotAdmissions`, {}),
+  );
   const pendingBlindRequests = sanitiseBlindBallotRequestRecord(
     readJson<Record<string, BlindBallotRequest>>(keys.requests, {}),
   );
@@ -406,6 +414,7 @@ export function loadCoordinatorState(input: {
     election: summary,
     whitelist,
     bearerInviteCodes,
+    paperBallotAdmissions,
     pendingBlindRequests,
     issuedBlindResponses,
     receivedSubmissions,
