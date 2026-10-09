@@ -110,10 +110,10 @@ jobs:
         # excluded. It drives the DEPLOYED GitHub Pages site via
         # resolvePagesBaseUrl() rather than localhost, so it cannot validate a
         # PR's code (it exercises whatever is currently deployed), and it
-        # currently times out in harvestCodes() against that site. The three
+        # currently times out in harvestCodes() against that site. The four
         # specs below run against the local dev server and are the behaviour
         # contract this job gates.
-        run: npx playwright test e2e/delivery-smoke.spec.ts e2e/resident-otp-admission.spec.ts e2e/theme-toggle.spec.ts
+        run: npx playwright test e2e/delivery-smoke.spec.ts e2e/resident-otp-admission.spec.ts e2e/theme-toggle.spec.ts e2e/branding-icon.spec.ts
         working-directory: web
         env:
           PLAYWRIGHT_USE_BUNDLED_CHROMIUM: "1"

@@ -47,38 +47,23 @@ async function clearThemePreference(page: Page) {
 // 1. Toggle button visibility on gateway screen
 // ---------------------------------------------------------------------------
 test("theme toggle button is visible on gateway screen", async ({ page }) => {
-  // Fresh context: localStorage is empty, colorScheme is dark (from config)
-  // → app defaults to dark → aria-label = "Switch to light theme"
+  // Fresh context: empty localStorage and colorScheme "dark" forced by the
+  // playwright config. The app ignores the OS preference, so it comes up LIGHT
+  // → aria-label = "Switch to dark theme".
   await page.goto("/");
 
   const toggle = page.locator(".simple-theme-toggle");
   await expect(toggle).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-label", "Switch to light theme");
-});
-
-// ---------------------------------------------------------------------------
-// 2. Clicking toggle switches dark → light
-// ---------------------------------------------------------------------------
-test("clicking toggle switches from dark to light theme", async ({ page }) => {
-  await page.goto("/");
-
-  const toggle = page.locator(".simple-theme-toggle");
-  await toggle.click();
-
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expectLocalStorage(page, "av-theme", "light");
   await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
 });
 
 // ---------------------------------------------------------------------------
-// 3. Clicking toggle switches light → dark
+// 2. Clicking toggle switches light → dark
 // ---------------------------------------------------------------------------
-test("clicking toggle switches from light back to dark", async ({ page }) => {
-  await setThemePreference(page, "light");
+test("clicking toggle switches from light to dark theme", async ({ page }) => {
   await page.goto("/");
 
   const toggle = page.locator(".simple-theme-toggle");
-  await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
   await toggle.click();
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -87,61 +72,78 @@ test("clicking toggle switches from light back to dark", async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Theme persists across page reload
+// 3. Clicking toggle switches dark → light
 // ---------------------------------------------------------------------------
-test("theme persists across page reload", async ({ page }) => {
-  // No addInitScript — fresh context has empty localStorage, defaults to dark
+test("clicking toggle switches from dark back to light", async ({ page }) => {
+  await setThemePreference(page, "dark");
   await page.goto("/");
 
-  // Toggle to light
   const toggle = page.locator(".simple-theme-toggle");
+  await expect(toggle).toHaveAttribute("aria-label", "Switch to light theme");
   await toggle.click();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-
-  // Reload — the inline <head> script should read localStorage and apply light
-  // No init script to interfere — localStorage retains "light" from the click
-  await page.reload();
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expectLocalStorage(page, "av-theme", "light");
-  // Button should show Moon (light is active, so "Switch to dark theme")
   await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
+});
+
+// ---------------------------------------------------------------------------
+// 4. Theme persists across page reload
+// ---------------------------------------------------------------------------
+test("theme persists across page reload", async ({ page }) => {
+  // No addInitScript — fresh context has empty localStorage, defaults to light
+  await page.goto("/");
+
+  // Toggle to dark, the non-default choice
+  const toggle = page.locator(".simple-theme-toggle");
+  await toggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  // Reload — the inline <head> script should read localStorage and apply dark
+  // No init script to interfere — localStorage retains "dark" from the click
+  await page.reload();
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expectLocalStorage(page, "av-theme", "dark");
+  // Button should show Sun (dark is active, so "Switch to light theme")
+  await expect(toggle).toHaveAttribute("aria-label", "Switch to light theme");
 });
 
 // ---------------------------------------------------------------------------
 // 5. Theme persists across navigation between entrypoints
 // ---------------------------------------------------------------------------
 test("theme persists across navigation between entrypoints", async ({ page }) => {
-  // Set light theme and navigate — the init script sets "light" on every
-  // navigation, and the inline <head> script reads it.
-  await setThemePreference(page, "light");
+  // Set the non-default dark theme and navigate — the init script sets "dark"
+  // on every navigation, and the inline <head> script reads it.
+  await setThemePreference(page, "dark");
   await page.goto("/");
 
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
   // Navigate to vote.html (the voter entrypoint)
   await page.goto("/vote.html");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
   // Navigate to dashboard.html (the coordinator entrypoint)
   await page.goto("/dashboard.html");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-});
-
-// ---------------------------------------------------------------------------
-// 6. Default theme is dark when no preference stored
-// ---------------------------------------------------------------------------
-test("default theme is dark when no preference stored", async ({ page }) => {
-  // Fresh context: empty localStorage, colorScheme: dark from config
-  await page.goto("/");
-
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
 // ---------------------------------------------------------------------------
-// 7. Follows system prefers-color-scheme: light on first visit
+// 6. Default theme is light when no preference is stored
 // ---------------------------------------------------------------------------
-test("follows system prefers-color-scheme: light on first visit", async ({ browser }) => {
+test("default theme is light when no preference stored", async ({ page }) => {
+  // Fresh context: empty localStorage, colorScheme "dark" from the config —
+  // the app must still come up light, because light is the instance default.
+  await page.goto("/");
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+});
+
+// ---------------------------------------------------------------------------
+// 7. A system light preference agrees with the light default
+// ---------------------------------------------------------------------------
+test("system prefers-color-scheme: light yields light on first visit", async ({ browser }) => {
   const context = await browser.newContext({
     colorScheme: "light",
   });
@@ -153,16 +155,18 @@ test("follows system prefers-color-scheme: light on first visit", async ({ brows
 });
 
 // ---------------------------------------------------------------------------
-// 8. Follows system prefers-color-scheme: dark on first visit
+// 8. A system dark preference is IGNORED: the instance default is light
 // ---------------------------------------------------------------------------
-test("follows system prefers-color-scheme: dark on first visit", async ({ browser }) => {
+test("system prefers-color-scheme: dark is ignored on first visit", async ({ browser }) => {
   const context = await browser.newContext({
     colorScheme: "dark",
   });
   const page = await context.newPage();
   await page.goto("/");
 
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  // Regression guard for the branding change: only an explicit toggle
+  // (persisted in localStorage) may select dark. The OS preference must not.
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await context.close();
 });
 
@@ -263,42 +267,42 @@ test("light theme renders visible text (contrast check)", async ({ page }) => {
 // Single-flow happy path (for video recording)
 // ---------------------------------------------------------------------------
 test("full theme toggle happy path", async ({ page }) => {
-  // Fresh context: empty localStorage, defaults to dark
+  // Fresh context: empty localStorage, defaults to light
   await page.goto("/");
 
   const toggle = page.locator(".simple-theme-toggle");
 
-  // 1. Default is dark
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(toggle).toHaveAttribute("aria-label", "Switch to light theme");
-
-  // 2. Toggle to light
-  await toggle.click();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expectLocalStorage(page, "av-theme", "light");
-  await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
-
-  // 3. Reload — persistence (no init script, localStorage retains "light")
-  await page.reload();
+  // 1. Default is light
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
 
-  // 4. Navigate to another page — persistence across entrypoints
-  await page.goto("/vote.html");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-
-  // 5. Go back to main page
-  await page.goto("/");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-
-  // 6. Toggle back to dark
+  // 2. Toggle to dark
   await toggle.click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expectLocalStorage(page, "av-theme", "dark");
   await expect(toggle).toHaveAttribute("aria-label", "Switch to light theme");
 
-  // 7. Reload — dark persistence
+  // 3. Reload — persistence (no init script, localStorage retains "dark")
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(toggle).toHaveAttribute("aria-label", "Switch to light theme");
+
+  // 4. Navigate to another page — persistence across entrypoints
+  await page.goto("/vote.html");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  // 5. Go back to main page
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  // 6. Toggle back to light
+  await toggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expectLocalStorage(page, "av-theme", "light");
+  await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
+
+  // 7. Reload — light persistence
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
 });
