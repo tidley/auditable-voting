@@ -1967,6 +1967,29 @@ code {
   height: 31px;
 }
 
+/*
+ * Role-picker icons must scale with their label.
+ *
+ * `.av-ui-icon` is a global, hard-coded 17px (see `.av-ui-icon` below). These
+ * buttons render that class, NOT `.simple-account-menu-svg-icon`, so the 31px
+ * rule above never applies here — which is why the icons stayed small despite
+ * a rule that looks like it sizes them.
+ *
+ * The label inherits the button font, and its line box (17.37px at a 14.72px
+ * font-size) is TALLER than the 17px icon box in EVERY locale, so the label
+ * visually dominates the icon. It is most obvious in scripts with tall glyphs
+ * (e.g. Tamil), but the mismatch is present for Latin text too.
+ *
+ * Sizing in `em` makes the icon track the local font-size, so the icon box
+ * always encompasses the label line box. Guarded by
+ * e2e/role-picker-icon-scaling.spec.ts.
+ */
+.simple-role-switch-menu-inline:not(.simple-voter-menu-switch) .simple-role-switch-button .av-ui-icon,
+.simple-role-switch-login .simple-role-switch-button .av-ui-icon {
+  width: 1.6em;
+  height: 1.6em;
+}
+
 .simple-role-switch-button.is-active .simple-account-menu-svg-icon {
   color: var(--simple-teal);
 }
