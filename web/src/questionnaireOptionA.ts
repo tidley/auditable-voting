@@ -296,6 +296,10 @@ export interface VoterElectionLocalState {
   submissions?: Record<string, BallotSubmission>;
   submissionAccepted?: boolean | null;
   submissionAcceptedAt?: IsoTime | null;
+  privateSubmissionQueued?: boolean;
+  privateSubmissionReceiptAccepted?: boolean | null;
+  privateSubmissionReceiptAt?: IsoTime | null;
+  privateSubmissionReceiptReason?: string | null;
   submissionDecisions?: Record<string, {
     submissionId: SubmissionId;
     accepted: boolean;
@@ -337,6 +341,7 @@ export type VoterEvent =
   | { type: "BLIND_ISSUANCE_RECEIVED"; issuance: BlindBallotIssuance }
   | { type: "DRAFT_RESPONSES_UPDATED"; electionId: ElectionId; responses: QuestionnaireAnswer[] }
   | { type: "BALLOT_SUBMISSION_CREATED"; submission: BallotSubmission }
+  | { type: "PRIVATE_BALLOT_SUBMISSION_QUEUED"; submissionId: SubmissionId; receivedAt: IsoTime }
   | { type: "BALLOT_SUBMISSION_ACCEPTED"; submissionId: SubmissionId; decidedAt: IsoTime }
   | { type: "BALLOT_SUBMISSION_REJECTED"; submissionId: SubmissionId; reason: string; decidedAt: IsoTime };
 
@@ -1070,6 +1075,10 @@ export function reduceVoterEvent(
       return reduceVoterError(state, "schema_invalid");
     }
     next.submission = event.submission;
+    next.privateSubmissionQueued = false;
+    next.privateSubmissionReceiptAccepted = null;
+    next.privateSubmissionReceiptAt = null;
+    next.privateSubmissionReceiptReason = null;
     if (questionKeys.length > 0) {
       next.submissions = {
         ...(next.submissions ?? {}),
@@ -1081,12 +1090,33 @@ export function reduceVoterEvent(
     return { state: next, ok: true };
   }
 
+  if (event.type === "PRIVATE_BALLOT_SUBMISSION_QUEUED") {
+    if (next.submission?.submissionId !== event.submissionId) {
+      return reduceVoterError(state, "schema_invalid");
+    }
+    next.privateSubmissionQueued = true;
+    next.privateSubmissionReceiptAccepted = true;
+    next.privateSubmissionReceiptAt = event.receivedAt;
+    next.privateSubmissionReceiptReason = null;
+    next.submissionAccepted = null;
+    next.submissionAcceptedAt = null;
+    next.submissionDecisions = Object.fromEntries(
+      Object.entries(next.submissionDecisions ?? {}).filter(([, decision]) => decision.submissionId !== event.submissionId),
+    );
+    next.lastUpdatedAt = event.receivedAt;
+    return { state: next, ok: true };
+  }
+
   if (event.type === "BALLOT_SUBMISSION_ACCEPTED") {
     const questionEntries = Object.entries(next.submissions ?? {})
       .filter(([, submission]) => submission.submissionId === event.submissionId);
     if (next.submission?.submissionId !== event.submissionId && questionEntries.length === 0) {
       return reduceVoterError(state, "schema_invalid");
     }
+    next.privateSubmissionQueued = false;
+    next.privateSubmissionReceiptAccepted = null;
+    next.privateSubmissionReceiptAt = null;
+    next.privateSubmissionReceiptReason = null;
     if (questionEntries.length > 0) {
       next.submissionDecisions = {
         ...(next.submissionDecisions ?? {}),
@@ -1110,6 +1140,10 @@ export function reduceVoterEvent(
   if (next.submission?.submissionId !== event.submissionId && questionEntries.length === 0) {
     return reduceVoterError(state, "schema_invalid");
   }
+  next.privateSubmissionQueued = false;
+  next.privateSubmissionReceiptAccepted = false;
+  next.privateSubmissionReceiptAt = event.decidedAt;
+  next.privateSubmissionReceiptReason = event.reason;
   if (questionEntries.length > 0) {
     next.submissionDecisions = {
       ...(next.submissionDecisions ?? {}),

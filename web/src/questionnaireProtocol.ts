@@ -8,6 +8,7 @@ import {
   type QuestionnaireResponseMode,
 } from "./questionnaireProtocolConstants";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import { nip19 } from "nostr-tools";
 import {
   normalizeQuestionnaireRelays,
   questionnaireRelaysForMetadata,
@@ -36,6 +37,13 @@ export type QuestionnaireCredentialsPerVoter = 1 | 2;
 export type QuestionnaireVoterGroup = {
   id: string;
   label: string;
+};
+
+export type QuestionnairePrivateWorker = {
+  npub: string;
+  dmRelays: string[];
+  batchThreshold: number;
+  submissionDeadline: string;
 };
 
 export const QUESTIONNAIRE_PRIVATE_INVITE_MAX_REDEMPTIONS = 10_000;
@@ -157,6 +165,8 @@ export type QuestionnaireDefinition = {
   credentialsPerVoter?: QuestionnaireCredentialsPerVoter;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   questionnaireRelays?: string[];
+  /** Signed routing and release policy for an optional private ballot worker. */
+  privateWorker?: QuestionnairePrivateWorker;
   voterGroups?: QuestionnaireVoterGroup[];
   questions: QuestionnaireQuestion[];
 };
@@ -517,6 +527,36 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
     const normalizedRelays = normalizeQuestionnaireRelays(input.questionnaireRelays);
     if (!Array.isArray(input.questionnaireRelays) || normalizedRelays.length !== input.questionnaireRelays.length) {
       errors.push("questionnaire_relays_invalid");
+    }
+  }
+  if (input.privateWorker !== undefined) {
+    const worker = input.privateWorker;
+    let validNpub = false;
+    try {
+      validNpub = typeof worker?.npub === "string" && nip19.decode(worker.npub.trim()).type === "npub";
+    } catch {
+      validNpub = false;
+    }
+    if (!validNpub) {
+      errors.push("private_worker_npub_invalid");
+    }
+    const normalisedDmRelays = normalizeQuestionnaireRelays(worker?.dmRelays ?? []);
+    if (!Array.isArray(worker?.dmRelays) || normalisedDmRelays.length === 0 || normalisedDmRelays.length !== worker.dmRelays.length) {
+      errors.push("private_worker_dm_relays_invalid");
+    }
+    if (!Number.isSafeInteger(worker?.batchThreshold) || worker.batchThreshold <= 0) {
+      errors.push("private_worker_batch_threshold_invalid");
+    }
+    const deadline = typeof worker?.submissionDeadline === "string"
+      ? Date.parse(worker.submissionDeadline)
+      : Number.NaN;
+    if (
+      !Number.isFinite(deadline)
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(worker?.submissionDeadline ?? "")
+      || deadline <= input.openAt * 1000
+      || deadline >= input.closeAt * 1000
+    ) {
+      errors.push("private_worker_submission_deadline_invalid");
     }
   }
   const voterGroupIds = new Set<string>();

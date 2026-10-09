@@ -14,6 +14,7 @@ import {
   parseOptionADmEnvelopeContent,
   parseBlindBallotPlanDmContent,
   parseOptionAParticipantStatusDmContent,
+  parsePrivateQueueMessage,
   publishOptionABlindRequestDm,
   publishOptionAParticipantStatusDm,
   type OptionAParticipantStatus,
@@ -958,6 +959,93 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedSubmissions[0]?.submissionId).toBe("submission_3");
     expect(fetchedAcceptances).toHaveLength(1);
     expect(fetchedAcceptances[0]?.submissionId).toBe("submission_3");
+  });
+
+  it("serialises and validates private queue protocol messages", () => {
+    const shared = {
+      schemaVersion: 1 as const,
+      electionId: "q_private_queue",
+      submissionId: "submission_private_queue",
+    };
+    const submission = {
+      type: "private_ballot_submission" as const,
+      ...shared,
+      submission: {
+        type: "ballot_submission" as const,
+        ...shared,
+        invitedNpub: "npub1voter",
+        responseNpub: "npub1response",
+        tokenCommitment: "token_commitment",
+        blindSigningKeyId: "key_1",
+        credential: "credential",
+        nullifier: "nullifier",
+        payload: {
+          electionId: shared.electionId,
+          responses: [],
+        },
+        submittedAt: "2026-10-08T12:00:00.000Z",
+      },
+    };
+    const receipt = {
+      type: "private_ballot_receipt" as const,
+      ...shared,
+      accepted: true,
+      receivedAt: "2026-10-08T12:00:01.000Z",
+    };
+    const progress = {
+      type: "private_queue_progress" as const,
+      schemaVersion: 1 as const,
+      electionId: shared.electionId,
+      acceptedCount: 4,
+      rejectedCount: 1,
+      queuedCount: 3,
+      batchThreshold: 10,
+      submissionDeadline: "2026-10-09T12:00:00.000Z",
+    };
+
+    for (const message of [submission, receipt, progress]) {
+      const serialised = encodeOptionADmEnvelopeContent(message);
+      expect(parsePrivateQueueMessage(serialised)).toEqual(message);
+    }
+    expect(parsePrivateQueueMessage(JSON.stringify({
+      ...progress,
+      queuedCount: -1,
+    }))).toBeNull();
+    expect(parsePrivateQueueMessage(JSON.stringify({
+      ...progress,
+      submissionId: shared.submissionId,
+    }))).toBeNull();
+    expect(parsePrivateQueueMessage(JSON.stringify({
+      ...submission,
+      submission: {
+        ...submission.submission,
+        tokenCommitment: undefined,
+      },
+    }))).toBeNull();
+    expect(parsePrivateQueueMessage(JSON.stringify({
+      ...submission,
+      submission: {
+        ...submission.submission,
+        payload: {
+          ...submission.submission.payload,
+          responses: [null],
+        },
+      },
+    }))).toBeNull();
+    expect(parsePrivateQueueMessage(JSON.stringify({
+      ...submission,
+      submission: {
+        ...submission.submission,
+        credentialBundle: "not-an-array",
+      },
+    }))).toBeNull();
+    expect(parsePrivateQueueMessage(JSON.stringify({
+      ...submission,
+      submission: {
+        ...submission.submission,
+        credentialBundle: [null],
+      },
+    }))).toBeNull();
   });
 
   it("paginates local issuance recovery until an older target message is found", async () => {

@@ -1,11 +1,11 @@
 use crate::model::WorkerPersistentState;
 use anyhow::{Context, Result};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::{
-    fs::{OpenOptions, Permissions},
-    io::Write,
+    fs::Permissions,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
 };
 
@@ -64,30 +64,132 @@ impl WorkerStore {
     pub fn save(&self, state: &WorkerPersistentState) -> Result<()> {
         let data = serde_json::to_vec_pretty(state).context("unable to serialise worker state")?;
         #[cfg(unix)]
-        {
-            if self.path.exists() {
-                reject_insecure_permissions(&self.path, 0o600)?;
-            }
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&self.path)
-                .with_context(|| {
-                    format!("unable to write worker state file: {}", self.path.display())
-                })?;
-            fs::set_permissions(&self.path, Permissions::from_mode(0o600)).with_context(|| {
-                format!("unable to secure worker state file: {}", self.path.display())
-            })?;
-            file.write_all(&data).with_context(|| {
-                format!("unable to write worker state file: {}", self.path.display())
-            })?;
+        if self.path.exists() {
+            reject_insecure_permissions(&self.path, 0o600)?;
         }
-        #[cfg(not(unix))]
-        fs::write(&self.path, data).with_context(|| {
-            format!("unable to write worker state file: {}", self.path.display())
-        })?;
-        Ok(())
+        let temporary_path = self.path.with_extension("json.tmp");
+        match fs::remove_file(&temporary_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "unable to remove stale worker state temporary file: {}",
+                        temporary_path.display()
+                    )
+                });
+            }
+        }
+
+        let save_result = (|| -> Result<()> {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut file = options.open(&temporary_path).with_context(|| {
+                format!(
+                    "unable to create worker state temporary file: {}",
+                    temporary_path.display()
+                )
+            })?;
+            #[cfg(unix)]
+            fs::set_permissions(&temporary_path, Permissions::from_mode(0o600)).with_context(
+                || {
+                    format!(
+                        "unable to secure worker state temporary file: {}",
+                        temporary_path.display()
+                    )
+                },
+            )?;
+            file.write_all(&data).with_context(|| {
+                format!(
+                    "unable to write worker state temporary file: {}",
+                    temporary_path.display()
+                )
+            })?;
+            file.sync_all().with_context(|| {
+                format!(
+                    "unable to sync worker state temporary file: {}",
+                    temporary_path.display()
+                )
+            })?;
+            drop(file);
+            fs::rename(&temporary_path, &self.path).with_context(|| {
+                format!(
+                    "unable to replace worker state file: {}",
+                    self.path.display()
+                )
+            })?;
+            #[cfg(unix)]
+            {
+                let parent = self
+                    .path
+                    .parent()
+                    .context("worker state path has no parent")?;
+                fs::File::open(parent)
+                    .with_context(|| {
+                        format!(
+                            "unable to open worker state directory: {}",
+                            parent.display()
+                        )
+                    })?
+                    .sync_all()
+                    .with_context(|| {
+                        format!(
+                            "unable to sync worker state directory: {}",
+                            parent.display()
+                        )
+                    })?;
+            }
+            Ok(())
+        })();
+
+        if save_result.is_err() {
+            let _ = fs::remove_file(&temporary_path);
+        }
+        save_result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_state_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "auditable-voting-worker-store-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn save_round_trips_state_and_removes_stale_temporary_file() {
+        let state_dir = unique_state_dir("atomic-save");
+        let store = WorkerStore::open(&state_dir).expect("open worker store");
+        let initial = WorkerPersistentState {
+            coordinator_npub: "npub1coordinator".to_string(),
+            worker_npub: "npub1worker".to_string(),
+            ..WorkerPersistentState::default()
+        };
+        store.save(&initial).expect("save initial state");
+
+        fs::write(state_dir.join("state.json.tmp"), b"stale temporary state")
+            .expect("create stale temporary state");
+        let mut updated = initial.clone();
+        updated.relays.push("wss://relay.example.com".to_string());
+
+        store.save(&updated).expect("save updated state");
+
+        let loaded = store.load().expect("load updated state");
+        assert_eq!(
+            serde_json::to_value(loaded).expect("serialise loaded state"),
+            serde_json::to_value(updated).expect("serialise updated state")
+        );
+        assert!(!state_dir.join("state.json.tmp").exists());
+        fs::remove_dir_all(state_dir).expect("remove worker state directory");
     }
 }

@@ -17,6 +17,9 @@ pub enum WorkerCapability {
     PublishSubmissionDecisions,
     CloseQuestionnaire,
     PublishResultSummary,
+    QueuePrivateSubmissions,
+    ReportPrivateProgress,
+    ReleaseSubmissionBatches,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +131,127 @@ pub struct WorkerElectionConfigSnapshot {
     #[serde(default)]
     pub definition: Option<serde_json::Value>,
     pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrivateBallotSubmission {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub submission_id: String,
+    pub submission: PrivateBallotSubmissionPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrivateBallotSubmissionPayload {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub submission_id: String,
+    pub invited_npub: String,
+    #[serde(default)]
+    pub response_npub: Option<String>,
+    pub token_commitment: String,
+    pub blind_signing_key_id: String,
+    pub credential: String,
+    pub nullifier: String,
+    #[serde(default)]
+    pub credential_bundle: Option<Vec<PrivateBallotCredentialProof>>,
+    pub payload: PrivateBallotPayload,
+    pub submitted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrivateBallotCredentialProof {
+    #[serde(default)]
+    pub question_id: Option<String>,
+    pub token_commitment: String,
+    pub blind_signing_key_id: String,
+    pub credential: String,
+    pub nullifier: String,
+    #[serde(default)]
+    pub ballot_scope: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrivateBallotPayload {
+    pub election_id: String,
+    pub responses: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateBallotReceipt {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub submission_id: String,
+    pub accepted: bool,
+    pub received_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrivateQueueProgress {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub accepted_count: u64,
+    pub rejected_count: u64,
+    pub queued_count: u64,
+    pub batch_threshold: u64,
+    pub submission_deadline: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateQueuedSubmissionPublication {
+    pub batch_id: String,
+    pub created_at: i64,
+    #[serde(default)]
+    pub delegation_id: String,
+    #[serde(default)]
+    pub definition_hash: String,
+    pub attempts: u32,
+    #[serde(default)]
+    pub event_id: Option<String>,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    /// Fully signed Nostr event JSON saved before relay publication for crash-safe retries.
+    #[serde(default)]
+    pub prepared_event_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateBatchReleaseReason {
+    Threshold,
+    Deadline,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateBatchPublication {
+    pub batch_id: String,
+    pub release_reason: PrivateBatchReleaseReason,
+    pub count: u64,
+    pub attempts: u32,
+    #[serde(default)]
+    pub prepared_event_json: Option<String>,
+    #[serde(default)]
+    pub event_id: Option<String>,
+    #[serde(default)]
+    pub published_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -471,6 +595,12 @@ pub struct ElectionRuntimeState {
     #[serde(default)]
     pub processed_submission_ids: HashSet<String>,
     #[serde(default)]
+    pub private_queued_submissions: HashMap<String, PrivateBallotSubmission>,
+    #[serde(default)]
+    pub private_submission_publications: HashMap<String, PrivateQueuedSubmissionPublication>,
+    #[serde(default)]
+    pub private_batch_publications: HashMap<String, PrivateBatchPublication>,
+    #[serde(default)]
     pub accepted_nullifiers: HashSet<String>,
     #[serde(default)]
     pub accepted_token_commitments: HashSet<String>,
@@ -679,5 +809,118 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(ack.ack.issuance_id, "issuance_1");
+    }
+
+    #[test]
+    fn private_queue_messages_use_web_json_schema() {
+        let submission = serde_json::to_value(PrivateBallotSubmission {
+            message_type: "private_ballot_submission".to_string(),
+            schema_version: 1,
+            election_id: "election_1".to_string(),
+            submission_id: "submission_1".to_string(),
+            submission: PrivateBallotSubmissionPayload {
+                message_type: "ballot_submission".to_string(),
+                schema_version: 1,
+                election_id: "election_1".to_string(),
+                submission_id: "submission_1".to_string(),
+                invited_npub: "npub1voter".to_string(),
+                response_npub: None,
+                token_commitment: "token_1".to_string(),
+                blind_signing_key_id: "key_1".to_string(),
+                credential: "credential_1".to_string(),
+                nullifier: "nullifier_1".to_string(),
+                credential_bundle: None,
+                payload: PrivateBallotPayload {
+                    election_id: "election_1".to_string(),
+                    responses: vec![],
+                },
+                submitted_at: "2026-10-08T12:00:00Z".to_string(),
+            },
+        })
+        .unwrap();
+        assert_eq!(submission["type"], "private_ballot_submission");
+        assert_eq!(submission["schemaVersion"], 1);
+        assert_eq!(submission["electionId"], "election_1");
+        assert_eq!(submission["submissionId"], "submission_1");
+
+        let receipt = serde_json::to_value(PrivateBallotReceipt {
+            message_type: "private_ballot_receipt".to_string(),
+            schema_version: 1,
+            election_id: "election_1".to_string(),
+            submission_id: "submission_1".to_string(),
+            accepted: true,
+            received_at: "2026-10-08T12:00:00Z".to_string(),
+            reason: None,
+        })
+        .unwrap();
+        assert_eq!(receipt["receivedAt"], "2026-10-08T12:00:00Z");
+        assert!(receipt.get("reason").is_none());
+        let receipt_without_reason: PrivateBallotReceipt = serde_json::from_value(receipt).unwrap();
+        assert!(receipt_without_reason.reason.is_none());
+
+        let progress = serde_json::to_value(PrivateQueueProgress {
+            message_type: "private_queue_progress".to_string(),
+            schema_version: 1,
+            election_id: "election_1".to_string(),
+            accepted_count: 4,
+            rejected_count: 1,
+            queued_count: 3,
+            batch_threshold: 10,
+            submission_deadline: "2026-10-09T12:00:00Z".to_string(),
+        })
+        .unwrap();
+        assert_eq!(progress["acceptedCount"], 4);
+        assert_eq!(progress["rejectedCount"], 1);
+        assert_eq!(progress["queuedCount"], 3);
+        assert_eq!(progress["batchThreshold"], 10);
+        assert_eq!(progress["submissionDeadline"], "2026-10-09T12:00:00Z");
+        assert!(progress.get("submissionId").is_none());
+        let mut incomplete_progress = progress;
+        incomplete_progress
+            .as_object_mut()
+            .unwrap()
+            .remove("queuedCount");
+        assert!(serde_json::from_value::<PrivateQueueProgress>(incomplete_progress).is_err());
+
+        let mut unexpected_progress = serde_json::to_value(PrivateQueueProgress {
+            message_type: "private_queue_progress".to_string(),
+            schema_version: 1,
+            election_id: "election_1".to_string(),
+            accepted_count: 4,
+            rejected_count: 1,
+            queued_count: 3,
+            batch_threshold: 10,
+            submission_deadline: "2026-10-09T12:00:00Z".to_string(),
+        })
+        .unwrap();
+        unexpected_progress.as_object_mut().unwrap().insert(
+            "submissionId".to_string(),
+            serde_json::json!("submission_1"),
+        );
+        assert!(serde_json::from_value::<PrivateQueueProgress>(unexpected_progress).is_err());
+
+        assert!(
+            serde_json::from_value::<PrivateBallotSubmission>(serde_json::json!({
+                "type": "private_ballot_submission",
+                "schemaVersion": 1,
+                "electionId": "election_1",
+                "submissionId": "submission_1",
+                "submission": {
+                    "type": "ballot_submission",
+                    "schemaVersion": 1,
+                    "electionId": "election_1",
+                    "submissionId": "submission_1",
+                    "invitedNpub": "npub1voter",
+                    "tokenCommitment": "token_1",
+                    "blindSigningKeyId": "key_1",
+                    "credential": "credential_1",
+                    "nullifier": "nullifier_1",
+                    "payload": { "electionId": "election_1", "responses": [] },
+                    "submittedAt": "2026-10-08T12:00:00Z",
+                    "unexpected": true
+                }
+            }))
+            .is_err()
+        );
     }
 }

@@ -21,7 +21,10 @@ export type WorkerCapability =
   | "verify_public_submissions"
   | "publish_submission_decisions"
   | "close_questionnaire"
-  | "publish_result_summary";
+  | "publish_result_summary"
+  | "queue_private_submissions"
+  | "report_private_progress"
+  | "release_submission_batches";
 
 export type WorkerDelegationState = "pending_activation" | "active" | "revoked" | "expired";
 

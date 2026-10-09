@@ -1,3 +1,4 @@
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { describe, expect, it } from "vitest";
 import {
   questionBallotCredentialScope,
@@ -73,6 +74,49 @@ describe("questionnaireProtocol", () => {
       .toContain("general_invite_pow_difficulty_invalid");
     expect(validateQuestionnaireDefinition({ ...buildDefinition(), generalInvitePowDifficulty: 1.5 } as QuestionnaireDefinition).errors)
       .toContain("general_invite_pow_difficulty_invalid");
+  });
+
+  it("validates an optional signed private worker release configuration", () => {
+    const workerNpub = nip19.npubEncode(getPublicKey(generateSecretKey()));
+    const definition = {
+      ...buildDefinition(),
+      privateWorker: {
+        npub: workerNpub,
+        dmRelays: ["wss://worker.example"],
+        batchThreshold: 10,
+        submissionDeadline: "2024-04-08T12:00:00.000Z",
+      },
+    } as QuestionnaireDefinition;
+
+    expect(validateQuestionnaireDefinition(definition)).toEqual({ valid: true, errors: [] });
+    expect(validateQuestionnaireDefinition({
+      ...definition,
+      privateWorker: { ...definition.privateWorker!, npub: "npub1invalid" },
+    }).errors).toContain("private_worker_npub_invalid");
+    expect(validateQuestionnaireDefinition({
+      ...definition,
+      privateWorker: { ...definition.privateWorker!, dmRelays: [] },
+    }).errors).toContain("private_worker_dm_relays_invalid");
+    expect(validateQuestionnaireDefinition({
+      ...definition,
+      privateWorker: { ...definition.privateWorker!, batchThreshold: 0 },
+    }).errors).toContain("private_worker_batch_threshold_invalid");
+    expect(validateQuestionnaireDefinition({
+      ...definition,
+      privateWorker: { ...definition.privateWorker!, submissionDeadline: "tomorrow" },
+    }).errors).toContain("private_worker_submission_deadline_invalid");
+    expect(validateQuestionnaireDefinition({
+      ...definition,
+      privateWorker: { ...definition.privateWorker!, submissionDeadline: "2026-12-01T12:00:00" },
+    }).errors).toContain("private_worker_submission_deadline_invalid");
+    expect(validateQuestionnaireDefinition({
+      ...definition,
+      privateWorker: { ...definition.privateWorker!, submissionDeadline: "2024-04-07T23:46:40.000Z" },
+    }).errors).toContain("private_worker_submission_deadline_invalid");
+    expect(validateQuestionnaireDefinition({
+      ...definition,
+      privateWorker: { ...definition.privateWorker!, submissionDeadline: "2024-04-08T23:46:39.000Z" },
+    }).errors).toContain("private_worker_submission_deadline_invalid");
   });
 
   it("supports questionnaire-defined voter groups while preserving legacy aliases", () => {

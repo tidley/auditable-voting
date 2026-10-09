@@ -55,6 +55,8 @@ vi.mock("./questionnaireOptionABlindDm", async () => {
   return {
     ...actual,
     fetchOptionAWorkerStatusDmsWithNsec: vi.fn().mockResolvedValue([]),
+    subscribePrivateQueueProgressDmsWithNsec: vi.fn().mockReturnValue({ close: vi.fn() }),
+    subscribePrivateQueueProgressDmsWithNsec: vi.fn().mockReturnValue({ close: vi.fn() }),
     publishOptionAWorkerDelegationDm: vi.fn().mockResolvedValue({
       eventId: "mock-worker-delegation-dm",
       successes: 1,
@@ -75,7 +77,7 @@ import { loadCoordinatorState, loadElectionSummary, saveCoordinatorState, upsert
 import { readCachedQuestionnaireDefinitionReference, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
-import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerDelegationDm, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
+import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerDelegationDm, publishOptionAWorkerElectionConfigDm, subscribePrivateQueueProgressDmsWithNsec } from "./questionnaireOptionABlindDm";
 import { questionnaireDefinitionEventHash, questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 import { createWorkerDelegationCertificate, loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, publishWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
 
@@ -1237,6 +1239,48 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       coordinatorNpub,
       electionId: definition.questionnaireId,
     })?.blindSigningPrivateKey?.keyId).toBe(definition?.blindSigningPublicKey?.keyId);
+  });
+
+  it("publishes a signed private-worker block with the three private queue capabilities", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerNpub = nip19.npubEncode("7".repeat(64));
+    render(<QuestionnaireCoordinatorPanel coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Private queue" } });
+    fireEvent.change(screen.getByPlaceholderText("Question prompt"), { target: { value: "Proceed?" } });
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    fireEvent.click(screen.getByLabelText("Enable private ballot queue"));
+    fireEvent.change(screen.getByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    fireEvent.change(screen.getByLabelText("Private ballot relays"), { target: { value: "wss://private.example" } });
+    fireEvent.change(screen.getByLabelText("Private batch threshold"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Private submission deadline"), { target: { value: "2027-01-01T12:00:00Z" } });
+    fireEvent.click(screen.getByLabelText("Queue private submissions"));
+    fireEvent.click(screen.getByLabelText("Report private queue progress"));
+    fireEvent.click(screen.getByLabelText("Release private submission batches"));
+    await waitFor(() => {
+      expect((screen.getByLabelText("Private ballot relays") as HTMLTextAreaElement).value).toBe("wss://private.example");
+      expect((screen.getByLabelText("Private batch threshold") as HTMLInputElement).value).toBe("3");
+      expect((screen.getByLabelText("Private submission deadline") as HTMLInputElement).value).toBe("2027-01-01T12:00:00Z");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Go Live" }));
+
+    await waitFor(() => expect(questionnaireNostrMocks.publishQuestionnaireDefinition).toHaveBeenCalled());
+    const definition = questionnaireNostrMocks.publishQuestionnaireDefinition.mock.calls[0]?.[0]?.definition;
+    expect(definition?.privateWorker).toEqual({
+      npub: workerNpub,
+      dmRelays: ["wss://private.example"],
+      batchThreshold: 3,
+      submissionDeadline: "2027-01-01T12:00:00Z",
+    });
+    const delegation = vi.mocked(publishOptionAWorkerDelegationDm).mock.calls[0]?.[0]?.delegation;
+    expect(delegation?.capabilities).toEqual(expect.arrayContaining([
+      "queue_private_submissions",
+      "report_private_progress",
+      "release_submission_batches",
+    ]));
   });
 
   it("marks incomplete question prompts as missing", () => {

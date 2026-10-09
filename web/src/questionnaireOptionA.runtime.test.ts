@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { getPublicKey, nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   processOptionAQueuesForCoordinator,
@@ -32,11 +32,13 @@ import {
   publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
   publishOptionAParticipantStatusDm,
+  sendPrivateBallotSubmission,
   publishOptionAVoterStateDm,
   subscribeOptionABlindIssuanceDms,
   subscribeOptionABlindIssuanceDmsWithNsec,
   subscribeOptionABlindRequestAckDms,
   subscribeOptionABlindRequestAckDmsWithNsec,
+  subscribePrivateBallotReceiptDmsWithNsec,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
@@ -59,8 +61,22 @@ import {
   publishQuestionnaireSubmissionDecisionPublic,
 } from "./questionnaireResponsePublish";
 import type { SignerService } from "./services/signerService";
-import { fetchQuestionnaireActiveWorkerDelegationForCapability, fetchQuestionnaireDefinitions } from "./questionnaireTransport";
+import {
+  fetchLatestQuestionnaireDefinitionByCoordinator,
+  fetchQuestionnaireActiveWorkerDelegationForCapability,
+  fetchQuestionnaireDefinitions,
+} from "./questionnaireTransport";
 import { createWorkerDelegationCertificate, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
+
+const privateReceiptSubscription = vi.hoisted(() => ({
+  onReceipt: null as null | ((receipt: {
+    electionId: string;
+    submissionId: string;
+    accepted: boolean;
+    receivedAt: string;
+    reason?: string;
+  }) => void),
+}));
 
 const publicBlindResponseStore = vi.hoisted(() => ({
   entries: [] as Array<{
@@ -152,6 +168,12 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
     failures: 0,
     relayResults: [],
   }),
+  sendPrivateBallotSubmission: vi.fn().mockResolvedValue({
+    eventId: "mock-private-ballot-submission",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
   publishOptionABlindIssuanceDm: vi.fn().mockResolvedValue({
     eventId: "mock-option-a-issuance-dm",
     successes: 1,
@@ -200,6 +222,18 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   subscribeOptionABallotSubmissionDms: vi.fn(() => () => undefined),
   subscribeOptionABallotSubmissionAckDms: vi.fn(() => () => undefined),
   subscribeOptionABallotAcceptanceDms: vi.fn(() => () => undefined),
+  subscribePrivateBallotReceiptDms: vi.fn((input: { onReceipt: (receipt: typeof privateReceiptSubscription.onReceipt extends ((receipt: infer T) => void) ? T : never) => void }) => {
+    privateReceiptSubscription.onReceipt = input.onReceipt;
+    return () => {
+      privateReceiptSubscription.onReceipt = null;
+    };
+  }),
+  subscribePrivateBallotReceiptDmsWithNsec: vi.fn((input: { onReceipt: (receipt: typeof privateReceiptSubscription.onReceipt extends ((receipt: infer T) => void) ? T : never) => void }) => {
+    privateReceiptSubscription.onReceipt = input.onReceipt;
+    return () => {
+      privateReceiptSubscription.onReceipt = null;
+    };
+  }),
   subscribeOptionABlindIssuanceAckDms: vi.fn(() => () => undefined),
   subscribeOptionABlindRequestAckDms: vi.fn(() => () => undefined),
   subscribeOptionABlindRequestAckDmsWithNsec: vi.fn(() => () => undefined),
@@ -664,6 +698,7 @@ describe("questionnaireOptionARuntime", () => {
     vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValue(null);
     vi.mocked(fetchQuestionnaireDefinitions).mockReset();
     vi.mocked(fetchQuestionnaireDefinitions).mockResolvedValue([]);
+    privateReceiptSubscription.onReceipt = null;
     window.localStorage.clear();
     publicBlindResponseStore.entries.splice(0, publicBlindResponseStore.entries.length);
   });
@@ -897,6 +932,314 @@ describe("questionnaireOptionARuntime", () => {
     await recovered.recoverSubmittedBallotFromSelfDm();
     expect(recovered.getSnapshot()?.submission?.submissionId).toBe(submitted?.submissionId);
     expect(recovered.getSnapshot()?.draftResponses).toEqual(submitted?.payload.responses);
+  });
+
+  it("keeps public publication when only a local delegated queue worker is available", async () => {
+    const workerNpub = "npub1privatequeueworker00000000000000000000000000000";
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const { invite } = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+
+    const delegation = createWorkerDelegationCertificate({
+      electionId,
+      coordinatorNpub,
+      workerNpub,
+      capabilities: ["queue_private_submissions"],
+      controlRelays: ["wss://worker-relay.example"],
+      dmRelays: ["wss://worker-dm.example"],
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+    upsertStoredWorkerDelegation({
+      electionId,
+      mode: "delegated_worker",
+      activeDelegation: delegation,
+      lastRevocation: null,
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    vi.mocked(sendPrivateBallotSubmission).mockClear();
+    vi.mocked(publishQuestionnaireBlindResponsePublic).mockClear();
+    await voter.submitVote(["q1"]);
+
+    expect(sendPrivateBallotSubmission).not.toHaveBeenCalled();
+    expect(publishQuestionnaireBlindResponsePublic).toHaveBeenCalledWith(expect.objectContaining({
+      questionnaireId: electionId,
+      responseId: expect.any(String),
+    }));
+    expect(voter.getSnapshot()?.submissionAccepted).toBe(null);
+  });
+
+  it("routes a valid signed private worker submission to its exact relays without public publication", async () => {
+    const workerNpub = nip19.npubEncode(getPublicKey(generateSecretKey()));
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const { invite } = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    const definition = {
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      blindSigningPublicKey: coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null,
+      privateWorker: {
+        npub: workerNpub,
+        dmRelays: ["wss://private-worker.example"],
+        batchThreshold: 10,
+        submissionDeadline: new Date(Date.now() + 30 * 60_000).toISOString(),
+      },
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    vi.mocked(fetchLatestQuestionnaireDefinitionByCoordinator).mockResolvedValue({
+      definition,
+      event: { id: "signed-definition" },
+      definitionHash: "definition-hash",
+    } as never);
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockImplementation(async ({ capability }) => (
+      capability === "queue_private_submissions" || capability === "release_submission_batches"
+        ? {
+          delegationId: "private-queue",
+          workerNpub,
+          controlRelays: ["wss://control.example"],
+          dmRelays: ["wss://different-worker-relay.example"],
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        } as never
+        : null
+    ));
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+
+    vi.mocked(sendPrivateBallotSubmission).mockClear();
+    vi.mocked(publishQuestionnaireBlindResponsePublic).mockClear();
+    await voter.submitVote(["q1"]);
+
+    expect(sendPrivateBallotSubmission).toHaveBeenCalledWith(expect.objectContaining({
+      workerNpub,
+      relays: ["wss://private-worker.example"],
+    }));
+    expect(publishQuestionnaireBlindResponsePublic).not.toHaveBeenCalled();
+  });
+
+  it("keeps the public route when private queueing and release batching use different delegations", async () => {
+    const workerNpub = nip19.npubEncode(getPublicKey(generateSecretKey()));
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const { invite } = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    const definition = {
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      blindSigningPublicKey: coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null,
+      privateWorker: {
+        npub: workerNpub,
+        dmRelays: ["wss://private-worker.example"],
+        batchThreshold: 10,
+        submissionDeadline: new Date(Date.now() + 30 * 60_000).toISOString(),
+      },
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    vi.mocked(fetchLatestQuestionnaireDefinitionByCoordinator).mockResolvedValue({
+      definition,
+      event: { id: "signed-definition" },
+      definitionHash: "definition-hash",
+    } as never);
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockImplementation(async ({ capability }) => (
+      capability === "queue_private_submissions" || capability === "release_submission_batches"
+        ? {
+          delegationId: capability === "queue_private_submissions" ? "private-queue" : "private-release",
+          workerNpub,
+          controlRelays: ["wss://control.example"],
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        } as never
+        : null
+    ));
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+
+    vi.mocked(sendPrivateBallotSubmission).mockClear();
+    vi.mocked(publishQuestionnaireBlindResponsePublic).mockClear();
+    await voter.submitVote(["q1"]);
+
+    expect(sendPrivateBallotSubmission).not.toHaveBeenCalled();
+    expect(publishQuestionnaireBlindResponsePublic).toHaveBeenCalled();
+  });
+
+  it("keeps the public route when the signed private worker configuration is invalid", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const { invite } = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    const definition = {
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      blindSigningPublicKey: coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null,
+      privateWorker: {
+        npub: "npub1invalid",
+        dmRelays: ["wss://private-worker.example"],
+        batchThreshold: 10,
+        submissionDeadline: new Date(Date.now() + 30 * 60_000).toISOString(),
+      },
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    vi.mocked(fetchLatestQuestionnaireDefinitionByCoordinator).mockResolvedValue({
+      definition,
+      event: { id: "signed-definition" },
+      definitionHash: "definition-hash",
+    } as never);
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+
+    vi.mocked(sendPrivateBallotSubmission).mockClear();
+    vi.mocked(publishQuestionnaireBlindResponsePublic).mockClear();
+    await voter.submitVote(["q1"]);
+
+    expect(sendPrivateBallotSubmission).not.toHaveBeenCalled();
+    expect(publishQuestionnaireBlindResponsePublic).toHaveBeenCalled();
+  });
+
+  it("resumes private receipt delivery after reload and lets a newer rejection replace a queued receipt", async () => {
+    const workerNpub = nip19.npubEncode(getPublicKey(generateSecretKey()));
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const { invite } = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    const definition = {
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      blindSigningPublicKey: coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null,
+      privateWorker: {
+        npub: workerNpub,
+        dmRelays: ["wss://private-worker.example"],
+        batchThreshold: 10,
+        submissionDeadline: new Date(Date.now() + 30 * 60_000).toISOString(),
+      },
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    vi.mocked(fetchLatestQuestionnaireDefinitionByCoordinator).mockResolvedValue({
+      definition,
+      event: { id: "signed-definition" },
+      definitionHash: "definition-hash",
+    } as never);
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValue({
+      delegationId: "private-queue",
+      workerNpub,
+      controlRelays: ["wss://control.example"],
+      dmRelays: ["wss://different-worker-relay.example"],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    } as never);
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    await voter.submitVote(["q1"]);
+    const submissionId = voter.getSnapshot()?.submission?.submissionId!;
+    const responseNsec = voter.getSnapshot()?.responseNsec;
+
+    expect(subscribePrivateBallotReceiptDmsWithNsec).toHaveBeenCalledWith(expect.objectContaining({
+      nsec: responseNsec,
+      workerNpub,
+      electionId,
+    }));
+
+    privateReceiptSubscription.onReceipt?.({
+      electionId,
+      submissionId: "other-submission",
+      accepted: true,
+      receivedAt: new Date().toISOString(),
+    });
+    expect(voter.getSnapshot()?.privateSubmissionQueued).not.toBe(true);
+
+    privateReceiptSubscription.onReceipt?.({
+      electionId,
+      submissionId,
+      accepted: true,
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(voter.getSnapshot()?.privateSubmissionQueued).toBe(true);
+
+    voter.dispose();
+    vi.mocked(subscribePrivateBallotReceiptDmsWithNsec).mockClear();
+    const reloaded = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await reloaded.loginWithSigner(null);
+    await vi.waitFor(() => {
+      expect(subscribePrivateBallotReceiptDmsWithNsec).toHaveBeenCalledWith(expect.objectContaining({
+        nsec: responseNsec,
+        workerNpub,
+        electionId,
+      }));
+    });
+
+    const queuedSnapshot = reloaded.getSnapshot()!;
+    const applied = (reloaded as unknown as {
+      applyRecoveredVoterStateSnapshot: (snapshot: unknown) => boolean;
+    }).applyRecoveredVoterStateSnapshot({
+      ...queuedSnapshot,
+      privateSubmissionQueued: false,
+      privateSubmissionReceiptAccepted: false,
+      privateSubmissionReceiptAt: "2026-01-01T00:00:01.000Z",
+      privateSubmissionReceiptReason: "Queue closed",
+      submissionAccepted: false,
+      submissionAcceptedAt: "2026-01-01T00:00:01.000Z",
+      lastUpdatedAt: "2026-01-01T00:00:01.000Z",
+    });
+
+    expect(applied).toBe(true);
+    expect(reloaded.getSnapshot()?.privateSubmissionQueued).toBe(false);
+    expect(reloaded.getSnapshot()?.submissionAccepted).toBe(false);
+    expect(reloaded.getSnapshot()?.privateSubmissionReceiptReason).toBe("Queue closed");
+
+    const rejectedSnapshot = reloaded.getSnapshot()!;
+    const ignored = (reloaded as unknown as {
+      applyRecoveredVoterStateSnapshot: (snapshot: unknown) => boolean;
+    }).applyRecoveredVoterStateSnapshot({
+      ...rejectedSnapshot,
+      privateSubmissionQueued: true,
+      privateSubmissionReceiptAccepted: true,
+      privateSubmissionReceiptAt: "2026-01-01T00:00:00.000Z",
+      privateSubmissionReceiptReason: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(ignored).toBe(false);
+    expect(reloaded.getSnapshot()?.privateSubmissionQueued).toBe(false);
+    expect(reloaded.getSnapshot()?.submissionAccepted).toBe(false);
+
   });
 
   it("republishes an existing scoped submission with its credential bundle", async () => {
