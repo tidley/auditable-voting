@@ -131,7 +131,7 @@ export type BallotSubmissionAckRecord = {
 export type AdmittedVoterRecord = {
   npub: Npub;
   admittedAt: string;
-  source?: "manual" | "contact" | "private_invite" | "import" | null;
+  source?: "manual" | "contact" | "private_invite" | "import" | "otp" | null;
   note?: string | null;
   proxyVoter?: boolean;
   ballotGroup?: string | null;

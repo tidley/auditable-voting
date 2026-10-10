@@ -55,8 +55,12 @@ the manual path available as a fallback.
 ## Security notes
 
 - The plaintext name+code CSV is **sensitive** — delete it after distribution.
-- Codes and hashes live in component state only; nothing is sent to any
-  server from the browser.
+- Codes are never stored or sent anywhere from the browser. Only the derived
+  `pbkdf2-sha256$iterations$saltHex$digestHex` verification record is persisted
+  (`otp-admission-roster:`), never the plaintext code. That record is a weak
+  secret (six digits ≈ 20 bits; the PBKDF2 work factor only slows an offline
+  brute force), so treat a copy of it as a leaked code — see
+  [docs/otp-service-security.md](otp-service-security.md#the-actual-bound-what-this-does-not-buy).
 - The email channel ships **no auth or send code** in the browser bundle —
   that would be dead, security-sensitive code. It is a descriptor only.
 - Admission codes use a 24-hour TTL (`ADMISSION_TTL_MS`) because they are

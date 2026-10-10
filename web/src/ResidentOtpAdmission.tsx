@@ -10,6 +10,11 @@ import {
 import { parseResidentCsv, type ResidentEntry } from "./residentRegister";
 import { tryWriteClipboard } from "./clipboard";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
+import {
+  markOtpRedeemed,
+  upsertIssuedOtpRecord,
+} from "./otpAdmissionRoster";
+import type { ResidentOtpAdmissionResult } from "./ResidentOtpEntry";
 
 interface IssuedResidentCode {
   mastersListNumber: number;
@@ -19,11 +24,24 @@ interface IssuedResidentCode {
   issuedAt: number;
 }
 
+interface ResidentOtpAdmissionProps {
+  /**
+   * The election the issued codes belong to. Persisted in the issued-hash
+   * roster so a resident can redeem their code hours later.
+   */
+  electionId?: string;
+  /**
+   * Called once a code is verified and marked redeemed. Wired by
+   * `SimpleCoordinatorApp` so admission gates voting.
+   */
+  onAdmitted?: (result: ResidentOtpAdmissionResult) => void;
+}
+
 export function formatOtpIssuedAt(issuedAt: number): string {
   return new Date(issuedAt).toLocaleTimeString("en-GB", { hour12: false });
 }
 
-export default function ResidentOtpAdmission() {
+export default function ResidentOtpAdmission({ electionId, onAdmitted }: ResidentOtpAdmissionProps) {
   const [residents, setResidents] = useState<ResidentEntry[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [issued, setIssued] = useState<IssuedResidentCode[]>([]);
@@ -82,6 +100,14 @@ export default function ResidentOtpAdmission() {
       ...current.filter((entry) => entry.mastersListNumber !== resident.mastersListNumber),
       { mastersListNumber: resident.mastersListNumber, name: resident.name ?? "", code, hash, issuedAt },
     ]);
+    // Persist only the salted hash so the resident can redeem their code
+    // hours later (after this tab has been closed). Never store plaintext.
+    upsertIssuedOtpRecord({
+      mastersListNumber: resident.mastersListNumber,
+      saltHash: hash,
+      issuedAt,
+      electionId: electionId ?? "",
+    });
     failedAttemptsRef.current = { ...failedAttemptsRef.current, [resident.mastersListNumber]: 0 };
   }
 
@@ -122,6 +148,8 @@ export default function ResidentOtpAdmission() {
     const matches = await verifyOtp(code, record.hash);
     if (matches) {
       failedAttemptsRef.current = { ...failedAttemptsRef.current, [mastersListNumber]: 0 };
+      markOtpRedeemed(electionId ?? "", mastersListNumber);
+      onAdmitted?.({ mastersListNumber, electionId: electionId ?? "" });
       setVerifyStatus(`Code verified for resident ${mastersListNumber}.`);
       return;
     }
@@ -142,9 +170,9 @@ export default function ResidentOtpAdmission() {
       <p className="simple-voter-note">
         Upload a CSV with the header masters_list_number,email,phone,name.
         One-time codes are shown once when generated and are handed to residents
-        out of band; nothing is sent to a server, and only salted hashes are kept
-        for verification while this section stays mounted. This demo does not
-        send codes by email or SMS.
+        out of band; nothing is sent to a server. Only salted hashes are kept —
+        persisted in this browser so a resident can redeem their code after this
+        tab is closed. This demo does not send codes by email or SMS.
       </p>
       <input
         type="file"

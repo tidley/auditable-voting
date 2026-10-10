@@ -49,10 +49,10 @@ describe("generateOtp", () => {
 });
 
 describe("hashOtp", () => {
-  it("returns a hex string containing a salt and SHA-256 hash", async () => {
+  it("returns a PBKDF2 record with scheme, work factor, salt and digest", async () => {
     const result = await hashOtp("123456");
-    // Format: saltHex:hashHex where salt is 32 hex chars (16 bytes) and hash is 64 hex chars
-    expect(result).toMatch(/^[0-9a-f]{32}:[0-9a-f]{64}$/);
+    // Format: pbkdf2-sha256$iterations$saltHex(16 bytes)$digestHex(32 bytes)
+    expect(result).toMatch(/^pbkdf2-sha256\$\d{6,}\$[0-9a-f]{32}\$[0-9a-f]{64}$/);
   });
 
   it("produces different hashes for the same OTP (salt randomisation)", async () => {

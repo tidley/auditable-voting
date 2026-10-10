@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ADMISSION_TTL_MS, MAX_OTP_ATTEMPTS } from "./otpService";
+import { isOtpRedeemed, loadIssuedOtpRoster } from "./otpAdmissionRoster";
 
 // jsdom provides crypto.getRandomValues but not crypto.subtle; otpService needs both.
 if (!globalThis.crypto?.subtle) {
@@ -17,6 +18,7 @@ if (!globalThis.crypto?.subtle) {
 import ResidentOtpAdmission from "./ResidentOtpAdmission";
 
 const CSV_HEADER = "masters_list_number,email,phone,name";
+const ELECTION_A = "election-a";
 
 function makeCsv(...rows: Array<string[]>): string {
   return [CSV_HEADER, ...rows.map((row) => row.join(","))].join("\n");
@@ -235,13 +237,20 @@ describe("ResidentOtpAdmission OTP verification", () => {
     );
     await userEvent.type(screen.getByLabelText("One-time code"), wrongCodeFor(code));
 
+    // Each verification runs the KDF (~0.3 s), so fire all the wrong-code
+    // attempts up front and then wait for the lockout message rather than
+    // racing a per-click `waitFor(truthy)` against the still-lingering
+    // previous "Incorrect code." status.
     for (let attempt = 1; attempt <= MAX_OTP_ATTEMPTS; attempt++) {
       await userEvent.click(screen.getByLabelText("Verify code"));
-      await waitFor(() => expect(screen.getByRole("status").textContent).toBeTruthy());
     }
 
-    expect(screen.getByRole("status").textContent).toBe(
-      "Too many failed attempts. Generate a new code to continue.",
+    await waitFor(
+      () =>
+        expect(screen.getByRole("status").textContent).toBe(
+          "Too many failed attempts. Generate a new code to continue.",
+        ),
+      { timeout: 10_000 },
     );
   });
 
@@ -273,3 +282,41 @@ function wrongCodeFor(code: string): string {
   const wrong = (Number(code) + 1) % 1_000_000;
   return wrong.toString().padStart(6, "0");
 }
+
+describe("ResidentOtpAdmission persistence and admission wiring", () => {
+  it("persists only the salted hash (never plaintext) when a code is issued", async () => {
+    render(<ResidentOtpAdmission electionId={ELECTION_A} />);
+    await uploadCsv(VALID_CSV);
+    const code = await generateFor(101);
+
+    const roster = loadIssuedOtpRoster(ELECTION_A);
+    expect(roster).toHaveLength(1);
+    expect(roster[0].mastersListNumber).toBe(101);
+    // New stored format: `pbkdf2-sha256$iterations$saltHex$digestHex`.
+    expect(roster[0].saltHash).toMatch(/^pbkdf2-sha256\$\d+\$[0-9a-f]{32}\$[0-9a-f]{64}$/);
+
+    const raw = window.localStorage.getItem("otp-admission-roster:election-a") ?? "";
+    expect(raw).not.toContain(code);
+    expect(raw).not.toContain('"code"');
+  });
+
+  it("marks the code redeemed and fires onAdmitted when the coordinator verifies a correct code", async () => {
+    const onAdmitted = vi.fn();
+    render(<ResidentOtpAdmission electionId={ELECTION_A} onAdmitted={onAdmitted} />);
+    await uploadCsv(VALID_CSV);
+    const code = await generateFor(101);
+
+    await userEvent.selectOptions(
+      screen.getByLabelText("Resident to verify"),
+      screen.getByRole("option", { name: /Alice Smith/ }),
+    );
+    await userEvent.type(screen.getByLabelText("One-time code"), code);
+    await userEvent.click(screen.getByLabelText("Verify code"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe("Code verified for resident 101."),
+    );
+    expect(isOtpRedeemed(ELECTION_A, 101)).toBe(true);
+    expect(onAdmitted).toHaveBeenCalledWith({ mastersListNumber: 101, electionId: ELECTION_A });
+  });
+});
