@@ -14,6 +14,7 @@ import {
   hasAcknowledgedBlindIssuanceForNpub,
   InviteQrButton,
   InviteQrOverlay,
+  paperBallotAdmissionsWorkerConfigKey,
   ParticipantBallotGroupSelect,
   preserveParticipantBallotGroupCellWhileFocused,
   runVoterApprovalLocked,
@@ -85,6 +86,21 @@ describe("organiser participant feedback", () => {
       electionId: "q_current",
       approvedVoterNpub: "npub1newlyapproved",
     })).toBeNull();
+  });
+
+  it("changes the worker config dependency when a paper admission is added or redeemed", () => {
+    const available = [{
+      electionId: "q_paper",
+      registryKey: "a".repeat(64),
+      masterlistKey: "b".repeat(64),
+      expiresAt: "2030-01-01T00:00:00Z",
+      state: "available" as const,
+    }];
+
+    expect(paperBallotAdmissionsWorkerConfigKey(available)).not.toBe("");
+    expect(paperBallotAdmissionsWorkerConfigKey(available)).not.toBe(paperBallotAdmissionsWorkerConfigKey([
+      { ...available[0], state: "redeemed" as const, redeemedRequestId: "request-1" },
+    ]));
   });
 
   it("serialises approval by election and voter and releases the lock after failure", async () => {

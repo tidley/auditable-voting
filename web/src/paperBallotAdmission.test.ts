@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PAPER_BALLOT_CODE_PATTERN,
   createPaperBallotCode,
+  createPaperBallotAdmissionSheet,
   hashPaperBallotAdmissionKey,
+  hashPaperBallotMasterlistKey,
   loadPaperBallotAdmission,
   normalisePaperBallotMasterlistNumber,
   normalisePaperBallotCode,
+  paperBallotExpiryToIsoUtc,
   redeemPaperBallotAdmission,
   savePaperBallotAdmission,
   validatePaperBallotAdmission,
@@ -30,6 +33,40 @@ describe("paper ballot admission", () => {
     })).toBe(await hashPaperBallotAdmissionKey({
       electionId: "election-a", masterlistNumber: "ML-001", code: code.toLowerCase(),
     }));
+  });
+
+  it("creates one printable code and opaque registry entry for each master-list record", async () => {
+    const sheet = await createPaperBallotAdmissionSheet({
+      electionId: "election-a",
+      masterlistNumbers: [" ML-001 ", "ML-002", "ML-001"],
+      expiresAt: "2030-01-01T00:00:00Z",
+      randomValues: (() => {
+        let value = 0;
+        return () => new Uint8Array(Array.from({ length: 10 }, () => value++));
+      })(),
+    });
+
+    expect(sheet).toHaveLength(2);
+    expect(sheet.map((entry) => entry.masterlistNumber)).toEqual(["ML-001", "ML-002"]);
+    expect(sheet.map((entry) => entry.code)).toEqual(["0123456789", "ABCDEFGHJK"]);
+    expect(sheet.every((entry) => PAPER_BALLOT_CODE_PATTERN.test(entry.code))).toBe(true);
+    expect(sheet.every((entry) => /^[0-9a-f]{64}$/.test(entry.admission.registryKey))).toBe(true);
+    expect(sheet.every((entry) => /^[0-9a-f]{64}$/.test(entry.admission.masterlistKey ?? ""))).toBe(true);
+    expect(JSON.stringify(sheet.map((entry) => entry.admission))).not.toContain("ML-001");
+    expect(JSON.stringify(sheet.map((entry) => entry.admission))).not.toContain("0123456789");
+  });
+
+  it("converts a local expiry field value to an ISO UTC timestamp", () => {
+    expect(paperBallotExpiryToIsoUtc("2030-01-01T12:30")).toBe(new Date("2030-01-01T12:30").toISOString());
+    expect(paperBallotExpiryToIsoUtc("not-a-date")).toBe("");
+  });
+
+  it("derives a stable opaque master-list key separately from each paper code", async () => {
+    const masterlistKey = await hashPaperBallotMasterlistKey({ electionId: "election-a", masterlistNumber: "ML-001" });
+
+    expect(masterlistKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(masterlistKey).toBe(await hashPaperBallotMasterlistKey({ electionId: "election-a", masterlistNumber: " ml-001 " }));
+    expect(masterlistKey).not.toBe(await hashPaperBallotAdmissionKey({ electionId: "election-a", masterlistNumber: "ML-001", code: "ABCD1234EF" }));
   });
 
   it("accepts only an unused, unexpired code for its election and master-list number", async () => {

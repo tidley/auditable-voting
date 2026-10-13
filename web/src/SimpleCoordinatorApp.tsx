@@ -178,6 +178,8 @@ import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import OrganiserDemoTour from "./OrganiserDemoTour";
 import ResidentImportPreview from "./ResidentImportPreview";
+import PaperBallotCoordinatorPanel from "./PaperBallotCoordinatorPanel";
+import type { PaperBallotAdmissionEntry } from "./paperBallotAdmission";
 
 type CoordinatorTab = "configure" | "proxy" | "participants" | "messages" | "settings";
 type PendingParticipantSettings = {
@@ -187,6 +189,13 @@ type PendingParticipantSettings = {
 };
 
 export const SIMPLE_COORDINATOR_MENU_NAV_EVENT = "auditable-voting:coordinator-menu-nav";
+
+export function paperBallotAdmissionsWorkerConfigKey(entries: PaperBallotAdmissionEntry[]) {
+  return entries
+    .map((entry) => `${entry.registryKey}:${entry.masterlistKey ?? ""}:${entry.state}:${entry.expiresAt}:${entry.redeemedAt ?? ""}:${entry.redeemedRequestId ?? ""}:${entry.redeemedIssuanceId ?? ""}`)
+    .sort()
+    .join("|");
+}
 
 type SimpleCoordinatorAppProps = {
   accountMenu?: ReactNode;
@@ -1994,6 +2003,9 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
       .sort()
       .join("|")
   ), [privateInviteCodeEntries]);
+  const paperBallotAdmissionsKey = useMemo(() => paperBallotAdmissionsWorkerConfigKey(
+    Object.values(optionACoordinatorRuntime?.getSnapshot()?.paperBallotAdmissions ?? {}),
+  ), [knownVoterInviteRefreshNonce, optionACoordinatorRuntime]);
   const activeQuestionnaireWorkerConfigKey = useMemo(() => {
     const electionId = optionAElectionId.trim();
     if (!electionId) {
@@ -2016,8 +2028,8 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
         .map((entry) => `${entry.codeHash}:${entry.state}:${(entry.redeemedNpubs ?? []).join(",")}:${entry.maxRedemptions ?? 1}:${entry.ballotGroup ?? ""}:${entry.credentialsPerVoter === 2 ? "proxy" : "single"}`)
       .sort()
       .join("|");
-    return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}:${admittedVoterWorkerConfigKey}`;
-  }, [admittedVoterWorkerConfigKey, knownVoterInviteRefreshNonce, optionACoordinatorRuntime, optionAElectionId, privateInviteCodeEntries, selectedActiveWorkerDelegation]);
+    return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}:${paperBallotAdmissionsKey}:${admittedVoterWorkerConfigKey}`;
+  }, [admittedVoterWorkerConfigKey, knownVoterInviteRefreshNonce, optionACoordinatorRuntime, optionAElectionId, paperBallotAdmissionsKey, privateInviteCodeEntries, selectedActiveWorkerDelegation]);
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec?.trim() ?? "";
     const coordinatorNpub = activeCoordinatorNpub.trim();
@@ -9280,6 +9292,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	                    {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
 	                    {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
 	                    <ResidentImportPreview />
+	                    <PaperBallotCoordinatorPanel electionId={optionAElectionId} runtime={optionACoordinatorRuntime} onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)} />
 	                    {optionAElectionId ? (
 	                      <>
                       <div id='demo-general-invite' className='simple-general-invite-block' aria-label='Share questionnaire link'>

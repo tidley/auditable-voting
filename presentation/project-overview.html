@@ -579,6 +579,7 @@
           <li>Voter Vote now stays disabled until announced questionnaire ids are verified as publicly readable (`definition` + `open`/`published` state)</li>
           <li>Questionnaire reads now use direct live subscriptions with one startup backfill plus one bounded retry, and expose per-voter discovery timing diagnostics for startup failures</li>
           <li>Voter questionnaire responses now stay intact when the blind ballot credential or same-questionnaire definition refresh arrives</li>
+          <li>Paper ballot access prints one Crockford code per master-list record; replacing a code immediately revokes the unused predecessor, and voters request then await a blind credential without putting paper values in the anonymous ballot</li>
           <li>Course-feedback organiser mode now bypasses legacy live-round, blind-key, and ticket queue gating when accepting questionnaire responses</li>
           <li>Course-feedback harness runs now use batch-gated enrolment/submission waves (`LIVE_BATCH_SIZE`, default 5) with checkpointed progress instead of all-voter cold-start fanout</li>
           <li>Organiser questionnaire response observation now falls back to bounded kind-only reads plus local questionnaire-id filtering when tag-indexed relay reads are unreliable</li>

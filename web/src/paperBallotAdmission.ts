@@ -10,6 +10,7 @@ const PAPER_BALLOT_ADMISSIONS_STORAGE_KEY = "optiona:paper-ballot-admissions";
 export type PaperBallotAdmissionEntry = {
   electionId: string;
   registryKey: string;
+  masterlistKey?: string;
   expiresAt: string;
   state: "available" | "redeemed" | "revoked";
   redeemedAt?: string | null;
@@ -28,6 +29,7 @@ export function isPaperBallotAdmissionEntry(value: unknown): value is PaperBallo
     && typeof entry.registryKey === "string"
     && /^[0-9a-f]{64}$/.test(entry.registryKey)
     && typeof entry.expiresAt === "string"
+    && (entry.masterlistKey === undefined || (typeof entry.masterlistKey === "string" && /^[0-9a-f]{64}$/.test(entry.masterlistKey)))
     && (entry.state === "available" || entry.state === "redeemed" || entry.state === "revoked")
     // Old records reveal a master-list number, so never load or rewrite them.
     && !("masterlistNumber" in entry)
@@ -71,6 +73,9 @@ export function savePaperBallotAdmission(entry: PaperBallotAdmissionEntry) {
   registry[registryKey] = {
     electionId,
     registryKey,
+    ...(typeof entry.masterlistKey === "string" && /^[0-9a-f]{64}$/.test(entry.masterlistKey)
+      ? { masterlistKey: entry.masterlistKey }
+      : {}),
     expiresAt: entry.expiresAt,
     state: entry.state,
     redeemedAt: entry.redeemedAt ?? null,
@@ -101,7 +106,7 @@ export function normalisePaperBallotMasterlistNumber(masterlistNumber: string | 
 
 export function createPaperBallotCode(randomValues = (bytes: Uint8Array) => crypto.getRandomValues(bytes)) {
   const bytes = new Uint8Array(10);
-  randomValues(bytes);
+  bytes.set(randomValues(bytes));
   return [...bytes].map((byte) => PAPER_BALLOT_ALPHABET[byte % PAPER_BALLOT_ALPHABET.length]).join("");
 }
 
@@ -113,6 +118,60 @@ export function hashPaperBallotAdmissionKey(input: { electionId: string; masterl
     return Promise.resolve("");
   }
   return hashQuestionnaireInviteCode(`paper-ballot-admission:v1:${JSON.stringify([electionId, masterlistNumber, code])}`);
+}
+
+export function hashPaperBallotMasterlistKey(input: { electionId: string; masterlistNumber: string }) {
+  const electionId = input.electionId.trim();
+  const masterlistNumber = normalisePaperBallotMasterlistNumber(input.masterlistNumber);
+  if (!electionId || !masterlistNumber) {
+    return Promise.resolve("");
+  }
+  return hashQuestionnaireInviteCode(`paper-ballot-masterlist:v1:${JSON.stringify([electionId, masterlistNumber])}`);
+}
+
+export function paperBallotExpiryToIsoUtc(value: string | null | undefined) {
+  const timestamp = Date.parse(value?.trim() ?? "");
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+export type PrintablePaperBallotAdmission = {
+  masterlistNumber: string;
+  code: string;
+  admission: PaperBallotAdmissionEntry;
+};
+
+export async function createPaperBallotAdmissionSheet(input: {
+  electionId: string;
+  masterlistNumbers: string[];
+  expiresAt: string;
+  randomValues?: (bytes: Uint8Array) => Uint8Array;
+}): Promise<PrintablePaperBallotAdmission[]> {
+  const electionId = input.electionId.trim();
+  const expiresAt = input.expiresAt.trim();
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!electionId || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+    return [];
+  }
+  const masterlistNumbers = [...new Set(input.masterlistNumbers
+    .map(normalisePaperBallotMasterlistNumber)
+    .filter(Boolean))];
+  const codes = new Set<string>();
+  const sheet: PrintablePaperBallotAdmission[] = [];
+  for (const masterlistNumber of masterlistNumbers) {
+    let code = createPaperBallotCode(input.randomValues);
+    while (codes.has(code)) {
+      code = createPaperBallotCode(input.randomValues);
+    }
+    codes.add(code);
+    const registryKey = await hashPaperBallotAdmissionKey({ electionId, masterlistNumber, code });
+    const masterlistKey = await hashPaperBallotMasterlistKey({ electionId, masterlistNumber });
+    sheet.push({
+      masterlistNumber,
+      code,
+      admission: { electionId, registryKey, masterlistKey, expiresAt, state: "available" },
+    });
+  }
+  return sheet;
 }
 
 export function validatePaperBallotAdmission(

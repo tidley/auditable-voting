@@ -442,6 +442,7 @@
               <ol class="flow-list panel" aria-label="One minute flow">
                 <li>An organiser admits a voter or confirms that a voter is eligible.</li>
                 <li>The voter requests fresh blind ballot credentials for this questionnaire; each credential signs its allowed scopes, scope 0 covers Main questions, and one of up to 100 organiser-defined voter groups can cover group-specific questions. Proxy voters receive a second independent credential with the same allowed scopes. Large bundles can be compressed before encryption, while small bundles stay plain JSON.</li>
+                <li>For a paper ballot, the organiser prints one ten-character Crockford code for each master-list number. Replacing a code revokes its unused predecessor immediately. The voter enters both values to request a blind credential, then waits for its receipt. The issuer stores only opaque admission keys, and the anonymous ballot includes neither paper value.</li>
                 <li>The organiser or audit proxy signs the bundle without seeing the final token commitments and returns multi-credential blind signatures plus the public definition hash or event id in one private DM where possible.</li>
                 <li>The voter submits the questionnaire response anonymously; all questions share one proof, like one multi-part question.</li>
                 <li>Anyone can verify that accepted ballots are valid, unique, and correctly tallied.</li>

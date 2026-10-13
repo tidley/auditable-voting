@@ -21,9 +21,10 @@ Observers can independently recompute the result from public data.
 
 1. An organiser admits a voter or confirms that a voter is eligible.
 2. The voter requests fresh blind ballot credentials for this questionnaire. Current questionnaires use one internal response group, or two credentials for that group when the voter is marked as a proxy voter; large bundles can be compressed before encryption, while small bundles stay plain JSON.
-3. The organiser or audit proxy signs the bundle without seeing the final token commitments and returns multi-credential blind signatures plus the public definition hash or event id in one private DM where possible.
-4. The voter submits the questionnaire response anonymously; all questions share one proof, like one multi-part question.
-5. Anyone can verify that accepted ballots are valid, unique, and correctly tallied.
+3. For paper ballots, the organiser prints one ten-character Crockford code per master-list number. Replacing a code revokes the unused prior code immediately. The voter selects this route and enters both values to request, not yet receive, a blind credential. The issuer stores and receives only opaque admission keys, and the anonymous ballot contains neither paper value.
+4. The organiser or audit proxy signs the bundle without seeing the final token commitments and returns multi-credential blind signatures plus the public definition hash or event id in one private DM where possible.
+5. The voter submits the questionnaire response anonymously; all questions share one proof, like one multi-part question.
+6. Anyone can verify that accepted ballots are valid, unique, and correctly tallied.
 
 The app itself renders in a light theme by default, with a calm dark theme one tap away via the sun/moon toggle in the corner of any screen. The choice is remembered per browser, first visits always start light (the system colour-scheme preference is deliberately not consulted), and the protocol behaves identically in both themes.
 
