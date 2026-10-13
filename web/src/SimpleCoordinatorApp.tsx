@@ -61,6 +61,7 @@ import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import ResidentOtpAdmission from "./ResidentOtpAdmission";
+import { isOtpRedeemed, loadResidentNpubBindings, OTP_ADMISSION_BINDING_PREFIX, OTP_ADMISSION_REDEEMED_PREFIX } from "./otpAdmissionRoster";
 import DeliveryPanel from "./otpDelivery/DeliveryPanel";
 import { UiButton, UiDataTable, UiIcon, UiSelect, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import QuestionnaireCoordinatorPanel, {
@@ -5575,6 +5576,52 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
     };
   }
 
+  function syncOtpAdmittedVotersToRoster() {
+    const electionId = optionAElectionId.trim();
+    if (!electionId || !activeCoordinatorNpub.trim()) {
+      return;
+    }
+    // The voter side persists a resident → voter-npub binding when a code is
+    // redeemed. Push every bound-and-redeemed resident into the npub-keyed
+    // whitelist so admission actually gates voting (requirement 4).
+    const npubs = loadResidentNpubBindings(electionId)
+      .filter((binding) => isOtpRedeemed(electionId, binding.mastersListNumber))
+      .map((binding) => binding.npub);
+    if (npubs.length === 0) {
+      return;
+    }
+    admitVotersToRoster(npubs, "otp", { silent: true });
+  }
+
+  function handleResidentOtpAdmitted(result: { mastersListNumber: number; electionId: string }) {
+    syncOtpAdmittedVotersToRoster();
+    setAdmittedVoterStatus(
+      `Resident ${result.mastersListNumber} admitted to this election via one-time code.`,
+    );
+  }
+
+  // A resident redeems their code on the voter side, in a different tab. Re-run
+  // the sync when this tab loads or when the election/identity changes so any
+  // binding recorded in a prior session is pushed into the whitelist. The
+  // `storage` listener catches redemptions that land while this tab is open.
+  useEffect(() => {
+    syncOtpAdmittedVotersToRoster();
+    if (typeof window === "undefined") {
+      return;
+    }
+    function handleOtpStorage(event: StorageEvent) {
+      const key = event.key ?? "";
+      if (
+        key.startsWith(OTP_ADMISSION_BINDING_PREFIX)
+        || key.startsWith(OTP_ADMISSION_REDEEMED_PREFIX)
+      ) {
+        syncOtpAdmittedVotersToRoster();
+      }
+    }
+    window.addEventListener("storage", handleOtpStorage);
+    return () => window.removeEventListener("storage", handleOtpStorage);
+  }, [optionAElectionId, activeCoordinatorNpub]);
+
   async function inviteDraftVoter() {
     const rawValue = admittedVoterDraftNpub.trim();
     if (!rawValue) {
@@ -9364,7 +9411,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	              </SimpleCollapsibleSection>
             </div>
             <div id='coordinator-resident-admission-section'>
-              <ResidentOtpAdmission />
+              <ResidentOtpAdmission electionId={optionAElectionId} onAdmitted={handleResidentOtpAdmitted} />
             </div>
             <div id='coordinator-delivery-section'>
               <DeliveryPanel electionId={optionAElectionId} />

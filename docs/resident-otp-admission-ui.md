@@ -21,14 +21,13 @@ displayed to the organiser once, who hands them to residents out of band.
    `masters_list_number,email,phone,name`. Parsing is all-or-nothing: any
    invalid row rejects the file with a per-row error list.
 2. **Generate** — per resident or in one batch. Each code is generated with
-   `generateOtp()` (CSPRNG) and its salted SHA-256 hash (`hashOtp()`) is
+   `generateOtp()` (CSPRNG) and its PBKDF2-HMAC-SHA256 record (`hashOtp()`) is
    retained for verification. The plaintext code is displayed in the
-   "Issued codes" panel with a copy button and the issue time, and is
-   never re-derivable from the stored hash. Re-generating replaces the
-   entry. Note: codes and hashes live in component state only — switching
-   coordinator tabs or uploading a new roster discards them; the section
-   holds them in browser memory for its mounted lifetime and sends nothing
-   to any server.
+   "Issued codes" panel with a copy button and the issue time. Re-generating
+   replaces the entry. The derived record is persisted to `localStorage`
+   (`otp-admission-roster:<electionId>`) so the resident can redeem their
+   code after this tab is closed; only the record is stored, never the
+   plaintext code, and nothing is sent to any server.
 3. **Verify** — the organiser selects a resident, enters the 6-digit code,
    and submits. The form reports one of: success, incorrect code,
    rate-limited (after `MAX_OTP_ATTEMPTS` failures), expired
@@ -38,16 +37,22 @@ displayed to the organiser once, who hands them to residents out of band.
 
 ## Security properties
 
-- Codes are never sent anywhere; the salted `saltHex:hashHex` values used
-  for verification are held in browser memory only while the section is
-  mounted (no persistence, no network).
+- Codes are never sent anywhere; the derived
+  `pbkdf2-sha256$iterations$saltHex$digestHex` records used for verification
+  are persisted in `localStorage` (never plaintext, never the code itself) so a
+  resident can redeem their code hours later. No network is involved. The
+  record is a *weak* secret, not an unrecoverable one: six digits is ≈ 20 bits,
+  so a copy of that storage can be brute-forced — see
+  [docs/otp-service-security.md](otp-service-security.md#the-actual-bound-what-this-does-not-buy).
 - The plaintext code remains visible in the Issued codes panel until
   replaced or the roster changes — it is a demo hand-off channel, not a
   delivery channel. Clipboard copy failure is silent (browser denies or
   lacks clipboard access); the code can still be read and transcribed
   manually.
-- Verification goes through `verifyOtp()` (constant-time comparison,
-  per-hash rate limiting).
+- Verification goes through `verifyOtp()` (constant-time comparison).
+  Attempt limiting is per loaded page (an in-memory map cleared by any
+  reload), **not** a real rate limit; a record in the pre-fix SHA-256 format
+  is rejected as unverifiable rather than reported as a wrong code.
 - Expiry is checked with `isOtpExpired()` before verification, so expired
   codes fail closed.
 - All CSV text fields pass through the register's formula-injection
