@@ -4,6 +4,8 @@ import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQues
 import { formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireQuestion, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
+import { resolveLocalised, translatedText } from "./i18n/resolveLocale";
+import { useLocaleSafe, useTSafe } from "./i18n/LanguageContext";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { resolveQuestionnaireResponderNpub } from "./questionnaireResponderIdentity";
@@ -448,6 +450,8 @@ type QuestionnaireVoterPanelProps = {
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
+  const { locale } = useLocaleSafe();
+  const t = useTSafe();
   const globalFlags = globalThis as typeof globalThis & { __AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__?: boolean };
   const optionAMode = !globalFlags.__AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__;
 
@@ -790,8 +794,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           const stale = isDefinitionMarkedStale(parsed);
           const entry: QuestionnaireSelectorEntry = {
             questionnaireId: id,
-            title: parsed.title?.trim() ?? "",
-            description: parsed.description?.trim() ?? "",
+            title: resolveLocalised(parsed.title, "en").trim(),
+            description: resolveLocalised(parsed.description ?? "", "en").trim(),
             lifecycle,
             coordinatorPubkey: parsed.coordinatorPubkey,
             openAt: Number.isFinite(parsed.openAt) ? parsed.openAt : null,
@@ -1425,7 +1429,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           const existing = current.find((entry) => entry.questionnaireId === definition.questionnaireId);
           const nextEntry: QuestionnaireParticipationHistoryEntry = {
             questionnaireId: definition.questionnaireId,
-            title: definition.title?.trim() ?? "",
+            title: resolveLocalised(definition.title, "en").trim(),
             coordinatorPubkey: definition.coordinatorPubkey,
             submissionCount: Math.max(1, (existing?.submissionCount ?? 0) + 1),
             lastSubmittedAt: submittedAt,
@@ -1532,7 +1536,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       submitButtonPresent,
       submitButtonVisible,
       submitButtonDisabled,
-      submitButtonText: submitInFlight ? "Submitting..." : "Submit response",
+      submitButtonText: submitInFlight ? t("voterSubmitting") : t("voterSubmitResponse"),
       submitButtonReasonBlocked,
       responsePayloadBuilt: responsePipelineDiagnostics.responsePayloadBuilt,
       responsePayloadValidated: responsePipelineDiagnostics.responsePayloadValidated,
@@ -1603,15 +1607,15 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
 
   return (
     <div className='simple-voter-card'>
-      <h3 className='simple-voter-question'>Questionnaire</h3>
-      <p className='simple-voter-note'>{definition?.title ?? "Questionnaire"}</p>
-      <p className='simple-voter-note'>{definition?.description ?? "This response is submitted using a one-time token."}</p>
-      <p className='simple-voter-note'>{definition?.responseVisibility === "private" ? "Answers are encrypted" : "Answers are public"}</p>
+      <h3 className='simple-voter-question'>{t("voterQuestionnaire")}</h3>
+      <p className='simple-voter-note'>{resolveLocalised(translatedText(definition?.title ?? "", definition?.translations?.title), locale) || t("voterQuestionnaire")}</p>
+      <p className='simple-voter-note'>{resolveLocalised(translatedText(definition?.description ?? "", definition?.translations?.description), locale) || t("voterOneTimeTokenNote")}</p>
+      <p className='simple-voter-note'>{definition?.responseVisibility === "private" ? t("voterAnswersEncrypted") : t("voterAnswersPublic")}</p>
       {responderMarkerNpub ? (
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           <TokenFingerprint tokenId={responderMarkerNpub} compact showQr={false} hideMetadata />
           <div>
-            <p className='simple-voter-note'>Your responder marker</p>
+            <p className='simple-voter-note'>{t("voterResponderMarker")}</p>
             <p className='simple-voter-note'>Voter ID {responderMarkerId}</p>
           </div>
         </div>
@@ -1626,7 +1630,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           <h4 className='simple-questionnaire-voter-prompt'>{selectedQuestionnaireEntry.title || selectedQuestionnaireEntry.questionnaireId}</h4>
           <p className='simple-questionnaire-voter-helper'>ID: {selectedQuestionnaireEntry.questionnaireId}</p>
           {selectedQuestionnaireEntry.restored ? (
-            <p className='simple-questionnaire-voter-helper'>Restored questionnaire</p>
+            <p className='simple-questionnaire-voter-helper'>{t("voterRestoredQuestionnaire")}</p>
           ) : null}
         </div>
       ) : (
@@ -1645,7 +1649,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       )}
       {participationHistory.length > 0 ? (
         <>
-          <p className='simple-voter-note'>Participation history</p>
+          <p className='simple-voter-note'>{t("voterParticipationHistory")}</p>
           <ul className='simple-vote-status-list'>
             {participationHistory.slice(0, 6).map((entry) => (
               <li key={entry.questionnaireId}>
@@ -1681,11 +1685,11 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          2. Response ready: {tokenStatus === "ready" || tokenStatus === "submitted" ? "Token ready" : "Waiting"}
+          2. Response ready: {tokenStatus === "ready" || tokenStatus === "submitted" ? t("voterTokenReady") : t("statusWaiting")}
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          3. Submitted: {tokenStatus === "submitted" ? "Response submitted" : "Not submitted"}
+          3. Submitted: {tokenStatus === "submitted" ? t("voterResponseSubmitted") : t("voterNotSubmitted")}
         </li>
       </ul>
 
@@ -1695,8 +1699,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             if (!shouldShowQuestion(question, answeredMap, questionMap)) {
               return null;
             }
-            const questionPrompt = question.prompt.trim() || "Untitled question";
-            const requirementLabel = question.required ? "Required" : "Optional";
+            const questionPrompt = resolveLocalised(translatedText(question.prompt, question.translations?.prompt), locale).trim() || t("voterUntitledQuestion");
+            const requirementLabel = question.required ? t("statusRequired") : t("statusOptional");
             if (question.type === "yes_no") {
               const selected = answerState[question.questionId];
               const requirementText = typeof selected === "boolean" ? null : requirementLabel;
@@ -1757,7 +1761,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                           disabled={responseLocked}
                           onChange={() => setMultipleChoiceAnswer(question.questionId, option.optionId, question.multiSelect)}
                         />
-                        <span>{option.label}</span>
+                        <span>{resolveLocalised(translatedText(option.label, option.translations?.label), locale)}</span>
                       </label>
                     ))}
                   </div>
@@ -1819,7 +1823,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                                 <span className='simple-questionnaire-rank-selected'>
                                   <span className='simple-questionnaire-rank-selected-option'>
                                     <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
-                                    <span>{option.label}</span>
+                                    <span>{resolveLocalised(translatedText(option.label, option.translations?.label), locale)}</span>
                                   </span>
                                   <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
                                 </span>
@@ -1861,7 +1865,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                             onPress={() => addRankedAnswer(question.questionId, option.optionId)}
                             isDisabled={responseLocked}
                           >
-                            <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
+                            <span className='simple-questionnaire-rank-add-option'>{resolveLocalised(translatedText(option.label, option.translations?.label), locale)}</span>
                             <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
                           </UiButton>
                         ))}
@@ -1919,7 +1923,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             isDisabled={!canSubmit}
             onPress={() => void submitResponse()}
           >
-            {submitInFlight ? "Submitting..." : "Submit response"}
+            {submitInFlight ? t("voterSubmitting") : t("voterSubmitResponse")}
           </UiButton>
         </div>
       ) : (

@@ -4,6 +4,8 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { nip19 } from "nostr-tools";
 import { deriveIdentityWords } from "./identityWords";
+import { LanguageProvider } from "./i18n/LanguageContext";
+import { LanguageSwitcher } from "./i18n/LanguageSwitcher";
 
 const optionAStorageMocks = vi.hoisted(() => ({
   loadVoterState: vi.fn((_input: unknown): unknown => null),
@@ -188,7 +190,7 @@ import QuestionnaireOptionAVoterPanel, {
 import { QuestionnaireOptionAVoterRuntime } from "./questionnaireOptionARuntime";
 import { createEmptyVoterElectionLocalState } from "./questionnaireOptionA";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
-import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchQuestionnaireDefinitions, fetchQuestionnairePrivateInviteStatus } from "./questionnaireTransport";
 import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
 import {
@@ -1783,6 +1785,49 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       { questionId: "q1", type: "yes_no", answer: "no" },
       { questionId: "q4", type: "yes_no", answer: "no" },
     ]);
+  });
+
+  it("switches active Option A controls and translations without losing answers or showIf", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "updateDraftResponses").mockImplementation(() => undefined);
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "publishProvisionalResponses").mockResolvedValue({ successes: 1 } as never);
+    const definition: QuestionnaireDefinition = {
+      schemaVersion: 1, eventType: "questionnaire_definition", responseMode: "blind_token",
+      questionnaireId: "q_locale", title: "English title", description: "English description",
+      translations: { title: { en: "English title", fr: "Titre français", ta: "தமிழ் தலைப்பு" } },
+      createdAt: 1, openAt: 1, closeAt: 9999999999,
+      coordinatorPubkey: "npub1" + "b".repeat(58), coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private", eligibilityMode: "open", allowMultipleResponsesPerPubkey: false,
+      questions: [
+        { questionId: "q1", type: "yes_no", prompt: "English question", required: true,
+          translations: { prompt: { en: "English question", fr: "Question française", ta: "தமிழ் கேள்வி" } } },
+        { questionId: "q2", type: "multiple_choice", prompt: "English follow-up", required: true, multiSelect: false,
+          translations: { prompt: { en: "English follow-up", fr: { length: 1 }, ta: ["bad"] } } as never,
+          showIf: { dependsOnQuestionId: "q1", requiredAnswer: { answerType: "yes_no", value: true } },
+          options: [{ optionId: "one", label: "One", translations: { label: { en: "One", fr: ["bad"] } } as never }, { optionId: "two", label: "Two" }] },
+      ],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    render(<LanguageProvider initialLocale="en"><LanguageSwitcher /><QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_locale"]} /></LanguageProvider>);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await user.click(await screen.findByRole("button", { name: "Yes" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Language" }), "fr");
+    await screen.findByText("Question française");
+    expect(screen.getByRole("button", { name: "Oui" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Non" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Suivant/ }));
+    await screen.findByText("English follow-up");
+    expect(screen.getByText("One")).toBeTruthy();
+    await user.click(screen.getByRole("radio", { name: "One" }));
+    expect(screen.getByRole("button", { name: /En attente du justificatif de vote/ })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Précédent/ }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Langue" }), "ta");
+    await screen.findByText("தமிழ் கேள்வி");
+    expect(screen.getByRole("button", { name: "ஆம்" }).getAttribute("aria-pressed")).toBe("true");
+    await user.click(screen.getByRole("button", { name: "இல்லை" }));
+    expect(screen.queryByText("English follow-up")).toBeNull();
+    expect(screen.queryByRole("button", { name: /அடுத்து/ })).toBeNull();
+    expect(readCachedQuestionnaireDefinition("q_locale")).toEqual(definition);
   });
 
   it("renders questions from cached questionnaire definition when relay fetch is empty", async () => {

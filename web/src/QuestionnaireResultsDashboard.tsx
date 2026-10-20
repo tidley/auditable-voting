@@ -23,6 +23,7 @@ import {
   calculateRankQuestionScores,
   normaliseRankedOptionIds,
 } from "./questionnaireProtocol";
+import { resolveLocalised } from "./i18n/resolveLocale";
 import type {
   QuestionnaireQuestion,
   QuestionnaireResponseAnswer,
@@ -443,7 +444,7 @@ export default function QuestionnaireResultsDashboard({
       {entry.response.answers?.map((answer) => {
         const question = selectedQuestionById.get(answer.questionId);
         const questionNumber = selectedQuestionNumberById.get(answer.questionId);
-        const prompt = `${questionNumber ? `Q${questionNumber}. ` : ""}${question?.prompt || answer.questionId}`;
+        const prompt = `${questionNumber ? `Q${questionNumber}. ` : ""}${resolveLocalised(question?.prompt ?? "", "en") || answer.questionId}`;
         const answerWasDecrypted = isAnswerDecrypted(entry, answer);
         if (answer.answerType === "yes_no") {
           return (
@@ -459,7 +460,7 @@ export default function QuestionnaireResultsDashboard({
         if (answer.answerType === "multiple_choice") {
           const selectedLabels = answer.selectedOptionIds.map((optionId) => (
             question?.type === "multiple_choice"
-              ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
+              ? resolveLocalised(question.options.find((option) => option.optionId === optionId)?.label ?? "", "en") || optionId
               : optionId
           ));
           return (
@@ -479,7 +480,7 @@ export default function QuestionnaireResultsDashboard({
         if (answer.answerType === "rank") {
           const rankedLabels = answer.rankedOptionIds.map((optionId) => (
             question?.type === "rank"
-              ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
+              ? resolveLocalised(question.options.find((option) => option.optionId === optionId)?.label ?? "", "en") || optionId
               : optionId
           ));
           return (
@@ -612,7 +613,7 @@ export default function QuestionnaireResultsDashboard({
       <div className='simple-auditor-question-grid simple-session-question-grid'>
         {filteredQuestionSummaries.map((summary) => {
           const questionNumber = selectedQuestionNumberById.get(summary.questionId);
-          const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
+          const questionTitle = resolveLocalised(selectedQuestionById.get(summary.questionId)?.prompt ?? "", "en") || `Question ${summary.questionId}`;
           const questionResponseCount = acceptedQuestionResponseCountById.get(summary.questionId)
             ?? (publishedTotalsAvailable
               ? getSummaryResponseCount(summary, displayValidCount)
@@ -1037,7 +1038,7 @@ export default function QuestionnaireResultsDashboard({
           </UiButton>
           <div className='token-fingerprint-overlay-card simple-auditor-full-results-card' onClick={(event) => event.stopPropagation()}>
             <h3 className='simple-voter-question'>
-              {selectedQuestionById.get(freeTextViewerQuestionId)?.prompt || freeTextViewerQuestionId}
+              {resolveLocalised(selectedQuestionById.get(freeTextViewerQuestionId)?.prompt ?? "", "en") || freeTextViewerQuestionId}
             </h3>
             <ul className='simple-voter-list'>
               {responseDetails
@@ -1307,7 +1308,7 @@ function MultipleChoiceSummaryCard({
       {rows
         .map((row) => {
           const label = question?.type === "multiple_choice"
-            ? question.options.find((option) => option.optionId === row.optionId)?.label ?? row.optionId
+            ? resolveLocalised(question.options.find((option) => option.optionId === row.optionId)?.label ?? "", "en") || row.optionId
             : row.optionId;
           const percentOfResponses = totalResponses > 0 ? (row.layers.totalValue / totalResponses) * 100 : 0;
           return { label, percentOfResponses, row };
@@ -1372,7 +1373,7 @@ function RankSummaryCard({
       {rows
         .map((row, index) => {
           const label = question?.type === "rank"
-            ? question.options.find((option) => option.optionId === row.optionId)?.label ?? row.optionId
+            ? resolveLocalised(question.options.find((option) => option.optionId === row.optionId)?.label ?? "", "en") || row.optionId
             : row.optionId;
           return (
             <div key={row.optionId} className='simple-auditor-option-bar-row'>

@@ -1,4 +1,5 @@
 import type { PaperBallot } from "./paperBallot";
+import { resolveLocalised } from "./i18n/resolveLocale";
 
 export default function PaperBallotPrint({ ballot }: { ballot: PaperBallot }) {
   return <article className="ballot-print">
@@ -17,11 +18,11 @@ export default function PaperBallotPrint({ ballot }: { ballot: PaperBallot }) {
     </section>
     <section className="ballot-questions">
       {ballot.questions.map((question, index) => <div key={question.questionId} className="ballot-question">
-        <p className="ballot-question-prompt">{index + 1}. {question.prompt}{question.required ? " *" : ""}</p>
+        <p className="ballot-question-prompt">{index + 1}. {resolveLocalised(question.prompt, "en")}{question.required ? " *" : ""}</p>
         {question.conditionInstruction ? <p className="ballot-condition">{question.conditionInstruction}</p> : null}
         {question.type === "yes_no" ? <p>☐ Yes　 ☐ No</p> : null}
         {question.type === "free_text" ? <div className="ballot-blank-lines">{[0, 1, 2, 3].map((line) => <div key={line} className="ballot-blank-line" />)}</div> : null}
-        {question.type === "multiple_choice" || question.type === "rank" ? question.options.map((option) => <p className="ballot-option" key={option.optionId}>{question.type === "rank" ? "___" : "☐"} {option.label}</p>) : null}
+        {question.type === "multiple_choice" || question.type === "rank" ? question.options.map((option) => <p className="ballot-option" key={option.optionId}>{question.type === "rank" ? "___" : "☐"} {resolveLocalised(option.label, "en")}</p>) : null}
       </div>)}
     </section>
   </article>;

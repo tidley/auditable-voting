@@ -14,7 +14,9 @@ function readCache() {
   }
   try {
     const raw = window.localStorage.getItem(storageKey());
-    return raw ? JSON.parse(raw) as Record<string, QuestionnaireDefinition> : {};
+    return raw
+      ? JSON.parse(raw) as Record<string, QuestionnaireDefinition>
+      : {};
   } catch {
     return {};
   }
@@ -32,7 +34,9 @@ function writeCache(cache: Record<string, QuestionnaireDefinition>) {
 }
 
 export function storeCachedQuestionnaireDefinition(definition: QuestionnaireDefinition) {
-  const id = definition.questionnaireId.trim();
+  // Preserve the signed shape, including optional translations.
+  const canonicalDefinition = definition;
+  const id = canonicalDefinition.questionnaireId.trim();
   if (!id) {
     return null;
   }
@@ -41,16 +45,16 @@ export function storeCachedQuestionnaireDefinition(definition: QuestionnaireDefi
   if (
     existing
     && Number.isFinite(existing.createdAt)
-    && Number.isFinite(definition.createdAt)
-    && existing.createdAt > definition.createdAt
+    && Number.isFinite(canonicalDefinition.createdAt)
+    && existing.createdAt > canonicalDefinition.createdAt
   ) {
     return existing;
   }
   writeCache({
     ...cache,
-    [id]: definition,
+    [id]: canonicalDefinition,
   });
-  return definition;
+  return canonicalDefinition;
 }
 
 export function readCachedQuestionnaireDefinition(questionnaireId: string) {

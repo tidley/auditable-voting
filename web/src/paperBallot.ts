@@ -1,4 +1,5 @@
 import type { QuestionnaireDefinition, QuestionnaireQuestion } from "./questionnaireProtocol";
+import { resolveLocalised } from "./i18n/resolveLocale";
 
 export type PaperBallotQuestion = QuestionnaireQuestion & { conditionInstruction?: string };
 
@@ -21,7 +22,7 @@ export function generatePaperBallot(input: {
 }): PaperBallot {
   return {
     questionnaireId: input.definition.questionnaireId,
-    questionnaireTitle: input.definition.title,
+    questionnaireTitle: resolveLocalised(input.definition.title, "en"),
     masterlistNumber: input.masterlistNumber,
     code: input.code,
     expiresAt: input.expiresAt,
@@ -35,8 +36,8 @@ export function generatePaperBallot(input: {
       const requirement = answer.answerType === "yes_no"
         ? `answered ${answer.value ? "Yes" : "No"}.`
         : `includes all of: ${answer.selectedOptionIds.map((id) => parent?.type === "multiple_choice"
-          ? parent.options.find((option) => option.optionId === id)?.label ?? id : id).join("; ")}. Other selections are allowed.`;
-      return { ...question, conditionInstruction: `Answer only if question ${index + 1} (${parent?.prompt ?? condition.dependsOnQuestionId}) is applicable and ${requirement} Otherwise leave blank.` };
+          ? resolveLocalised(parent.options.find((option) => option.optionId === id)?.label, "en") || id : id).join("; ")}. Other selections are allowed.`;
+      return { ...question, conditionInstruction: `Answer only if question ${index + 1} (${resolveLocalised(parent?.prompt, "en") || condition.dependsOnQuestionId}) is applicable and ${requirement} Otherwise leave blank.` };
     }),
   };
 }

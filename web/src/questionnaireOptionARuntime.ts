@@ -172,6 +172,7 @@ import {
   type QuestionnaireResponseAnswer,
   type QuestionnaireSubmissionDecision,
 } from "./questionnaireProtocol";
+import { resolveLocalised } from "./i18n/resolveLocale";
 import { mineGeneralInvitePow, verifyGeneralInvitePow } from "./questionnaireGeneralInvitePow";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
@@ -288,8 +289,8 @@ function cacheQuestionnaireDefinitionForRuntime(definition: QuestionnaireDefinit
   const closed = Number.isFinite(storedDefinition.closeAt) && storedDefinition.closeAt <= Math.floor(Date.now() / 1000);
   upsertElectionSummary({
     electionId,
-    title: storedDefinition.title || summary?.title || "Questionnaire",
-    description: storedDefinition.description ?? summary?.description ?? "",
+    title: resolveLocalised(storedDefinition.title, "en") || summary?.title || "Questionnaire",
+    description: resolveLocalised(storedDefinition.description ?? "", "en") || summary?.description || "",
     state: summary?.state ?? (closed ? "closed" : "open"),
     openedAt: Number.isFinite(storedDefinition.openAt) ? new Date(storedDefinition.openAt * 1000).toISOString() : summary?.openedAt ?? null,
     closedAt: Number.isFinite(storedDefinition.closeAt) ? new Date(storedDefinition.closeAt * 1000).toISOString() : summary?.closedAt ?? null,
@@ -585,8 +586,8 @@ function buildLocalPublishedElectionSummary(
     return null;
   }
   return {
-    title: summary?.title ?? definition?.title ?? existing?.title,
-    description: summary?.description ?? definition?.description ?? existing?.description,
+    title: summary?.title ?? (resolveLocalised(definition?.title ?? "", "en") || existing?.title),
+    description: summary?.description ?? (resolveLocalised(definition?.description ?? "", "en") || existing?.description),
     state: summary?.state ?? (definition ? "open" : existing?.state),
     openedAt: summary?.openedAt ?? (definition?.openAt ? new Date(definition.openAt * 1000).toISOString() : existing?.openedAt),
     closedAt: summary?.closedAt ?? (definition?.closeAt ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt),

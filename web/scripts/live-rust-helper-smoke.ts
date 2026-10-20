@@ -48,6 +48,7 @@ import {
   type QuestionnaireResponseAnswer,
   type QuestionnaireResultSummary,
 } from "../src/questionnaireProtocol";
+import { resolveLocalised } from "../src/i18n/resolveLocale";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
@@ -1034,8 +1035,8 @@ async function main() {
         type: "election_invite",
         schemaVersion: 1,
         electionId: questionnaireId,
-        title: definition.title,
-        description: definition.description ?? "",
+        title: resolveLocalised(definition.title, "en"),
+        description: resolveLocalised(definition.description ?? "", "en"),
         voteUrl: "",
         invitedNpub: voter.npub,
         coordinatorNpub: coordinator.npub,

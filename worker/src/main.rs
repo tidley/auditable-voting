@@ -6352,6 +6352,20 @@ fn prune_seen_control_events(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn definition_hash_matches_browser_legacy_and_translated_vectors() {
+        // Shared with web/src/questionnaireI18nCompatibility.test.ts.
+        let legacy = r#"{"description":"","questions":[{"options":[{"label":"One"}],"prompt":"Proceed?"}],"title":"Legacy"}"#;
+        let translated = r#"{"description":"","questions":[{"options":[{"label":"One"}],"prompt":"Proceed?"}],"title":"Legacy","translations":{"title":{"en":"Legacy","fr":"Ancien","ta":"பழைய"}}}"#;
+        for (raw, expected) in [
+            (legacy, "45f68db54b8cceac5ba13b025aa74da46d10f2590d27cf5fba339e828081b9c8"),
+            (translated, "07cc770c450a680b12718841154a0276b7e6e969dd076b665a9dbdc9ab983fb7"),
+        ] {
+            let definition = serde_json::from_str(raw).unwrap();
+            assert_eq!(questionnaire_definition_hash(&definition), expected);
+        }
+    }
+
     use super::*;
     use crate::model::{PaperBallotAdmissionEntry, QuestionnaireBlindPrivateKey, QuestionnaireDefinitionReference};
     use blind_rsa_signatures::{DefaultRng, KeyPairSha384PSSDeterministic};

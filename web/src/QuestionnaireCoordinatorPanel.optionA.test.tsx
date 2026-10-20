@@ -1223,6 +1223,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New delegated questionnaire" } });
     fireEvent.change(screen.getByPlaceholderText("Question prompt"), { target: { value: "Proceed?" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Translations" })[0]);
+    fireEvent.change(screen.getByLabelText("Title (French)"), { target: { value: "Nouveau questionnaire" } });
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
     fireEvent.change(screen.getByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
     const publishButton = screen.getByRole("button", { name: "Go Live" });
@@ -1232,6 +1234,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     await waitFor(() => expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledTimes(1));
     const definition = questionnaireNostrMocks.publishQuestionnaireDefinition.mock.calls[0]?.[0]?.definition;
     const snapshot = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.snapshot;
+    expect(definition.title).toBe("New delegated questionnaire");
+    expect(definition.translations?.title).toEqual({ en: "New delegated questionnaire", fr: "Nouveau questionnaire" });
+    expect(snapshot?.definition).toEqual(definition);
+    expect(snapshot?.definitionReference?.definitionHash).toBe(questionnaireDefinitionHash(definition));
     expect(vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0]?.recipientNpub).toBe(workerNpub);
     expect(definition?.blindSigningPublicKey?.keyId).toBeTruthy();
     expect(snapshot?.blindSigningPrivateKey?.keyId).toBe(definition?.blindSigningPublicKey?.keyId);
@@ -1267,7 +1273,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Go Live" }));
 
-    await waitFor(() => expect(questionnaireNostrMocks.publishQuestionnaireDefinition).toHaveBeenCalled());
+    // Publishing creates a real RSA key, which can exceed the default 1s wait.
+    await waitFor(() => expect(questionnaireNostrMocks.publishQuestionnaireDefinition).toHaveBeenCalled(), { timeout: 10_000 });
     const definition = questionnaireNostrMocks.publishQuestionnaireDefinition.mock.calls[0]?.[0]?.definition;
     expect(definition?.privateWorker).toEqual({
       npub: workerNpub,
@@ -1600,6 +1607,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       ...makeDefinition({ questionnaireId, title: "Automatic proxy config", coordinatorNpub }),
       blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindKey),
     };
+    // The worker must receive the published definition without text rewriting.
     const election = {
       electionId: questionnaireId,
       title: definition.title,

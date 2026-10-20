@@ -1,12 +1,29 @@
-import { describe, expect, it } from "vitest";
-import type { NostrEvent } from "nostr-tools";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { generateSecretKey, nip19, type NostrEvent } from "nostr-tools";
 import { evaluateQuestionnaireBlindAdmissions } from "./questionnaireTransport";
+import { parseQuestionnaireDefinitionEvent, publishQuestionnaireDefinition } from "./questionnaireNostr";
+import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
+import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import { resolveLocalised, translatedText } from "./i18n/resolveLocale";
 import {
   QUESTIONNAIRE_RESPONSE_BLIND_KIND,
   QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
   type QuestionnaireBlindResponseEvent,
   type QuestionnaireSubmissionDecisionEvent,
 } from "./questionnaireResponsePublish";
+
+const poolPublish = vi.fn();
+const queueNostrPublish = vi.fn();
+const publishToRelaysStaggered = vi.fn();
+
+vi.mock("./sharedNostrPool", () => ({
+  getSharedNostrPool: () => ({ publish: poolPublish, querySync: vi.fn() }),
+}));
+
+vi.mock("./nostrPublishQueue", () => ({
+  queueNostrPublish: (...args: unknown[]) => queueNostrPublish(...args),
+  publishToRelaysStaggered: (...args: unknown[]) => publishToRelaysStaggered(...args),
+}));
 
 function blindResponse(input: {
   responseId: string;
@@ -438,5 +455,172 @@ describe("questionnaireTransport tri-state proof fold (fail-closed)", () => {
     expect(result.rejected).toHaveLength(1);
     expect(result.rejected[0].rejectionReason).toBe("unknown_token_proof");
     expect(result.rejected[0].decisionEventId).toBe(null);
+  });
+});
+
+function localisedDefinition(): QuestionnaireDefinition {
+  return {
+    schemaVersion: 1,
+    eventType: "questionnaire_definition",
+    responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
+    questionnaireId: "q_multi_language_2026",
+    title: { en: "Term 1 feedback", fr: "Retour du trimestre 1", ta: "முதல் தவணை கருத்து" },
+    description: {
+      en: "Tell us how term 1 went.",
+      fr: "Dites-nous comment s'est passé le trimestre 1.",
+      ta: "முதல் தவணை எப்படி இருந்தது எனக் கூறுங்கள்.",
+    },
+    createdAt: 1712530000,
+    openAt: 1712531000,
+    closeAt: 1712539999,
+    coordinatorPubkey: "npub1coordinator",
+    coordinatorEncryptionPubkey: "npub1coordinator",
+    responseVisibility: "private",
+    eligibilityMode: "open",
+    allowMultipleResponsesPerPubkey: false,
+    questions: [
+      {
+        questionId: "q1",
+        type: "yes_no",
+        prompt: {
+          en: "Did you attend?",
+          fr: "Avez-vous participé ?",
+          ta: "நீங்கள் கலந்து கொண்டீர்களா?",
+        },
+        required: true,
+      },
+      {
+        questionId: "q2",
+        type: "multiple_choice",
+        multiSelect: false,
+        prompt: { en: "Which session?", fr: "Quelle session ?", ta: "எந்த அமர்வு?" },
+        required: false,
+        options: [
+          { optionId: "o1", label: { en: "Morning", fr: "Matin", ta: "காலை" } },
+          { optionId: "o2", label: { en: "Afternoon", fr: "Après-midi", ta: "பிற்பகல்" } },
+        ],
+      },
+    ],
+  };
+}
+
+describe("questionnaireTransport multilingual definition serialisation", () => {
+  it.each([null, [], { title: { en: "Wrong base", fr: ["bad"], ta: { length: 1 } } }])(
+    "parses malformed optional translations without rewriting the signed data: %j", (translations) => {
+      const raw = { ...localisedDefinition(), title: "English title", translations };
+      const parsed = parseQuestionnaireDefinitionEvent({ kind: 6420, content: JSON.stringify(raw) });
+      expect(parsed).not.toBeNull();
+      expect(parsed?.translations).toEqual(translations);
+      expect(resolveLocalised(translatedText(parsed?.title, parsed?.translations?.title), "fr")).toBe("English title");
+      expect(resolveLocalised(translatedText(parsed?.title, parsed?.translations?.title), "ta")).toBe("English title");
+    },
+  );
+
+  beforeEach(() => {
+    poolPublish.mockReset();
+    queueNostrPublish.mockReset();
+    publishToRelaysStaggered.mockReset();
+    poolPublish.mockReturnValue([Promise.resolve(undefined)]);
+    queueNostrPublish.mockImplementation(async (fn: () => Promise<PromiseSettledResult<unknown>[]>) => fn());
+    publishToRelaysStaggered.mockImplementation(
+      async (publishOne: (relay: string) => Promise<unknown>, relays: string[]) =>
+        Promise.allSettled(relays.map((relay) => publishOne(relay))),
+    );
+  });
+
+  it("round-trips a localised definition through publish and parse preserving every language", async () => {
+    const coordinatorNsec = nip19.nsecEncode(generateSecretKey());
+    const definition = localisedDefinition();
+
+    const published = await publishQuestionnaireDefinition({
+      coordinatorNsec,
+      definition,
+      relays: ["wss://relay.example"],
+    });
+
+    // The event that goes on the wire carries every locale, not just English.
+    const wire = JSON.parse(published.event.content) as QuestionnaireDefinition;
+    expect(wire.title).toBe("Term 1 feedback");
+    expect(wire.description).toBe("Tell us how term 1 went.");
+    expect(wire.translations).toEqual({ title: definition.title, description: definition.description });
+    expect(wire.questions[0].prompt).toBe("Did you attend?");
+    expect(wire.questions[0].translations?.prompt).toEqual(definition.questions[0].prompt);
+    expect(wire.questions[1].prompt).toBe("Which session?");
+    expect((wire.questions[1] as { options: { label: unknown }[] }).options.map((option) => option.label))
+      .toEqual(["Morning", "Afternoon"]);
+
+    const parsed = parseQuestionnaireDefinitionEvent({
+      kind: published.event.kind,
+      content: published.event.content,
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.questionnaireId).toBe("q_multi_language_2026");
+    expect(parsed).toMatchObject(wire);
+    expect((parsed?.questions[1] as { options: { translations: unknown }[] }).options.map((option) => option.translations))
+      .toEqual([{ label: { en: "Morning", fr: "Matin", ta: "காலை" } }, { label: { en: "Afternoon", fr: "Après-midi", ta: "பிற்பகல்" } }]);
+  });
+
+  it("publishes English-only definition strings unchanged", async () => {
+    const coordinatorNsec = nip19.nsecEncode(generateSecretKey());
+    const legacy = {
+      ...localisedDefinition(),
+      title: "Term 1 feedback",
+      description: "Tell us how term 1 went.",
+      questions: [
+        { questionId: "q1", type: "yes_no" as const, prompt: "Did you attend?", required: true },
+        {
+          questionId: "q2",
+          type: "multiple_choice" as const,
+          multiSelect: false,
+          prompt: "Which session?",
+          required: false,
+          options: [{ optionId: "o1", label: "Morning" }],
+        },
+      ],
+    } as unknown as QuestionnaireDefinition;
+
+    const published = await publishQuestionnaireDefinition({
+      coordinatorNsec,
+      definition: legacy,
+      relays: ["wss://relay.example"],
+    });
+
+    const wire = JSON.parse(published.event.content) as QuestionnaireDefinition;
+    expect(wire.title).toEqual("Term 1 feedback");
+    expect(wire.description).toEqual("Tell us how term 1 went.");
+    expect(wire.questions[0].prompt).toEqual("Did you attend?");
+    expect((wire.questions[1] as { options: { label: unknown }[] }).options[0].label).toEqual("Morning");
+    expect(wire.translations).toBeUndefined();
+
+    // The in-memory definition the caller handed us is left untouched.
+    expect(legacy.title).toBe("Term 1 feedback");
+  });
+
+  it("parses a legacy definition without rewriting signed strings", () => {
+    const legacyContent = JSON.stringify({
+      ...localisedDefinition(),
+      title: "Term 1 feedback",
+      description: "Tell us how term 1 went.",
+      questions: [
+        { questionId: "q1", type: "yes_no", prompt: "Did you attend?", required: true },
+        {
+          questionId: "q2",
+          type: "multiple_choice",
+          multiSelect: false,
+          prompt: "Which session?",
+          required: false,
+          options: [{ optionId: "o1", label: "Morning" }],
+        },
+      ],
+    });
+
+    const parsed = parseQuestionnaireDefinitionEvent({ kind: 6420, content: legacyContent });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.title).toEqual("Term 1 feedback");
+    expect(parsed?.description).toEqual("Tell us how term 1 went.");
+    expect(parsed?.questions[0].prompt).toEqual("Did you attend?");
+    expect((parsed?.questions[1] as { options: { label: unknown }[] }).options[0].label).toEqual("Morning");
   });
 });

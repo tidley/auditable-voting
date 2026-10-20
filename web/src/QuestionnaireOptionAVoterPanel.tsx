@@ -39,6 +39,10 @@ import {
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
 } from "./questionnaireProtocol";
+import { resolveLocalised, translatedText } from "./i18n/resolveLocale";
+import { useLocaleSafe, useTSafe } from "./i18n/LanguageContext";
+import { t as uiText } from "./i18n/uiStrings";
+import type { SupportedLocale } from "./i18n/types";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import TokenFingerprint from "./TokenFingerprint";
@@ -302,16 +306,18 @@ function credentialIndexFromSubmission(key: string, submission: BallotSubmission
   return keyedCredentialIndex ? Math.max(1, Math.floor(Number(keyedCredentialIndex))) : 1;
 }
 
-function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
+function mapDefinitionQuestions(definition: QuestionnaireDefinition, locale: SupportedLocale) {
   return definition.questions.map((question) => ({
     questionId: question.questionId,
     required: question.required,
     showIf: question.showIf,
-    prompt: question.prompt,
+    prompt: resolveLocalised(translatedText(question.prompt, question.translations?.prompt), locale),
     requiredScope: questionRequiredScope(question),
     ballotGroup: normaliseQuestionnaireBallotGroup(question.ballotGroup),
     type: question.type,
-    options: question.type === "multiple_choice" || question.type === "rank" ? question.options : undefined,
+    options: question.type === "multiple_choice" || question.type === "rank"
+      ? question.options.map((option) => ({ ...option, label: resolveLocalised(translatedText(option.label, option.translations?.label), locale) }))
+      : undefined,
     multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
     minimumRanked: question.type === "rank" ? question.minimumRanked : undefined,
     maxLength: question.type === "free_text" ? question.maxLength : undefined,
@@ -374,8 +380,8 @@ function cacheDefinitionForVoting(
   const closed = Number.isFinite(storedDefinition.closeAt) && storedDefinition.closeAt <= Math.floor(Date.now() / 1000);
   upsertElectionSummary({
     electionId,
-    title: storedDefinition.title || existing?.title || "Questionnaire",
-    description: storedDefinition.description ?? existing?.description ?? "",
+    title: resolveLocalised(storedDefinition.title, "en") || existing?.title || "Questionnaire",
+    description: resolveLocalised(storedDefinition.description ?? "", "en") || existing?.description || "",
     state: existing?.state ?? (closed ? "closed" : "open"),
     openedAt: Number.isFinite(storedDefinition.openAt) ? new Date(storedDefinition.openAt * 1000).toISOString() : existing?.openedAt ?? null,
     closedAt: Number.isFinite(storedDefinition.closeAt) ? new Date(storedDefinition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
@@ -406,8 +412,8 @@ function buildInviteFromPublicDefinition(
     type: "election_invite",
     schemaVersion: 1,
     electionId,
-    title: definition.title || "Questionnaire",
-    description: definition.description ?? "",
+    title: resolveLocalised(definition.title, "en") || "Questionnaire",
+    description: resolveLocalised(definition.description ?? "", "en"),
     voteUrl: typeof window === "undefined" ? "" : window.location.href,
     invitedNpub: invitedNpub.trim(),
     coordinatorNpub,
@@ -435,11 +441,12 @@ const PRIVATE_INVITE_STATUS_QUICK_CHECK_TIME_BUDGET_MS = 1_800;
 const PRIVATE_INVITE_STATUS_QUICK_CHECK_MAX_PAGES = 2;
 type BallotWaitRefreshMode = "manual" | "lifecycle" | "background";
 
-function SubmittedStateLabel({ children = "Submitted" }: { children?: string }) {
+function SubmittedStateLabel({ children }: { children?: string }) {
+  const t = useTSafe();
   return (
     <p className='simple-questionnaire-voter-requirement is-submitted'>
       <UiIcon name='check' />
-      <span>{children}</span>
+      <span>{children ?? t("voterSubmitted")}</span>
     </p>
   );
 }
@@ -469,11 +476,11 @@ function isLikelyMobileClient() {
 const AUTO_INVITE_REFRESH_INTERVAL_MS = 45_000;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
-  const fromDefinition = invite.definition?.title?.trim() ?? "";
+  const fromDefinition = resolveLocalised(invite.definition?.title ?? "", "en").trim();
   if (fromDefinition) {
     return fromDefinition;
   }
-  const fromCache = readCachedQuestionnaireDefinition(invite.electionId)?.title?.trim() ?? "";
+  const fromCache = resolveLocalised(readCachedQuestionnaireDefinition(invite.electionId)?.title ?? "", "en").trim();
   if (fromCache) {
     return fromCache;
   }
@@ -618,42 +625,44 @@ export function formatVoteActionButtonText(input: {
   allQuestionResponsesSubmitted: boolean;
   canAdvanceQuestionBeforeSubmit?: boolean;
   submitInFlight: boolean;
+  locale?: SupportedLocale;
 }) {
+  const t = (key: Parameters<typeof uiText>[0]) => uiText(key, input.locale ?? "en");
   const snapshot = input.snapshot;
   if (input.submitInFlight) {
-    return "Submitting...";
+    return t("voterSubmitting");
   }
   if (input.responseSubmitted && input.perQuestionMode && !input.allQuestionResponsesSubmitted) {
-    return "Next question";
+    return t("voterNextQuestion");
   }
   if (input.responseSubmitted || (input.perQuestionMode && input.allQuestionResponsesSubmitted)) {
-    return "View results";
+    return t("voterViewResults");
   }
   if (input.canAdvanceQuestionBeforeSubmit) {
-    return "Next";
+    return t("actionNext");
   }
   if (!input.requiredQuestionsAnswered) {
-    return "Answer required questions to continue";
+    return t("voterAnswerRequired");
   }
   if (input.canSubmitNow) {
-    return "Submit";
+    return t("actionSubmit");
   }
   if (!snapshot?.loginVerified) {
-    return "1/3 Confirming identity";
+    return t("voterConfirmingIdentity");
   }
   if (!input.coordinatorNpub.trim()) {
-    return "1/3 Finding organiser";
+    return t("voterFindingOrganiser");
   }
   if (!input.blindSigningKeyReady) {
-    return "1/3 Loading ballot key";
+    return t("voterLoadingBallotKey");
   }
   if (!input.ballotRequestSent) {
-    return "Requesting ballot";
+    return t("voterRequestingBallot");
   }
   if (!input.credentialReady) {
-    return "Awaiting ballot";
+    return t("voterAwaitingBallot");
   }
-  return "3/3 Preparing response";
+  return t("voterPreparingResponse");
 }
 
 function inviteMessageKey(invite: ElectionInviteMessage) {
@@ -688,18 +697,19 @@ function questionHelperText(question: {
   type: "yes_no" | "multiple_choice" | "rank" | "free_text";
   multiSelect?: boolean;
   minimumRanked?: number;
-}) {
+}, locale: SupportedLocale) {
+  const t = (key: Parameters<typeof uiText>[0]) => uiText(key, locale);
   if (question.type === "yes_no") {
     return "";
   }
   if (question.type === "multiple_choice") {
-    return question.multiSelect ? "Select all options that apply." : "Select one option.";
+    return question.multiSelect ? t("voterSelectAll") : t("voterSelectOne");
   }
   if (question.type === "rank") {
     const minimumRanked = Math.max(1, Math.floor(question.minimumRanked ?? 1));
-    return `Rank at least ${minimumRanked} in order of preference.`;
+    return t("voterRankAtLeast").replace("{count}", String(minimumRanked));
   }
-  return "Enter your response.";
+  return t("voterEnterResponse");
 }
 
 type QuestionnaireOptionAVoterPanelProps = {
@@ -810,6 +820,8 @@ function scopedBallotScopeForQuestion(
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
   const displayMode = props.displayMode ?? "vote";
   const settingsMode = displayMode === "settings";
+  const { locale } = useLocaleSafe();
+  const t = useTSafe();
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [paperBallotCode, setPaperBallotCode] = useState("");
@@ -1767,10 +1779,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ?? readCachedQuestionnaireDefinition(electionId);
     if (localDefinition) {
       cacheDefinitionForVoting(localDefinition);
-      setQuestionnaireTitle(localDefinition.title || "Questionnaire");
-      setQuestionnaireDescription(localDefinition.description || "");
+      setQuestionnaireTitle(resolveLocalised(translatedText(localDefinition.title, localDefinition.translations?.title), locale) || t("voterQuestionnaire"));
+      setQuestionnaireDescription(resolveLocalised(translatedText(localDefinition.description ?? "", localDefinition.translations?.description), locale));
       setQuestionnaireDefinition(localDefinition);
-      setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(localDefinition), activeBallotGroup));
+      setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(localDefinition, locale), activeBallotGroup));
     }
     let cancelled = false;
     const definitionRelays = mergeQuestionnaireRelayHints(
@@ -1791,16 +1803,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           return;
         }
         cacheDefinitionForVoting(latest);
-        setQuestionnaireTitle(latest.title || "Questionnaire");
-        setQuestionnaireDescription(latest.description || "");
+        setQuestionnaireTitle(resolveLocalised(translatedText(latest.title, latest.translations?.title), locale) || t("voterQuestionnaire"));
+        setQuestionnaireDescription(resolveLocalised(translatedText(latest.description ?? "", latest.translations?.description), locale));
         setQuestionnaireDefinition(latest);
-        setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(latest), activeBallotGroup));
+        setQuestions(filterQuestionsForBallotGroup(mapDefinitionQuestions(latest, locale), activeBallotGroup));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [activeBallotGroup, activeInvite, contextPendingInvites, electionId, inviteContext.invite, snapshot?.blindIssuance, snapshot?.inviteMessage]);
+  }, [activeBallotGroup, activeInvite, contextPendingInvites, electionId, inviteContext.invite, locale, snapshot?.blindIssuance, snapshot?.inviteMessage]);
 
   useEffect(() => {
     const currentId = electionId.trim();
@@ -3010,7 +3022,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           setActiveQuestionIndex(nextQuestionIndex);
           setStatus(null);
         } else {
-          setStatus("All question responses submitted.");
+          setStatus(t("voterAllSubmitted"));
         }
         setRefreshNonce((value) => value + 1);
         return;
@@ -3033,7 +3045,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           setActiveQuestionIndex(nextQuestionIndex);
           setStatus(null);
         } else {
-          setStatus("All question responses submitted.");
+          setStatus(t("voterAllSubmitted"));
         }
       } else {
         setStatus(null);
@@ -3468,13 +3480,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       || signedInNpub.trim()
       || (snapshot?.electionId === id ? snapshot.invitedNpub?.trim() : "")
       || "";
-    const title = definition?.title?.trim() || summary?.title?.trim() || id;
+    const title = resolveLocalised(definition?.title ?? "", "en").trim() || summary?.title?.trim() || id;
     return {
       type: "election_invite",
       schemaVersion: 1,
       electionId: id,
       title,
-      description: definition?.description ?? summary?.description ?? "",
+      description: resolveLocalised(definition?.description ?? "", "en") || (summary?.description ?? ""),
       voteUrl: typeof window === "undefined" ? "" : window.location.href,
       invitedNpub,
       coordinatorNpub,
@@ -3862,26 +3874,26 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && canSubmitNow
     && questionnaireCredentialReady;
   const submitFromQuestionNavLabel = firstMissingRequiredQuestionIndex >= 0
-    ? `Answer question ${firstMissingRequiredQuestionIndex + 1}`
+    ? `${t("voterAnswerQuestion")} ${firstMissingRequiredQuestionIndex + 1}`
     : !questionnaireCredentialReady
-      ? "Waiting for ballot credential"
-      : !snapshotForAction?.loginVerified
-        ? "Log in to submit"
+      ? t("voterWaitingCredential")
+    : !snapshotForAction?.loginVerified
+        ? t("voterLoginToSubmit")
         : submitInFlight
-          ? "Submitting..."
-          : "Submit";
+          ? t("voterSubmitting")
+          : t("actionSubmit");
   const questionNavForwardHighlighted = showViewResultsFromQuestionNav || canSubmitFromQuestionNav || (nextQuestionIndex >= 0 && activeQuestionReadyForNavigation);
   const activeQuestionProgressLabel = (() => {
     const questionPosition = Math.min(activeQuestionIndex + 1, Math.max(questions.length, 1));
     const questionCountLabel = questions.length > 0
-      ? `Question ${questionPosition} of ${questions.length}`
-      : "Question 0/0";
+      ? `${t("voterQuestion")} ${questionPosition} ${t("voterOf")} ${questions.length}`
+      : `${t("voterQuestion")} 0/0`;
     return questionCountLabel;
   })();
   const activeQuestionProgressPercent = questions.length > 0
     ? `${Math.min(100, Math.max(0, ((activeQuestionIndex + 1) / questions.length) * 100))}%`
     : "0%";
-  const combinedProxySubmitLabel = showProxyBallotsTogether && canSubmitNow ? "Submit" : "";
+  const combinedProxySubmitLabel = showProxyBallotsTogether && canSubmitNow ? t("actionSubmit") : "";
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
     || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
     || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
@@ -3898,18 +3910,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         const requirement = getRankRequirementState(activeQuestion.options?.length ?? 0, activeQuestion.minimumRanked ?? 0, ranked.length);
         if (requirement.missing > 0) {
           return requirement.missing === 1
-            ? "Choose 1 option to continue"
-            : `Choose ${requirement.missing} options to continue`;
+            ? t("voterChooseOneToContinue")
+            : t("voterChooseToContinue").replace("{count}", String(requirement.missing));
         }
       }
-      return "Answer this question to continue";
+      return t("voterAnswerThisQuestion");
     }
     if (showProxyBallotsTogether) {
-      return "Answer each separate vote to continue";
+      return t("voterAnswerEachVote");
     }
-    return "Answer required questions to continue";
+    return t("voterAnswerRequired");
   })();
   const formattedVoteActionButtonText = formatVoteActionButtonText({
+    locale,
     snapshot: snapshotForAction,
     requiredQuestionsAnswered: requiredQuestionsAnsweredForAction,
     canSubmitNow,
@@ -4110,23 +4123,23 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ? credentialIssuerIsProxy ? "Request sent" : `Waiting for ${credentialIssuerName}`
       : "Not requested";
   const submissionStateText = snapshot?.privateSubmissionQueued
-    ? "Queued privately"
+    ? t("voterQueuedPrivately")
     : snapshot?.submissionAccepted === true
-    ? "Accepted"
+    ? t("voterAccepted")
     : snapshot?.submissionAccepted === false
-      ? "Rejected"
+      ? t("voterRejected")
       : snapshot?.submission
         ? `Waiting for ${decisionActorName}`
-        : "Not submitted";
+        : t("voterNotSubmitted");
   const submittedMarkerNpub = displaySubmission?.responseNpub
     ?? displaySubmission?.invitedNpub
     ?? (!perQuestionMode ? snapshot?.responseNpub ?? "" : "");
   const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
   const submittedMarkerWords = submittedMarkerNpub ? deriveIdentityWords(submittedMarkerNpub) : "";
   const receiptStatusLabel = snapshot?.privateSubmissionQueued
-    ? "Queued privately"
+    ? t("voterQueuedPrivately")
     : snapshot?.submissionAccepted === false
-      ? `Rejected${snapshot.privateSubmissionReceiptReason ? `: ${snapshot.privateSubmissionReceiptReason}` : ""}`
+      ? `${t("voterRejected")}${snapshot.privateSubmissionReceiptReason ? `: ${snapshot.privateSubmissionReceiptReason}` : ""}`
       : "";
   const submittedAtLabel = displaySubmission?.submittedAt
     ? new Date(displaySubmission.submittedAt).toLocaleString()
@@ -4216,7 +4229,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               setAnswers((current) => ({ ...current, [key]: "yes" }));
             }}
           >
-            Yes
+            {t("answerYes")}
           </UiButton>
           <UiButton
             icon='cancel'
@@ -4235,7 +4248,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               setAnswers((current) => ({ ...current, [key]: "no" }));
             }}
           >
-            No
+            {t("answerNo")}
           </UiButton>
         </div>
       );
@@ -4746,12 +4759,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               onPress={() => void startQuestionnaire()}
             >
               {proofOfWorkInFlight
-                ? "Solving proof of work..."
+                ? t("voterSolvingPow")
                 : (questionnaireDefinition?.generalInvitePowDifficulty ?? 0) > 0
                   ? savedProofOfWork
-                    ? "Resume ballot request"
-                    : "Start proof of work"
-                  : "Start"}
+                    ? t("voterResumeBallot")
+                    : t("voterStartPow")
+                  : t("voterStart")}
             </UiButton>
             {proofOfWorkInFlight ? (
               (() => {
@@ -4773,7 +4786,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <p className='simple-voter-note'>
           {snapshot?.submissionAccepted === true
             ? "Response accepted. Questionnaire details are not loaded in this browser."
-            : "Retrieving questions."}
+            : t("voterRetrievingQuestions")}
         </p>
       ) : showQuestionnaireLanding ? null : (
         <div className='simple-questionnaire-voter-list'>
@@ -4808,8 +4821,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               <div className='simple-questionnaire-voter-heading'>
                 <span className='simple-questionnaire-question-badge' aria-hidden='true'>Q{index + 1}</span>
                 <div className='simple-questionnaire-voter-heading-copy'>
-                  <h4 className='simple-questionnaire-voter-prompt'>{question.prompt || "Untitled question"}</h4>
-                  <p className='simple-questionnaire-voter-helper'>{questionHelperText(question)}</p>
+                  <h4 className='simple-questionnaire-voter-prompt'>{question.prompt || t("voterUntitledQuestion")}</h4>
+                  <p className='simple-questionnaire-voter-helper'>{questionHelperText(question, locale)}</p>
                 </div>
               </div>
               {showProxyBallotsTogether ? (
@@ -4843,10 +4856,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         <div className='simple-questionnaire-proxy-vote-heading'>
                           <strong>Separate vote {credentialIndex}</strong>
                           {requirementLabel === "Submitted" || requirementLabel === "Accepted" ? (
-                            <SubmittedStateLabel>{requirementLabel}</SubmittedStateLabel>
+                            <SubmittedStateLabel>{ballotAccepted ? t("voterAccepted") : t("voterSubmitted")}</SubmittedStateLabel>
                           ) : (
                             <span className={`simple-questionnaire-voter-requirement${requirementClass}`}>
-                              {requirementLabel}
+                              {requirementLabel === "Required" ? t("statusRequired") : requirementLabel === "Optional" ? t("statusOptional") : requirementLabel === "Ready" ? t("voterReady") : requirementLabel}
                             </span>
                           )}
                         </div>
@@ -4874,8 +4887,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 }}
               >
                 <span className='simple-questionnaire-stepper-copy'>
-                  <strong>Previous</strong>
-                  <small>{previousQuestionIndex >= 0 ? `Question ${previousQuestionIndex + 1}` : "No previous question"}</small>
+                  <strong>{t("actionPrevious")}</strong>
+                  <small>{previousQuestionIndex >= 0 ? `${t("voterQuestion")} ${previousQuestionIndex + 1}` : t("voterNoPreviousQuestion")}</small>
                 </span>
               </UiButton>
               <UiButton
@@ -4904,9 +4917,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 }}
               >
                 <span className='simple-questionnaire-stepper-copy'>
-                  <strong>{submitInFlight ? "Submitting..." : showViewResultsFromQuestionNav ? "View results" : showSubmitFromQuestionNav ? submitFromQuestionNavLabel : "Next"}</strong>
+                  <strong>{submitInFlight ? t("voterSubmitting") : showViewResultsFromQuestionNav ? t("voterViewResults") : showSubmitFromQuestionNav ? submitFromQuestionNavLabel : t("actionNext")}</strong>
                   {showViewResultsFromQuestionNav || showSubmitFromQuestionNav ? null : (
-                    <small>{nextQuestionIndex >= 0 ? `Question ${nextQuestionIndex + 1}` : "No next question"}</small>
+                    <small>{nextQuestionIndex >= 0 ? `${t("voterQuestion")} ${nextQuestionIndex + 1}` : t("voterNoNextQuestion")}</small>
                   )}
                 </span>
               </UiButton>

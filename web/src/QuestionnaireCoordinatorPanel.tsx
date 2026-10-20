@@ -5,12 +5,14 @@ import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, par
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
   calculateRankQuestionScores,
+  canonicaliseQuestionnaireDefinitionText,
   normaliseQuestionnaireBallotGroup,
   questionRequiredScope,
   normaliseRankedOptionIds,
   validateQuestionnaireDefinition,
   questionnaireCredentialsPerVoter,
   type QuestionnaireDefinition,
+  type LocalisableText,
   type QuestionnairePrivateWorker,
   type QuestionnairePublishedResponseRef,
   type QuestionnaireQuestion,
@@ -21,6 +23,12 @@ import {
   type QuestionnaireVoterGroup,
   type QuestionCondition,
 } from "./questionnaireProtocol";
+import { resolveLocalised, translatedText } from "./i18n/resolveLocale";
+import { localisedFieldValue, toLocalisableText, trimLocalisableText, withLocalisedField } from "./i18n/localisedText";
+import { isLocalisedText } from "./i18n/types";
+import { useLocaleSafe, useTSafe } from "./i18n/LanguageContext";
+import { type UiStringKey } from "./i18n/uiStrings";
+import type { LocalisedText } from "./i18n/types";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey, type QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
 import {
@@ -58,6 +66,7 @@ import {
 import { createSignerService } from "./services/signerService";
 import { findCoordinatorBlindSigningPrivateKey, listElectionSummaries, loadCoordinatorState, loadElectionSummary, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import { UiButton, UiIcon, UiSelect, UiSwitch, UiTextArea, UiTextField } from "./ui/DesignLayer";
+import { LocalisedTextTranslations } from "./ui/LocalisedTextTranslations";
 import {
   type WorkerElectionConfigSnapshot,
   type PrivateQueueProgress,
@@ -232,11 +241,11 @@ type QuestionnaireSubmissionDecisionEntry = {
 
 type QuestionnaireQuestionDraft = QuestionnaireQuestion;
 
-const QUESTION_TYPE_OPTIONS: Array<{ value: QuestionnaireQuestionDraft["type"]; label: string }> = [
-  { value: "yes_no", label: "Yes / No" },
-  { value: "multiple_choice", label: "Multiple choice" },
-  { value: "rank", label: "Ranked" },
-  { value: "free_text", label: "Free text" },
+const QUESTION_TYPE_OPTIONS: Array<{ value: QuestionnaireQuestionDraft["type"]; labelKey: UiStringKey }> = [
+  { value: "yes_no", labelKey: "questionTypeYesNo" },
+  { value: "multiple_choice", labelKey: "questionTypeMultipleChoice" },
+  { value: "rank", labelKey: "questionTypeRank" },
+  { value: "free_text", labelKey: "questionTypeFreeText" },
 ];
 
 function withNormalisedQuestionBallotGroup(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
@@ -254,7 +263,7 @@ function sameStringSet(left: string[], right: string[]) {
   return leftSet.size === rightSet.size && [...leftSet].every((entry) => rightSet.has(entry));
 }
 
-function createYesNoQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
+function createYesNoQuestion(questionId: string, prompt: LocalisableText = "", required = true): QuestionnaireQuestionDraft {
   return {
     questionId,
     type: "yes_no",
@@ -319,7 +328,7 @@ function alignQuestionBallotGroups(questions: QuestionnaireQuestionDraft[]) {
   });
 }
 
-function createMultipleChoiceQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
+function createMultipleChoiceQuestion(questionId: string, prompt: LocalisableText = "", required = true): QuestionnaireQuestionDraft {
   return {
     questionId,
     type: "multiple_choice",
@@ -334,7 +343,7 @@ function createMultipleChoiceQuestion(questionId: string, prompt = "", required 
   };
 }
 
-function createRankQuestion(questionId: string, prompt = "", minimumRanked = 0): QuestionnaireQuestionDraft {
+function createRankQuestion(questionId: string, prompt: LocalisableText = "", minimumRanked = 0): QuestionnaireQuestionDraft {
   return {
     questionId,
     type: "rank",
@@ -358,7 +367,7 @@ function createNextOption(options: Array<{ optionId: string }>) {
   return { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` };
 }
 
-function createFreeTextQuestion(questionId: string, prompt = "", required = false): QuestionnaireQuestionDraft {
+function createFreeTextQuestion(questionId: string, prompt: LocalisableText = "", required = false): QuestionnaireQuestionDraft {
   return {
     questionId,
     type: "free_text",
@@ -378,7 +387,7 @@ function createFreeTextQuestion(questionId: string, prompt = "", required = fals
  * Uses the prompt if available, otherwise falls back to the questionId.
  */
 function questionDependencyLabel(question: QuestionnaireQuestionDraft): string {
-  const prompt = question.prompt.trim();
+  const prompt = resolveLocalised(question.prompt, "en").trim();
   return prompt || question.questionId;
 }
 
@@ -454,14 +463,14 @@ function deriveNextQuestionId(current: QuestionnaireQuestionDraft[]) {
 }
 
 function isQuestionDraftValid(question: QuestionnaireQuestionDraft): boolean {
-  if (!question.prompt.trim()) {
+  if (!resolveLocalised(question.prompt, "en").trim()) {
     return false;
   }
   if (question.type === "multiple_choice") {
     if (question.options.length < 2) {
       return false;
     }
-    return question.options.every((option) => option.label.trim().length > 0);
+    return question.options.every((option) => resolveLocalised(option.label, "en").trim().length > 0);
   }
   if (question.type === "rank") {
     if (question.options.length < 2) {
@@ -470,7 +479,7 @@ function isQuestionDraftValid(question: QuestionnaireQuestionDraft): boolean {
     if (!Number.isFinite(question.minimumRanked) || question.minimumRanked < 0 || question.minimumRanked > question.options.length) {
       return false;
     }
-    return question.options.every((option) => option.label.trim().length > 0);
+    return question.options.every((option) => resolveLocalised(option.label, "en").trim().length > 0);
   }
   if (question.type === "free_text") {
     return Number.isFinite(question.maxLength) && question.maxLength > 0;
@@ -608,8 +617,8 @@ const WORKER_CREDENTIALS_STORAGE_KEY = "coordinator.worker-credentials.v1";
 
 type StoredQuestionnaireDraft = {
   questionnaireId: string;
-  title: string;
-  description: string;
+  title: LocalisableText;
+  description: LocalisableText;
   closeTimerEnabled: boolean;
   closeAfterMinutes: string;
   closeTimerUnit?: CloseTimerUnit;
@@ -691,9 +700,21 @@ function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] 
       && typeof entry === "object"
       && typeof (entry as { questionId?: unknown }).questionId === "string"
       && typeof (entry as { type?: unknown }).type === "string"
-      && typeof (entry as { prompt?: unknown }).prompt === "string"
+      && (
+        typeof (entry as { prompt?: unknown }).prompt === "string"
+        || isLocalisedText((entry as { prompt?: unknown }).prompt)
+      )
     ))
-    .map((entry) => {
+    .map((storedEntry) => {
+      const entry = {
+        ...storedEntry,
+        prompt: translatedText(storedEntry.prompt, storedEntry.translations?.prompt),
+        ...((storedEntry.type === "multiple_choice" || storedEntry.type === "rank") ? {
+          options: Array.isArray(storedEntry.options)
+            ? storedEntry.options.map((option) => ({ ...option, label: translatedText(option.label, option.translations?.label) }))
+            : [],
+        } : {}),
+      } as QuestionnaireQuestionDraft;
       const withStoredGroup = (question: QuestionnaireQuestionDraft) => withNormalisedQuestionBallotGroup({
         ...question,
         ballotGroup: normaliseQuestionnaireBallotGroup(entry.requiredScope ?? entry.ballotGroup),
@@ -845,8 +866,8 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       questionnaireId: typeof parsed.questionnaireId === "string" && parsed.questionnaireId.trim()
         ? parsed.questionnaireId.trim()
         : fallbackId,
-      title: typeof parsed.title === "string" ? parsed.title : "",
-      description: typeof parsed.description === "string" ? parsed.description : "",
+      title: toLocalisableText(typeof parsed.title === "string" ? parsed.title : isLocalisedText(parsed.title) ? parsed.title : ""),
+      description: toLocalisableText(typeof parsed.description === "string" ? parsed.description : isLocalisedText(parsed.description) ? parsed.description : ""),
       closeTimerEnabled: parsed.closeTimerEnabled === true,
       closeAfterMinutes: typeof parsed.closeAfterMinutes === "string" && parsed.closeAfterMinutes.trim()
         ? parsed.closeAfterMinutes
@@ -1515,8 +1536,8 @@ function deriveAcceptedResponseDecryptedAnswerQuestionIds(response: Questionnair
 function buildDefinition(input: {
   questionnaireId: string;
   coordinatorPubkey: string;
-  title: string;
-  description: string;
+  title: LocalisableText;
+  description: LocalisableText;
   closeAfterMinutes?: number;
   questionnaireRelays?: string[];
   voterGroups?: QuestionnaireVoterGroup[];
@@ -1529,15 +1550,15 @@ function buildDefinition(input: {
   const closeAfterMinutes = Number.isFinite(input.closeAfterMinutes)
     ? Math.max(1, Math.floor(input.closeAfterMinutes as number))
     : QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES;
-  return {
+  return canonicaliseQuestionnaireDefinitionText({
     schemaVersion: 1,
     eventType: "questionnaire_definition",
     protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
     flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
     responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
     questionnaireId: input.questionnaireId,
-    title: input.title,
-    description: input.description,
+    title: trimLocalisableText(input.title),
+    description: trimLocalisableText(input.description),
     createdAt,
     openAt: createdAt,
     closeAt: createdAt + (closeAfterMinutes * 60),
@@ -1553,7 +1574,7 @@ function buildDefinition(input: {
     ...(input.privateWorker ? { privateWorker: input.privateWorker } : {}),
     voterGroups: input.voterGroups ?? [],
     questions: alignQuestionBallotGroups(input.questions).map(withNormalisedQuestionBallotGroup),
-  };
+  });
 }
 
 function generalInvitePowDurationHint(difficulty: number) {
@@ -1590,6 +1611,7 @@ function comparableDefinitionDraftShape(definition: QuestionnaireDefinition) {
     questionnaireId: definition.questionnaireId,
     title: definition.title,
     description: definition.description ?? "",
+    translations: definition.translations,
     coordinatorPubkey: definition.coordinatorPubkey,
     coordinatorEncryptionPubkey: definition.coordinatorEncryptionPubkey,
     responseVisibility: definition.responseVisibility,
@@ -1607,6 +1629,8 @@ function comparableDefinitionDraftShape(definition: QuestionnaireDefinition) {
 }
 
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
+  const { locale } = useLocaleSafe();
+  const t = useTSafe();
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const isNewRoundMode = props.newRoundMode === true;
@@ -2283,8 +2307,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         : unixTimestampToIso(definition.closeAt);
       upsertElectionSummary({
         electionId: definition.questionnaireId,
-        title: definition.title,
-        description: definition.description ?? "",
+        title: resolveLocalised(definition.title, "en"),
+        description: resolveLocalised(definition.description ?? "", "en"),
         state: summaryState,
         openedAt: unixTimestampToIso(definition.openAt) ?? existingSummary?.openedAt ?? null,
         closedAt: stateClosedAt,
@@ -2505,7 +2529,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           );
           const cachedDefinitionTitle = cachedDefinition
             && cachedDefinitionBelongsToCoordinator
-            ? cachedDefinition.title?.trim() ?? ""
+            ? resolveLocalised(cachedDefinition.title, "en").trim()
             : "";
           if (summary.state !== "draft" && cachedDefinitionBelongsToCoordinator) {
             publishedIds.add(summaryId);
@@ -2530,7 +2554,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             const parsedId = parsed.questionnaireId.trim();
             ids.add(parsedId);
             publishedIds.add(parsedId);
-            const eventTitle = parsed.title.trim();
+            const eventTitle = resolveLocalised(parsed.title, "en").trim();
             const createdAt = Number(event.created_at ?? parsed.createdAt ?? 0);
             const existingCreatedAt = eventCreatedAtById.get(parsedId);
             if (Number.isFinite(createdAt) && (!Number.isFinite(existingCreatedAt) || createdAt < (existingCreatedAt ?? Number.MAX_SAFE_INTEGER))) {
@@ -2603,7 +2627,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           );
           const cachedDefinitionTitle = cachedDefinition
             && cachedDefinitionBelongsToCoordinator
-            ? cachedDefinition.title?.trim() ?? ""
+            ? resolveLocalised(cachedDefinition.title, "en").trim()
             : "";
           if (summary.state !== "draft" && cachedDefinitionBelongsToCoordinator) {
             publishedIds.add(summaryId);
@@ -3108,8 +3132,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
     const closeDurationSeconds = definitionCloseDurationSeconds(activePublishedDefinition);
     const hasCloseTimer = closeDurationSeconds > 0 && closeDurationSeconds < QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS;
-    setTitle(activePublishedDefinition.title);
-    setDescription(activePublishedDefinition.description ?? "");
+    setTitle(translatedText(activePublishedDefinition.title, activePublishedDefinition.translations?.title));
+    setDescription(translatedText(activePublishedDefinition.description ?? "", activePublishedDefinition.translations?.description));
     setCloseTimerEnabled(hasCloseTimer);
     setCloseAfterMinutes(hasCloseTimer ? String(Math.max(1, Math.round(closeDurationSeconds / 60))) : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES);
     setCloseTimerUnit("minutes");
@@ -3315,8 +3339,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     return buildDefinition({
       questionnaireId: questionnaireId.trim(),
       coordinatorPubkey: coordinatorNpub,
-      title: title.trim(),
-      description: description.trim(),
+      title: trimLocalisableText(title),
+      description: trimLocalisableText(description),
       closeAfterMinutes: closeMinutes,
       questionnaireRelays: questionnaireRelayMetadata,
       voterGroups,
@@ -3457,7 +3481,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   }
   const lastParticipantCountPublishKeyRef = useRef("");
 
-  const titleReady = title.trim().length > 0;
+  const titleReady = resolveLocalised(title, "en").trim().length > 0;
   const hasQuestion = questions.length > 0;
   const hasKnownVoter = (props.knownVoterCount ?? 0) > 0;
   const questionsValid = questions.length > 0 && questions.every((question) => isQuestionDraftValid(question));
@@ -3533,12 +3557,12 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           : currentState === "open"
           ? "Open"
           : "Draft";
-  const checklistDescriptionAdded = description.trim().length > 0;
+  const checklistDescriptionAdded = resolveLocalised(description, "en").trim().length > 0;
   const readinessItems = useMemo<QuestionnaireReadinessItem[]>(() => ([
     {
       id: "basics",
-      label: "Title & Description",
-      shortLabel: "Info",
+      label: t("readinessTitleDescription"),
+      shortLabel: t("readinessInfo"),
       complete: titleReady && checklistDescriptionAdded,
       stageLabel: "1",
       group: "questionnaire",
@@ -3546,8 +3570,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "answers",
-      label: "Add a Question",
-      shortLabel: "Questions",
+      label: t("actionAddQuestion"),
+      shortLabel: t("readinessQuestions"),
       complete: questionsValid,
       stageLabel: "2",
       group: "questionnaire",
@@ -3555,8 +3579,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "publish",
-      label: "Published",
-      shortLabel: "Pub",
+      label: t("readinessPublished"),
+      shortLabel: t("readinessPub"),
       complete: Boolean(publishedDefinition),
       stageLabel: "3",
       group: "session",
@@ -3564,8 +3588,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "proxy",
-      label: "Proxy Setup",
-      shortLabel: "Proxy",
+      label: t("readinessProxySetup"),
+      shortLabel: t("readinessProxy"),
       complete: Boolean(activeWorkerDelegation),
       disabled: !publishedDefinition,
       optional: true,
@@ -3575,15 +3599,15 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     },
     {
       id: "invite",
-      label: "Results & Voters",
-      shortLabel: "Voters",
+      label: t("readinessResultsVoters"),
+      shortLabel: t("readinessVoters"),
       complete: knownVoterCount > 0 || displayAcceptedCount > 0,
       disabled: !publishedDefinition,
       stageLabel: "4",
       group: "session",
       action: "invite_voters",
     },
-  ]), [activeWorkerDelegation, checklistDescriptionAdded, displayAcceptedCount, knownVoterCount, publishedDefinition, questionsValid, titleReady]);
+  ]), [activeWorkerDelegation, checklistDescriptionAdded, displayAcceptedCount, knownVoterCount, publishedDefinition, questionsValid, titleReady, t]);
   useEffect(() => {
     props.onReadinessChange?.(readinessItems);
   }, [props.onReadinessChange, readinessItems]);
@@ -3602,10 +3626,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   const questionnaireOptionLabel = (id: string) => {
     const selectedId = questionnaireId.trim();
     const selectedPublishedTitle = activePublishedDefinition?.questionnaireId === selectedId
-      ? activePublishedDefinition.title.trim()
+      ? resolveLocalised(activePublishedDefinition.title, "en").trim()
       : "";
     const selectedDraftTitle = view === "build" && id === selectedId
-      ? title.trim()
+      ? resolveLocalised(title, "en").trim()
       : "";
     const availableTitle = availableQuestionnaireTitles[id]?.trim() ?? "";
     if (view === "build" && id === selectedId) {
@@ -3737,7 +3761,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             score: optionScores.get(option.optionId) ?? 0,
             firstChoiceCount: rankCounts.get(option.optionId)?.get(question.options.length) ?? 0,
           }))
-          .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label));
+          .sort((left, right) => right.score - left.score || resolveLocalised(left.label, "en").localeCompare(resolveLocalised(right.label, "en")));
         return {
           questionId: question.questionId,
           index,
@@ -3798,10 +3822,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   const canExportResults = currentState === "results_published" && Boolean(activePublishedDefinition);
   const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
   const primaryPublishAction: QuestionnairePrimaryPublishAction = !showNewRoundPublishOnly && !publishedDefinition
-    ? { label: isDefinitionPublishInFlight ? "Going live..." : "Go Live", disabled: !canPublishDraft || isDefinitionPublishInFlight }
+    ? { label: isDefinitionPublishInFlight ? t("actionGoingLive") : t("actionGoLive"), disabled: !canPublishDraft || isDefinitionPublishInFlight }
     : publishedDefinition && currentState !== "results_published"
       ? {
-        label: currentState === "open" ? "Close & Publish" : "Publish results",
+        label: currentState === "open" ? t("actionCloseAndPublish") : t("actionPublishResults"),
         disabled: closeAndPublishButtonDisabled,
       }
       : null;
@@ -3949,8 +3973,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         const publicKey = toQuestionnaireBlindPublicKey(privateKey);
         const election = {
           electionId: definitionToPublish.questionnaireId,
-          title: definitionToPublish.title,
-          description: definitionToPublish.description ?? "",
+          title: resolveLocalised(definitionToPublish.title, "en"),
+          description: resolveLocalised(definitionToPublish.description ?? "", "en"),
           state: "draft" as const,
           openedAt: null,
           closedAt: null,
@@ -4040,8 +4064,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         storeCachedQuestionnaireDefinition(definitionToPublish);
         upsertElectionSummary({
           electionId: definitionToPublish.questionnaireId,
-          title: definitionToPublish.title,
-          description: definitionToPublish.description ?? "",
+          title: resolveLocalised(definitionToPublish.title, "en"),
+          description: resolveLocalised(definitionToPublish.description ?? "", "en"),
           state: "open",
           openedAt: new Date(definitionToPublish.openAt * 1000).toISOString(),
           closedAt: new Date(definitionToPublish.closeAt * 1000).toISOString(),
@@ -4192,8 +4216,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         if (summaryState && (definition || existingSummary)) {
           upsertElectionSummary({
             electionId: id,
-            title: definition?.title ?? existingSummary?.title ?? id,
-            description: definition?.description ?? existingSummary?.description ?? "",
+            title: definition ? resolveLocalised(definition.title, "en") : existingSummary?.title ?? id,
+            description: definition ? resolveLocalised(definition.description ?? "", "en") : existingSummary?.description ?? "",
             state: summaryState,
             openedAt: definition ? unixTimestampToIso(definition.openAt) : existingSummary?.openedAt ?? null,
             closedAt: state === "closed" || state === "results_published"
@@ -5201,7 +5225,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             {currentState === "open" ? "Close and publish?" : "Publish results?"}
           </h2>
           <p id='publish-confirm-description' className='simple-voter-note'>
-            This will publish the current result summary for {activePublishedDefinition?.title?.trim() || "this questionnaire"}.
+            This will publish the current result summary for {resolveLocalised(activePublishedDefinition?.title ?? "", "en").trim() || "this questionnaire"}.
           </p>
           <div className='simple-new-identity-confirm-warning simple-publish-confirm-summary'>
             <span className='simple-new-identity-confirm-warning-icon' aria-hidden='true'>i</span>
@@ -5261,8 +5285,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           variant='session'
           questionnaire={activePublishedDefinition ? {
             questionnaireId: activePublishedDefinition.questionnaireId,
-            title: activePublishedDefinition.title || "Untitled questionnaire",
-            description: activePublishedDefinition.description ?? "",
+            title: resolveLocalised(activePublishedDefinition.title, "en") || "Untitled questionnaire",
+            description: resolveLocalised(activePublishedDefinition.description ?? "", "en"),
             createdAt: activePublishedDefinition.createdAt,
             openAt: activePublishedDefinition.openAt,
             closeAt: activePublishedDefinition.closeAt,
@@ -5314,7 +5338,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           <div className='simple-questionnaire-build-main'>
               {!isProxyBuildPage ? (
                 <header className='simple-questionnaire-editor-title'>
-                  <h1>{title.trim() || "Untitled questionnaire"}</h1>
+                  <h1>{resolveLocalised(title, "en").trim() || "Untitled questionnaire"}</h1>
                   <span>{publishedDefinition ? buildStateLabel : "Draft"}</span>
                 </header>
               ) : null}
@@ -5323,15 +5347,15 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         <section id='questionnaire-basic-section' className='simple-questionnaire-build-cardlet'>
       <div className='simple-questionnaire-identity-grid'>
         <div className='simple-questionnaire-form-field'>
-          <UiTextField
+          <LocalisedTextTranslations
+            value={title}
+            onChange={setTitle}
             label='Title'
+            ariaLabel='Title'
+            placeholder='Vote name'
             inputClassName='simple-voter-input'
-            inputProps={{
-              id: 'questionnaire-title',
-              value: title,
-              placeholder: 'Vote name',
-              onChange: (event) => setTitle(event.target.value),
-            }}
+            idPrefix='questionnaire-title'
+            disabled={questionnaireEditorLocked}
           />
         </div>
         <div className='simple-questionnaire-id-panel'>
@@ -5361,16 +5385,17 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       </div>
 
       <div className='simple-questionnaire-form-field'>
-        <UiTextArea
+        <LocalisedTextTranslations
+          value={description}
+          onChange={setDescription}
           label='Description'
-          textAreaClassName='simple-voter-input'
-          textAreaProps={{
-            id: 'questionnaire-description',
-            rows: 3,
-            value: description,
-            placeholder: 'Short description',
-            onChange: (event) => setDescription(event.target.value),
-          }}
+          ariaLabel='Description'
+          placeholder='Short description'
+          inputClassName='simple-voter-input'
+          textArea
+          rows={3}
+          idPrefix='questionnaire-description'
+          disabled={questionnaireEditorLocked}
         />
       </div>
         </section>
@@ -5556,7 +5581,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         {questions.map((question, index) => {
           const canMoveUp = index > 0;
           const canMoveDown = index < questions.length - 1;
-          const promptMissing = !question.prompt.trim();
+          const promptMissing = !resolveLocalised(question.prompt, "en").trim();
           const questionIncomplete = !isQuestionDraftValid(question);
           const questionFooter = (
             <div className='simple-questionnaire-question-footer'>
@@ -5593,7 +5618,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     onChange={(event) => setQuestionType(index, event.target.value as QuestionnaireQuestionDraft["type"])}
                   >
                     {QUESTION_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
+                      <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                     ))}
                   </UiSelect>
                   <UiSelect
@@ -5646,19 +5671,17 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </div>
                 </div>
               </div>
-              <UiTextField
-                inputClassName={`simple-voter-input${promptMissing ? " is-missing" : ""}`}
-                inputProps={{
-                  id: `question-prompt-${index}`,
-                  'aria-label': `Question ${index + 1} prompt`,
-                  'aria-invalid': promptMissing || undefined,
-                  value: question.prompt,
-                  placeholder: 'Question prompt',
-                  onChange: (event) => {
-                    const nextValue = event.target.value;
-                    updateQuestion(index, (entry) => ({ ...entry, prompt: nextValue }));
-                  },
+              <LocalisedTextTranslations
+                value={question.prompt}
+                onChange={(next) => {
+                  updateQuestion(index, (entry) => ({ ...entry, prompt: next }));
                 }}
+                ariaLabel={`Question ${index + 1} prompt`}
+                placeholder='Question prompt'
+                inputClassName={`simple-voter-input${promptMissing ? " is-missing" : ""}`}
+                invalid={promptMissing}
+                idPrefix={`question-prompt-${index}`}
+                disabled={questionnaireEditorLocked}
               />
               {/* Conditional display (showIf) configuration */}
               <div className='simple-questionnaire-conditional-config'>
@@ -5772,7 +5795,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                                     }));
                                   }}
                                 />
-                                {opt.label || opt.optionId}
+                                {resolveLocalised(opt.label, "en") || opt.optionId}
                               </label>
                             ))}
                           </div>
@@ -5791,27 +5814,26 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <div className='simple-questionnaire-options-list'>
                       {question.options.map((option, optionIndex) => (
                         <div key={option.optionId} className='simple-questionnaire-option-row'>
-                          <UiTextField
-                            inputClassName={`simple-voter-input${!option.label.trim() ? " is-missing" : ""}`}
-                            inputProps={{
-                              value: option.label,
-                              "aria-label": `Option ${optionIndex + 1}`,
-                              "aria-invalid": !option.label.trim() || undefined,
-                              onChange: (event) => {
-                                const nextLabel = event.target.value;
-                                updateQuestion(index, (entry) => {
-                                  if (entry.type !== "multiple_choice") {
-                                    return entry;
-                                  }
-                                  return bumpQuestionBallotSlotVersion({
-                                    ...entry,
-                                    options: entry.options.map((entryOption, entryOptionIndex) => (
-                                      entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                                    )),
-                                  });
+                          <LocalisedTextTranslations
+                            value={option.label}
+                            onChange={(nextLabel) => {
+                              updateQuestion(index, (entry) => {
+                                if (entry.type !== "multiple_choice") {
+                                  return entry;
+                                }
+                                return bumpQuestionBallotSlotVersion({
+                                  ...entry,
+                                  options: entry.options.map((entryOption, entryOptionIndex) => (
+                                    entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                                  )),
                                 });
-                              },
+                              });
                             }}
+                            ariaLabel={`Option ${optionIndex + 1}`}
+                            inputClassName={`simple-voter-input${!resolveLocalised(option.label, "en").trim() ? " is-missing" : ""}`}
+                            invalid={!resolveLocalised(option.label, "en").trim()}
+                            idPrefix={`question-${index}-option-${optionIndex}`}
+                            disabled={questionnaireEditorLocked}
                           />
                           <UiButton
                             icon='delete'
@@ -5869,27 +5891,26 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <div className='simple-questionnaire-options-list'>
                       {question.options.map((option, optionIndex) => (
                         <div key={option.optionId} className='simple-questionnaire-option-row'>
-                          <UiTextField
-                            inputClassName={`simple-voter-input${!option.label.trim() ? " is-missing" : ""}`}
-                            inputProps={{
-                              value: option.label,
-                              "aria-label": `Rank option ${optionIndex + 1}`,
-                              "aria-invalid": !option.label.trim() || undefined,
-                              onChange: (event) => {
-                                const nextLabel = event.target.value;
-                                updateQuestion(index, (entry) => {
-                                  if (entry.type !== "rank") {
-                                    return entry;
-                                  }
-                                  return bumpQuestionBallotSlotVersion({
-                                    ...entry,
-                                    options: entry.options.map((entryOption, entryOptionIndex) => (
-                                      entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                                    )),
-                                  });
+                          <LocalisedTextTranslations
+                            value={option.label}
+                            onChange={(nextLabel) => {
+                              updateQuestion(index, (entry) => {
+                                if (entry.type !== "rank") {
+                                  return entry;
+                                }
+                                return bumpQuestionBallotSlotVersion({
+                                  ...entry,
+                                  options: entry.options.map((entryOption, entryOptionIndex) => (
+                                    entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                                  )),
                                 });
-                              },
+                              });
                             }}
+                            ariaLabel={`Rank option ${optionIndex + 1}`}
+                            inputClassName={`simple-voter-input${!resolveLocalised(option.label, "en").trim() ? " is-missing" : ""}`}
+                            invalid={!resolveLocalised(option.label, "en").trim()}
+                            idPrefix={`question-${index}-rank-option-${optionIndex}`}
+                            disabled={questionnaireEditorLocked}
                           />
                           <UiButton
                             icon='delete'
@@ -6021,7 +6042,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   <h3>Questionnaire summary</h3>
                   <ul>
                     <li className={titleReady ? "is-ready" : ""}><UiIcon name='check' />Title</li>
-                    <li className={description.trim() ? "is-ready" : ""}><UiIcon name='check' />Description</li>
+                    <li className={resolveLocalised(description, "en").trim() ? "is-ready" : ""}><UiIcon name='check' />Description</li>
                     <li className={questions.length > 0 && questions.every(isQuestionDraftValid) ? "is-ready" : ""}><UiIcon name='check' />{questions.length} {questions.length === 1 ? "Question" : "Questions"}</li>
                     <li className={voterGroups.length > 0 ? "is-ready" : ""}><UiIcon name='check' />{voterGroups.length} {voterGroups.length === 1 ? "Voter Group" : "Voter Groups"}</li>
                     <li className={canPublishDraft ? "is-ready" : ""}><UiIcon name='check' />Ready to publish</li>
