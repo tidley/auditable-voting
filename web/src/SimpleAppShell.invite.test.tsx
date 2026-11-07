@@ -451,8 +451,8 @@ describe("SimpleAppShell invite-link login", () => {
       expect(howItWorksLink.getAttribute("href")).toBe("project-explainer.html");
       expect(howItWorksLink.getAttribute("target")).toBe("_blank");
       expect(howItWorksLink.getAttribute("rel")).toBe("noopener noreferrer");
-      const demoGuideLink = screen.getByRole("menuitem", { name: "Demo guide" });
-      expect(demoGuideLink.getAttribute("href")).toBe("demo-guide.html");
+      const demoGuideLink = screen.getByRole("menuitem", { name: "Offline demo sandbox" });
+      expect(demoGuideLink.getAttribute("href")).toBe("demo.html");
       expect(demoGuideLink.getAttribute("target")).toBe("_blank");
       expect(demoGuideLink.getAttribute("rel")).toBe("noopener noreferrer");
       expect(screen.queryByRole("menuitem", { name: "Login" })).toBeNull();

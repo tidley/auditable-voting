@@ -3,6 +3,7 @@ import type {
   QuestionnaireResultQuestionSummary,
 } from "./questionnaireProtocol";
 import { resolveLocalised } from "./i18n/resolveLocale";
+import { buildQuestionLabelMap } from "./questionnaireEditorTree";
 
 /** Resolve a localisable field to a plain string (English fallback). */
 function toPlainText(value: string | { en: string } | undefined): string {
@@ -22,8 +23,8 @@ export type HumanReadableResultEntry = {
 
 export type HumanReadableQuestionBreakdown = {
   questionId: string;
-  /** 1-based position of this question in the questionnaire (for "Q1" labels). */
-  questionNumber: number | null;
+  /** Display label shared with the organiser editor, e.g. "1", "1-A", "2". */
+  questionNumber: string | null;
   prompt: string;
   answerType: QuestionnaireResultQuestionSummary["answerType"];
   /** Total responses/scored entries for this question (used as the percent base). */
@@ -65,7 +66,7 @@ export function deriveHumanReadableResults(input: {
     : 0;
 
   const questionById = new Map(input.questions.map((question) => [question.questionId, question]));
-  const questionNumberById = new Map(input.questions.map((question, index) => [question.questionId, index + 1]));
+  const questionNumberById = buildQuestionLabelMap(input.questions);
 
   const breakdowns = input.questionSummaries.map((summary): HumanReadableQuestionBreakdown => {
     const question = questionById.get(summary.questionId);
@@ -85,7 +86,7 @@ export function deriveHumanReadableResults(input: {
 function buildBreakdown(
   summary: QuestionnaireResultQuestionSummary,
   question: QuestionnaireQuestion | undefined,
-  questionNumber: number | null,
+  questionNumber: string | null,
 ): HumanReadableQuestionBreakdown {
   const prompt = toPlainText(question?.prompt) || summary.questionId;
   const labelFor = (optionId: string): string => {

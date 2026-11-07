@@ -23,6 +23,7 @@ async function gotoDeliveryPanel(page: Page): Promise<void> {
   await expect(nav).toBeVisible();
   // Click the "Voters" tab button to reach the participants tab
   await nav.getByRole("button", { name: "Voters", exact: true }).click();
+  await page.getByText('Resident tools (preview)', { exact: true }).click();
 }
 
 test("delivery smoke: CSV upload → manual channel → generate codes → export", async ({ page }) => {

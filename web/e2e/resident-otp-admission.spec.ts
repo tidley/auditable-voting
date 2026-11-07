@@ -58,6 +58,7 @@ async function gotoResidentAdmission(page: Page): Promise<void> {
   const nav = page.locator("nav[aria-label='Questionnaire navigation']");
   await expect(nav).toBeVisible();
   await nav.getByRole("button", { name: "Voters", exact: true }).click();
+  await page.getByText('Resident tools (preview)', { exact: true }).click();
   const section = page.locator("section[aria-label='Resident admission']");
   await expect(section).toBeVisible();
 }

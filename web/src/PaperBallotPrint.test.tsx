@@ -13,7 +13,7 @@ it("prints a code, expiry and conditional instructions without a secret-key reve
       showIf: { dependsOnQuestionId: "q1", requiredAnswer: { answerType: "yes_no", value: false } } },
   ] } as QuestionnaireDefinition;
   render(<PaperBallotPrint ballot={generatePaperBallot({ definition, masterlistNumber: "ML-001", code: "ABCD1234EF", expiresAt: "2030-01-01T00:00:00Z" })} />);
-  expect(screen.getByText("ABCD1234EF")).toBeTruthy();
+  expect(screen.getByText("ABCD1-234EF")).toBeTruthy();
   expect(screen.getByText(/Answer only if question 1 \(Approve\?\) is applicable and answered No/)).toBeTruthy();
   expect(screen.getByText(/2030-01-01/)).toBeTruthy();
   expect(screen.queryByRole("button")).toBeNull();

@@ -753,12 +753,18 @@ function SimpleAppShellInner({ initialRole = "auditor" }: SimpleAppShellProps) {
     }
   }
 
+  const helpThemeControls = (
+    <div className='simple-help-theme'>
+      <a href='project-explainer.html' target='_blank' rel='noopener noreferrer'>{t("howItWorks", locale)}</a>
+      <ThemeToggle />
+    </div>
+  );
+
   if (showGateway) {
     return (
       <div className='simple-app-shell'>
         <div className='simple-shell-controls'>
           <LanguageSwitcher />
-          <ThemeToggle />
         </div>
         <section className='simple-login-gateway' aria-label='Login and role selection'>
           <div className='simple-login-brand'>
@@ -893,7 +899,8 @@ function SimpleAppShellInner({ initialRole = "auditor" }: SimpleAppShellProps) {
         </section>
         <footer className='simple-app-version' aria-label='App version'>
           <span>v{SIMPLE_APP_VERSION}</span>
-          <a href='project-explainer.html' target='_blank' rel='noopener noreferrer'>{t("howItWorks", locale)}</a>
+          <a href='demo.html' target='_blank' rel='noopener noreferrer'>Start demo — offline sandbox</a>
+          {helpThemeControls}
         </footer>
       </div>
     );
@@ -1107,13 +1114,13 @@ function SimpleAppShellInner({ initialRole = "auditor" }: SimpleAppShellProps) {
               <a
                 className='simple-account-menu-button simple-account-menu-link'
                 role='menuitem'
-                href='demo-guide.html'
+                href='demo.html'
                 target='_blank'
                 rel='noopener noreferrer'
                 onClick={() => setAccountMenuOpen(false)}
               >
                 <MenuIcon name='book' />
-                <span>{t("demoGuideLabel", locale)}</span>
+                <span>Offline demo sandbox</span>
               </a>
               <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
             </div>
@@ -1152,7 +1159,6 @@ function SimpleAppShellInner({ initialRole = "auditor" }: SimpleAppShellProps) {
     <div className={`simple-app-shell${role === "coordinator" ? " simple-app-shell-coordinator" : ""}`}>
       <div className='simple-shell-controls'>
         <LanguageSwitcher />
-        <ThemeToggle />
       </div>
       {role === "coordinator" ? null : (
         <div className={`simple-role-switch-wrap${role === "auditor" ? " simple-auditor-topbar-wrap" : ""}`}>
@@ -1215,6 +1221,9 @@ function SimpleAppShellInner({ initialRole = "auditor" }: SimpleAppShellProps) {
           onFiltersMenuClose={() => setAccountMenuOpen(false)}
         />
       )}
+      <footer className='simple-app-version' aria-label='Help and theme'>
+        {helpThemeControls}
+      </footer>
       {accountIdentityDialogOpen && accountIdentityNpub ? (
         <div
           className='simple-identity-qr-overlay simple-account-identity-overlay'

@@ -1535,6 +1535,8 @@ describe("Simple round flow", () => {
     if (!HTMLElement.prototype.scrollIntoView) {
       HTMLElement.prototype.scrollIntoView = () => {};
     }
+    // A queued open event can run during teardown, after global Event changes realm.
+    const SocketEvent = window.Event;
     class MockWebSocket extends EventTarget {
       static readonly CONNECTING = 0;
       static readonly OPEN = 1;
@@ -1547,13 +1549,13 @@ describe("Simple round flow", () => {
         super();
         this.url = String(url);
         queueMicrotask(() => {
-          this.dispatchEvent(new Event("open"));
+          this.dispatchEvent(new SocketEvent("open"));
         });
       }
 
       close() {
         this.readyState = MockWebSocket.CLOSED;
-        this.dispatchEvent(new Event("close"));
+        this.dispatchEvent(new SocketEvent("close"));
       }
     }
 
@@ -1726,7 +1728,7 @@ describe("Simple round flow", () => {
 
     await waitFor(() => {
       expect(coordinatorUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
-      expect(coordinatorUi.getAllByRole("button", { name: /^Edit$/i }).length).toBeGreaterThan(0);
+      expect(coordinatorUi.getAllByRole("button", { name: /^Prepare$/i }).length).toBeGreaterThan(0);
       expect(coordinatorUi.queryByRole("tab", { name: /^Session$/i })).toBeNull();
       expect(coordinatorUi.queryByRole("tab", { name: /^Audit proxy$/i })).toBeNull();
       expect(coordinatorUi.queryByText(/Live prompt: Legacy cached prompt/i)).toBeNull();
@@ -1973,8 +1975,8 @@ describe("Simple round flow", () => {
 
     expect(coordinatorOneUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
     expect(coordinatorTwoUi.queryByRole("tab", { name: /^Questionnaire$/i })).toBeNull();
-    expect(coordinatorOneUi.getAllByRole("button", { name: /^Edit$/i }).length).toBeGreaterThan(0);
-    expect(coordinatorTwoUi.getAllByRole("button", { name: /^Edit$/i }).length).toBeGreaterThan(0);
+    expect(coordinatorOneUi.getAllByRole("button", { name: /^Prepare$/i }).length).toBeGreaterThan(0);
+    expect(coordinatorTwoUi.getAllByRole("button", { name: /^Prepare$/i }).length).toBeGreaterThan(0);
     expect(coordinatorOneUi.queryByRole("tab", { name: /^Audit proxy$/i })).toBeNull();
     expect(coordinatorTwoUi.queryByRole("tab", { name: /^Audit proxy$/i })).toBeNull();
     expect(voterOneUi.getByRole("tab", { name: /^Vote$/i })).toBeTruthy();

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';">
+  <title>Offline voting sandbox · Auditable Voting</title>
+  <script src='./demo-theme.js'></script>
+  <link rel="icon" href="./images/auroville-symbol.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./app-theme.css">
+  <link rel="stylesheet" href="./demo-sandbox.css">
+  <script type="module" src="./demo-sandbox.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to demo workspace</a>
+  <header class="demo-header">
+    <a class="wordmark" href="./demo.html" aria-label="Restart the offline voting sandbox">Auditable Voting<span>Offline demo</span></a>
+    <span class="offline-label">Offline sandbox · simulated · nothing published</span>
+    <button id="reset" type="button" class="quiet">Reset demo</button>
+  </header>
+  <main id="demo-root">
+    <noscript><h1>Offline voting sandbox</h1><p>Enable JavaScript to run the local simulation. This demo sends no messages and creates no live questionnaire.</p></noscript>
+  </main>
+  <footer class="demo-footer">
+    <p>Simulation only. No real votes, messages or signatures.</p>
+    <details class='sandbox-about'><summary>About this sandbox</summary>
+      <p>Fictional credentials and records. No real signatures, encryption, relay delivery or worker process is tested.</p>
+      <p>Runs without connectivity after these local assets load. Reload resets it; cold offline access needs a locally served copy.</p>
+      <p>Only the saved light/dark preference is shared with the live app. No demo election state is stored.</p>
+    </details>
+    <span class='demo-help-theme'>
+      <a href="./voting-workflow.html" target="_blank" rel="noopener noreferrer">How it works</a>
+      <button id='demo-theme-toggle' class='quiet' type='button' aria-label='Switch to dark theme' title='Switch to dark theme'>
+        <svg class='theme-moon' viewBox='0 0 24 24' width='20' height='20' fill='none' stroke='currentColor' stroke-width='2' aria-hidden='true'><path d='M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z'/></svg>
+        <svg class='theme-sun' viewBox='0 0 24 24' width='20' height='20' fill='none' stroke='currentColor' stroke-width='2' aria-hidden='true'><circle cx='12' cy='12' r='4'/><path d='M12 1v2m0 18v2M1 12h2m18 0h2M4.2 4.2l1.4 1.4m12.8 12.8 1.4 1.4M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4'/></svg>
+      </button>
+    </span>
+    <a href="./" target="_blank" rel="noopener noreferrer">Open live app separately ↗</a>
+  </footer>
+</body>
+</html>

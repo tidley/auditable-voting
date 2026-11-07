@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { buildQuestionEditorTree, type QuestionEditorNode } from "./questionnaireEditorTree";
 import { getPublicKey, generateSecretKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireParticipantCount, publishQuestionnaireResultSummary, publishQuestionnaireState, queryQuestionnaireEvents, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEventKinds } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, parseQuestionnaireResultSummaryEvent, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
@@ -171,6 +172,7 @@ type QuestionnaireCoordinatorPanelProps = {
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   onEnsureBlindSigningPublicKey?: () => Promise<QuestionnaireBlindPublicKey | null>;
   view?: "build" | "responses" | "participants";
+  hideResults?: boolean;
   buildPage?: "questionnaire" | "proxy";
   onAddSession?: () => void;
   canAddSession?: boolean;
@@ -189,10 +191,8 @@ type QuestionnaireCoordinatorPanelProps = {
   draftQuestionnaireId?: string;
   canApplyAdmissionsOnPublish?: boolean;
   onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
-  onDemoPublished?: () => void;
   onResponseDetailsChange?: (responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => void;
   onOpenObserver?: () => void;
-  demoSetupSignal?: number;
   onReadinessChange?: (items: QuestionnaireReadinessItem[]) => void;
   onPrimaryPublishActionChange?: (action: QuestionnairePrimaryPublishAction) => void;
   primaryPublishActionSignal?: number;
@@ -392,14 +392,6 @@ function questionDependencyLabel(question: QuestionnaireQuestionDraft): string {
 }
 
 /**
- * Get the earlier questions (by index) that a question can depend on.
- * A question cannot depend on itself or any later question.
- */
-function earlierQuestions(questions: QuestionnaireQuestionDraft[], currentIndex: number): QuestionnaireQuestionDraft[] {
-  return questions.filter((_, index) => index < currentIndex);
-}
-
-/**
  * Set or clear the showIf condition on a question draft.
  * When condition is null, removes the showIf (sets to null).
  */
@@ -416,7 +408,7 @@ function defaultRequiredAnswerForQuestion(depQuestion: QuestionnaireQuestionDraf
     return { answerType: "yes_no", value: true };
   }
   if (depQuestion.type === "multiple_choice") {
-    return { answerType: "multiple_choice", selectedOptionIds: [] };
+    return { answerType: "multiple_choice", selectedOptionIds: depQuestion.options.slice(0, 1).map(option => option.optionId) };
   }
   // For other types (rank, free_text), default to yes_no as a fallback
   return { answerType: "yes_no", value: true };
@@ -1678,7 +1670,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const questionnaireRelaysInput = props.questionnaireRelaysInput ?? storedDraft.questionnaireRelays ?? "";
   const [useDefaultSetupRelays, setUseDefaultSetupRelays] = useState(() => normalizeQuestionnaireRelays(questionnaireRelaysInput).length === 0);
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
-  const lastDemoSetupSignalRef = useRef(0);
+  const followUpFocusIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    const index = followUpFocusIndexRef.current;
+    if (index === null) return;
+    followUpFocusIndexRef.current = null;
+    document.getElementById(`question-prompt-${index}-en`)?.focus();
+  }, [questions]);
   const [voterGroups, setVoterGroups] = useState<QuestionnaireVoterGroup[]>(storedDraft.voterGroups ?? []);
   const [newVoterGroupLabel, setNewVoterGroupLabel] = useState("");
   const [generalInvitePowEnabled, setGeneralInvitePowEnabled] = useState(storedDraft.generalInvitePowEnabled ?? false);
@@ -1990,19 +1988,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     : null;
   const selectedQuestionnaireIsKnownPublished = selectedQuestionnaireHasPublishedSignal;
   const publishedDefinition = selectedQuestionnaireIsKnownPublished;
-  useEffect(() => {
-    const signal = props.demoSetupSignal ?? 0;
-    if (signal <= 0 || signal === lastDemoSetupSignalRef.current || view !== "build" || publishedDefinition) {
-      return;
-    }
-    lastDemoSetupSignalRef.current = signal;
-    setTitle("Neighbourhood Consultation Demo");
-    setDescription("A short demonstration questionnaire for a neighbourhood consultation.");
-    setQuestions([createYesNoQuestion("q1", "Do you support creating a shared community garden?")]);
-    setCloseTimerEnabled(false);
-    setVoterGroups([]);
-    setStatus("Demo questionnaire ready. Review it, then select Go Live to publish.");
-  }, [props.demoSetupSignal, publishedDefinition, view]);
   useEffect(() => {
     props.onPublishedDefinitionChange?.(publishedDefinition);
   }, [props.onPublishedDefinitionChange, publishedDefinition]);
@@ -3192,6 +3177,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       const required = entry.required;
       const carrySlot = (next: QuestionnaireQuestionDraft) => bumpQuestionBallotSlotVersion({
         ...next,
+        showIf: entry.showIf,
         ballotGroup: normaliseQuestionnaireBallotGroup(entry.requiredScope ?? entry.ballotGroup),
         ballotSlot: entry.ballotSlot ?? null,
       });
@@ -3235,15 +3221,22 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
 
   function moveQuestion(index: number, direction: -1 | 1) {
     setQuestions((current) => {
-      const target = index + direction;
-      if (target < 0 || target >= current.length) {
-        return current;
+      const tree = buildQuestionEditorTree(current);
+      function moveSibling(nodes: QuestionEditorNode<QuestionnaireQuestionDraft>[]): boolean {
+        const position = nodes.findIndex(node => node.index === index);
+        if (position >= 0) {
+          const target = position + direction;
+          if (target < 0 || target >= nodes.length) return false;
+          [nodes[position], nodes[target]] = [nodes[target], nodes[position]];
+          return true;
+        }
+        return nodes.some(node => moveSibling(node.children));
       }
-      const next = [...current];
-      const temp = next[index];
-      next[index] = next[target];
-      next[target] = temp;
-      return alignQuestionBallotGroups(next);
+      if (!moveSibling(tree)) return current;
+      function flatten(nodes: QuestionEditorNode<QuestionnaireQuestionDraft>[]): QuestionnaireQuestionDraft[] {
+        return nodes.flatMap(node => [node.question, ...flatten(node.children)]);
+      }
+      return alignQuestionBallotGroups(flatten(tree));
     });
   }
 
@@ -3275,6 +3268,24 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         },
       );
       return alignQuestionBallotGroups([...current, question]);
+    });
+  }
+
+  function addFollowUpQuestion(index: number) {
+    if (questionnaireEditorLocked) return;
+    followUpFocusIndexRef.current = index + 1;
+    setQuestions((current) => {
+      const parent = current[index];
+      if (!parent || (parent.type !== "yes_no" && parent.type !== "multiple_choice")) return current;
+      if (parent.type === "multiple_choice" && parent.options.length === 0) return current;
+      const requiredScope = questionRequiredScope(parent);
+      const followUp = withQuestionBallotSlot({
+        ...createYesNoQuestion(deriveNextQuestionId(current), "", true),
+        requiredScope,
+        ballotGroup: requiredScope,
+        showIf: { dependsOnQuestionId: parent.questionId, requiredAnswer: defaultRequiredAnswerForQuestion(parent) },
+      }, index + 1, { slotIndex: ballotSlotIndexForQuestion(parent), version: parent.ballotSlot?.version });
+      return alignQuestionBallotGroups([...current.slice(0, index + 1), followUp, ...current.slice(index + 1)]);
     });
   }
 
@@ -3403,7 +3414,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           ? selectedWorkerStatus.workerNpub
           : active.workerNpub;
         return {
-          label: "Proxy",
+          label: "Guardian",
           text: normaliseWorkerNpub(workerNpub),
         };
       }
@@ -3482,10 +3493,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   const lastParticipantCountPublishKeyRef = useRef("");
 
   const titleReady = resolveLocalised(title, "en").trim().length > 0;
+  const descriptionReady = resolveLocalised(description, "en").trim().length > 0;
   const hasQuestion = questions.length > 0;
   const hasKnownVoter = (props.knownVoterCount ?? 0) > 0;
   const questionsValid = questions.length > 0 && questions.every((question) => isQuestionDraftValid(question));
-  const publishPreconditionsReady = titleReady && hasQuestion && questionsValid;
+  const publishPreconditionsReady = titleReady && descriptionReady && hasQuestion && questionsValid;
   const publishValidation = useMemo(
     () => (builtDefinition ? validateQuestionnaireDefinition(builtDefinition) : null),
     [builtDefinition],
@@ -4109,7 +4121,6 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             forceConfigSync: true,
           });
         }
-        props.onDemoPublished?.();
       } else {
         setStatus("Vote publish failed.");
         await refresh();
@@ -5072,8 +5083,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         firstQuestionControl?.focus({ preventScroll: true });
         return;
       }
-      const fieldToFocus = titleReady ? "questionnaire-description" : "questionnaire-title";
-      document.getElementById(fieldToFocus)?.focus({ preventScroll: true });
+      document.getElementById("questionnaire-title")?.focus({ preventScroll: true });
     });
   }, [props.setupFocusSignal, props.setupFocusTarget, titleReady]);
 
@@ -5155,7 +5165,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           )
         ) : (
           <>
-            {publishedDefinition ? (
+            {publishedDefinition && !props.hideResults ? (
               <>
                 {showPrimaryPublishActionInToolbar && currentState !== "results_published" ? (
                   <UiButton
@@ -5267,9 +5277,15 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     }
     return (
       <div className='simple-voter-card simple-questionnaire-panel'>
-        {publishValidation && !publishValidation.valid ? (
-          <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
-        ) : null}
+                {publishValidation && !publishValidation.valid ? (
+                  <div>
+                    <p className='simple-voter-note'>{!titleReady ? 'Add a title.' : !questionsValid ? 'Complete the highlighted questions.' : 'Review the questionnaire settings.'}</p>
+                    <details className='simple-organiser-disclosure'>
+                      <summary>Validation details</summary>
+                      <p className='simple-voter-note'>{publishValidation.errors[0] ?? "unknown_error"}</p>
+                    </details>
+                  </div>
+                ) : null}
         {statusNotice}
       </div>
     );
@@ -5281,6 +5297,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
 	        <div className={questionnaireToolbarClassName}>
 	          {questionnaireTopControls}
 	        </div>
+        <div hidden={props.hideResults}>
         <QuestionnaireResultsDashboard
           variant='session'
           questionnaire={activePublishedDefinition ? {
@@ -5319,6 +5336,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           emptyResponsesText='No submitted responses found for this questionnaire yet.'
           emptyResponseSelectionText='Publish a questionnaire to inspect responses.'
         />
+        </div>
 
         {publishStatusText ? <p className='simple-voter-note'>{publishStatusText}</p> : null}
         {status ? <p className='simple-voter-note'>{status}</p> : null}
@@ -5333,7 +5351,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         <div className={`simple-questionnaire-build-toolbar ${questionnaireToolbarClassName}`}>
           {questionnaireTopControls}
         </div>
-        {isProxyBuildPage ? <h2 className='simple-voter-section-title'>Audit proxy</h2> : null}
+        {isProxyBuildPage ? <h2 className='simple-voter-section-title'>Guardian</h2> : null}
         <div className='simple-questionnaire-build-grid'>
           <div className='simple-questionnaire-build-main'>
               {!isProxyBuildPage ? (
@@ -5358,6 +5376,28 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             disabled={questionnaireEditorLocked}
           />
         </div>
+       </div>
+
+      <div className='simple-questionnaire-form-field'>
+        <LocalisedTextTranslations
+          value={description}
+          onChange={setDescription}
+          label='Description'
+          required
+          ariaLabel='Description'
+          placeholder='Short description'
+          inputClassName='simple-voter-input'
+          textArea
+          rows={3}
+          idPrefix='questionnaire-description'
+          disabled={questionnaireEditorLocked}
+        />
+      </div>
+        </section>
+      </section>
+
+      <details className='simple-organiser-disclosure simple-questionnaire-settings'>
+        <summary>Questionnaire settings</summary>
         <div className='simple-questionnaire-id-panel'>
           <div className='simple-questionnaire-field-heading'>
             <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
@@ -5382,28 +5422,9 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             ) : null}
           </div>
         </div>
-      </div>
-
-      <div className='simple-questionnaire-form-field'>
-        <LocalisedTextTranslations
-          value={description}
-          onChange={setDescription}
-          label='Description'
-          ariaLabel='Description'
-          placeholder='Short description'
-          inputClassName='simple-voter-input'
-          textArea
-          rows={3}
-          idPrefix='questionnaire-description'
-          disabled={questionnaireEditorLocked}
-        />
-      </div>
-        </section>
-      </section>
-
       <section className='simple-questionnaire-editor-section'>
         <div className='simple-questionnaire-questions-head'>
-          <h4 className='simple-voter-section-title simple-questionnaire-questions-title'>Configuration</h4>
+          <h4 className='simple-voter-section-title simple-questionnaire-questions-title'>Timing and access</h4>
         </div>
         <section className='simple-questionnaire-build-cardlet'>
       <section className='simple-questionnaire-setup-subsection'>
@@ -5574,46 +5595,56 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         </section>
       </section>
 
+      </details>
       <div id='questionnaire-questions-section' className='simple-questionnaire-questions-head' tabIndex={-1}>
         <h4 className='simple-voter-section-title simple-questionnaire-questions-title'>Questions ({questions.length})</h4>
       </div>
       <div className='simple-questionnaire-question-list'>
-        {questions.map((question, index) => {
-          const canMoveUp = index > 0;
-          const canMoveDown = index < questions.length - 1;
+        {(() => {
+          function renderQuestion(node: QuestionEditorNode<QuestionnaireQuestionDraft>, position: number, siblings: QuestionEditorNode<QuestionnaireQuestionDraft>[], parentLabel?: string): ReactNode {
+          const { question, index, label, children } = node;
+          const canMoveUp = position > 0;
+          const canMoveDown = position < siblings.length - 1;
           const promptMissing = !resolveLocalised(question.prompt, "en").trim();
           const questionIncomplete = !isQuestionDraftValid(question);
           const questionFooter = (
             <div className='simple-questionnaire-question-footer'>
-              <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${index + 1} actions`}>
+              <UiButton
+                icon='add'
+                className='simple-voter-secondary simple-questionnaire-follow-up-button'
+                aria-label={`Add follow-up to question ${label}`}
+                isDisabled={questionnaireEditorLocked || (question.type !== "yes_no" && question.type !== "multiple_choice") || (question.type === "multiple_choice" && question.options.length === 0)}
+                title={question.type === "yes_no" || question.type === "multiple_choice" ? "Add a question shown only after a matching answer" : "Follow-ups need a Yes / No or multiple-choice parent question"}
+                onPress={() => addFollowUpQuestion(index)}
+              >Add follow-up question</UiButton>
+              <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${label} actions`}>
                 <UiButton
                   icon='copy'
                   iconOnly
                   className='simple-voter-secondary simple-questionnaire-icon-button'
-                  aria-label={`Duplicate question ${index + 1}`}
-                  title={`Duplicate question ${index + 1}`}
+                  aria-label={`Duplicate question ${label}`}
+                  title={`Duplicate question ${label}`}
                   onPress={() => duplicateQuestion(index)}
                 />
                 <UiButton
                   icon='delete'
                   iconOnly
                   className='simple-voter-secondary simple-questionnaire-icon-button simple-questionnaire-remove-button'
-                  aria-label={`Remove question ${index + 1}`}
-                  title={`Remove question ${index + 1}`}
+                  aria-label={`Remove question ${label}`}
+                  title={`Remove question ${label}`}
                   onPress={() => deleteQuestion(index)}
                 />
               </div>
             </div>
           );
 
-          return (
-            <div key={`${question.questionId}-${index}`} className={`simple-questionnaire-question-card${questionIncomplete ? " is-incomplete" : ""}`}>
+          const questionHeader = (
               <div className='simple-questionnaire-question-head'>
                 <div className='simple-questionnaire-question-title-row'>
-                  <p className='simple-voter-question simple-questionnaire-question-title'>{index + 1}</p>
+                  <p className='simple-voter-question simple-questionnaire-question-title'>{label}</p>
                   <UiSelect
                     selectClassName='simple-voter-input simple-questionnaire-type-dropdown'
-                    aria-label={`Question ${index + 1} type`}
+                    aria-label={`Question ${label} type`}
                     value={question.type}
                     onChange={(event) => setQuestionType(index, event.target.value as QuestionnaireQuestionDraft["type"])}
                   >
@@ -5623,7 +5654,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </UiSelect>
                   <UiSelect
                     selectClassName='simple-voter-input simple-questionnaire-ballot-group-dropdown'
-                    aria-label={`Question ${index + 1} voter group`}
+                    aria-label={`Question ${label} voter group`}
                     value={questionRequiredScope(question) ?? ""}
                     onChange={(event) => setQuestionBallotGroup(index, event.target.value)}
                   >
@@ -5649,13 +5680,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                         });
                     }}
                   />
-                  <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${index + 1} ordering`}>
+                  <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${label} ordering`}>
                     <UiButton
                       icon='uploadLine'
                       iconOnly
                       className='simple-voter-secondary simple-questionnaire-icon-button'
-                      aria-label={`Move question ${index + 1} up`}
-                      title={`Move question ${index + 1} up`}
+                      aria-label={`Move question ${label} up`}
+                      title={`Move question ${label} up`}
                       isDisabled={!canMoveUp}
                       onPress={() => moveQuestion(index, -1)}
                     />
@@ -5663,75 +5694,31 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       icon='downloadLine'
                       iconOnly
                       className='simple-voter-secondary simple-questionnaire-icon-button'
-                      aria-label={`Move question ${index + 1} down`}
-                      title={`Move question ${index + 1} down`}
+                      aria-label={`Move question ${label} down`}
+                      title={`Move question ${label} down`}
                       isDisabled={!canMoveDown}
                       onPress={() => moveQuestion(index, 1)}
                     />
                   </div>
                 </div>
               </div>
-              <LocalisedTextTranslations
-                value={question.prompt}
-                onChange={(next) => {
-                  updateQuestion(index, (entry) => ({ ...entry, prompt: next }));
-                }}
-                ariaLabel={`Question ${index + 1} prompt`}
-                placeholder='Question prompt'
-                inputClassName={`simple-voter-input${promptMissing ? " is-missing" : ""}`}
-                invalid={promptMissing}
-                idPrefix={`question-prompt-${index}`}
-                disabled={questionnaireEditorLocked}
-              />
-              {/* Conditional display (showIf) configuration */}
+          );
+          return (
+            <div key={`${question.questionId}-${index}`} role='group' aria-label={`Question ${label}`} data-question-id={question.questionId} className={`simple-questionnaire-question-card${parentLabel ? " is-follow-up" : ""}${questionIncomplete ? " is-incomplete" : ""}`}>
+              {/* Conditional display (showIf) configuration comes before the question itself. */}
               <div className='simple-questionnaire-conditional-config'>
-                <UiSelect
-                  selectClassName='simple-voter-input simple-questionnaire-visibility-dropdown'
-                  aria-label={`Question ${index + 1} visibility`}
-                  value={question.showIf ? "conditional" : "always"}
-                  onChange={(event) => {
-                    const mode = event.target.value;
-                    if (mode === "always") {
-                      updateQuestion(index, (entry) => withShowIf(entry, null));
-                    } else {
-                      // Switching to conditional: pick first earlier question as default dependency
-                      const earlier = earlierQuestions(questions, index);
-                      if (earlier.length === 0) return;
-                      const firstDep = earlier[0];
-                      updateQuestion(index, (entry) => withShowIf(entry, {
-                        dependsOnQuestionId: firstDep.questionId,
-                        requiredAnswer: defaultRequiredAnswerForQuestion(firstDep),
-                      }));
-                    }
-                  }}
-                >
-                  <option value='always'>Show always</option>
-                  {earlierQuestions(questions, index).length > 0 ? (
-                    <option value='conditional'>Show if...</option>
-                  ) : null}
-                </UiSelect>
                 {question.showIf ? (
                   <>
-                    <UiSelect
-                      selectClassName='simple-voter-input simple-questionnaire-dependency-dropdown'
-                      aria-label={`Question ${index + 1} depends on`}
-                      value={question.showIf.dependsOnQuestionId}
-                      onChange={(event) => {
-                        const depId = event.target.value;
-                        const depQuestion = questions.find((q) => q.questionId === depId);
-                        if (!depQuestion) return;
-                        updateQuestion(index, (entry) => withShowIf(entry, {
-                          dependsOnQuestionId: depId,
-                          requiredAnswer: defaultRequiredAnswerForQuestion(depQuestion),
-                        }));
-                      }}
-                    >
-                      {earlierQuestions(questions, index).map((dep) => (
-                        <option key={dep.questionId} value={dep.questionId}>
-                          {questionDependencyLabel(dep)}
-                        </option>
-                      ))}
-                    </UiSelect>
+                    <div className='simple-questionnaire-follow-up-heading'>
+                      <p className='simple-voter-note'>{(() => {
+                        const parentIndex = questions.findIndex(entry => entry.questionId === question.showIf?.dependsOnQuestionId);
+                        return parentIndex < 0 ? "Parent question removed. Make this question standalone or remove it." : parentLabel ? `Follow-up to question ${parentLabel}` : `Invalid question order: move this follow-up below ${questionDependencyLabel(questions[parentIndex])}.`;
+                      })()}</p>
+                      <UiButton className='simple-voter-secondary' aria-label={`Make question ${label} standalone`} onPress={() => {
+                        followUpFocusIndexRef.current = index;
+                        updateQuestion(index, entry => withShowIf(entry, null));
+                      }}>Make standalone</UiButton>
+                    </div>
                     {(() => {
                       const depQuestion = questions.find((q) => q.questionId === question.showIf?.dependsOnQuestionId);
                       if (!depQuestion) return null;
@@ -5740,12 +5727,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       if (depQuestion.type === "yes_no") {
                         const yesValue = requiredAnswer.answerType === "yes_no" ? requiredAnswer.value : true;
                         return (
-                          <div className='simple-questionnaire-conditional-answer' role='radiogroup' aria-label={`Question ${index + 1} required answer`}>
+                          <div className='simple-questionnaire-conditional-answer' role='radiogroup' aria-label={`Question ${label} required answer`}>
+                            <span className='simple-voter-note'>Show when the answer is</span>
                             <label className='simple-questionnaire-conditional-radio'>
                               <input
                                 type='radio'
                                 name={`question-${index}-conditional-answer`}
-                                aria-label={`Question ${index + 1} required answer Yes`}
+                                aria-label={`Question ${label} required answer Yes`}
                                 checked={yesValue === true}
                                 onChange={() => {
                                   updateQuestion(index, (entry) => withShowIf(entry, {
@@ -5760,7 +5748,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                               <input
                                 type='radio'
                                 name={`question-${index}-conditional-answer`}
-                                aria-label={`Question ${index + 1} required answer No`}
+                                aria-label={`Question ${label} required answer No`}
                                 checked={yesValue === false}
                                 onChange={() => {
                                   updateQuestion(index, (entry) => withShowIf(entry, {
@@ -5779,14 +5767,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                         const selectedIds = requiredAnswer.answerType === "multiple_choice" ? requiredAnswer.selectedOptionIds : [];
                         return (
                           <div className='simple-questionnaire-conditional-options'>
+                            <p className='simple-voter-note'>{depQuestion.multiSelect ? "Show when all selected answers below are chosen." : "Show when this answer is chosen."}</p>
                             {depQuestion.options.map((opt) => (
                               <label key={opt.optionId} className='simple-questionnaire-conditional-checkbox'>
                                 <input
-                                  type='checkbox'
-                                  aria-label={`Question ${index + 1} require ${opt.optionId}`}
+                                  type={depQuestion.multiSelect ? 'checkbox' : 'radio'}
+                                  name={`question-${index}-conditional-options`}
+                                  aria-label={`Question ${label} require ${opt.optionId}`}
                                   checked={selectedIds.includes(opt.optionId)}
                                   onChange={(event) => {
-                                    const next = event.target.checked
+                                    const next = !depQuestion.multiSelect ? [opt.optionId] : event.target.checked
                                       ? [...selectedIds, opt.optionId]
                                       : selectedIds.filter((id) => id !== opt.optionId);
                                     updateQuestion(index, (entry) => withShowIf(entry, {
@@ -5808,6 +5798,19 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </>
                 ) : null}
               </div>
+              {questionHeader}
+              <LocalisedTextTranslations
+                value={question.prompt}
+                onChange={(next) => {
+                  updateQuestion(index, (entry) => ({ ...entry, prompt: next }));
+                }}
+                ariaLabel={`Question ${label} prompt`}
+                placeholder='Question prompt'
+                inputClassName={`simple-voter-input${promptMissing ? " is-missing" : ""}`}
+                invalid={promptMissing}
+                idPrefix={`question-prompt-${index}`}
+                disabled={questionnaireEditorLocked}
+              />
               {question.type === "multiple_choice" ? (
                 <div className='simple-voter-field-stack simple-voter-field-stack-tight simple-questionnaire-option-stack'>
                   <div className='simple-questionnaire-options-editor'>
@@ -6025,9 +6028,12 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                 </div>
               ) : null}
               {!(["rank", "multiple_choice", "free_text"] as string[]).includes(question.type) ? questionFooter : null}
+              {children.length ? <div className='simple-questionnaire-follow-ups' aria-label={`Follow-ups to question ${label}`}>{children.map((child, childIndex) => renderQuestion(child, childIndex, children, label))}</div> : null}
             </div>
           );
-        })}
+          }
+          return buildQuestionEditorTree(questions).map((node, position, siblings) => renderQuestion(node, position, siblings));
+        })()}
       </div>
       <UiButton
         icon='add'
@@ -6039,13 +6045,11 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
               </fieldset>
               {!isProxyBuildPage && !publishedDefinition ? (
                 <section className='simple-questionnaire-publish-summary' aria-label='Questionnaire summary'>
-                  <h3>Questionnaire summary</h3>
+                   <h3>Ready to go live?</h3>
                   <ul>
                     <li className={titleReady ? "is-ready" : ""}><UiIcon name='check' />Title</li>
-                    <li className={resolveLocalised(description, "en").trim() ? "is-ready" : ""}><UiIcon name='check' />Description</li>
+                    <li className={descriptionReady ? "is-ready" : ""}><UiIcon name='check' />Description</li>
                     <li className={questions.length > 0 && questions.every(isQuestionDraftValid) ? "is-ready" : ""}><UiIcon name='check' />{questions.length} {questions.length === 1 ? "Question" : "Questions"}</li>
-                    <li className={voterGroups.length > 0 ? "is-ready" : ""}><UiIcon name='check' />{voterGroups.length} {voterGroups.length === 1 ? "Voter Group" : "Voter Groups"}</li>
-                    <li className={canPublishDraft ? "is-ready" : ""}><UiIcon name='check' />Ready to publish</li>
                   </ul>
                   <UiButton icon='uploadLine' className='simple-voter-primary' isDisabled={!canPublishDraft || isDefinitionPublishInFlight} onPress={() => void publishDefinition()}>
                     {isDefinitionPublishInFlight ? "Going live..." : "Go Live"}
@@ -6064,7 +6068,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
 	                  <p className='simple-voter-note'>Organiser key is not loaded yet.</p>
 	                ) : null}
 	                {publishValidation && !publishValidation.valid ? (
-	                  <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
+	                  <div>
+                      <p className='simple-voter-note'>{!titleReady ? 'Add a title.' : !questionsValid ? 'Complete the highlighted questions.' : 'Review the questionnaire settings.'}</p>
+                      <details className='simple-organiser-disclosure'>
+                        <summary>Validation details</summary>
+                        <p className='simple-voter-note'>{publishValidation.errors[0] ?? "unknown_error"}</p>
+                      </details>
+                    </div>
 	                ) : null}
 	                {statusNotice}
 	              </section>
@@ -6072,8 +6082,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
           ) : null}
           <div id='delegated-worker-section' className='simple-questionnaire-build-proxy'>
             <SimpleCollapsibleSection
-              title='Audit proxy'
-              titleToggleLabel='Audit proxy'
+              title='Guardian'
+              titleToggleLabel='Guardian'
               defaultCollapsed={!isProxyBuildPage}
               expandSignal={auditProxyExpandSignal}
               hideToggle={isProxyBuildPage}
@@ -6089,10 +6099,10 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
                     >
                       <option value='browser_only'>Browser only</option>
-                      <option value='delegated_worker'>Audit proxy</option>
+                      <option value='delegated_worker'>Guardian</option>
                     </UiSelect>
                     <p className='simple-voter-note'>
-                      Use Audit proxy for larger live sessions or repeated rounds. When selected, publishing with a valid audit proxy npub configures delegation for that questionnaire.
+                      A Guardian handles ballot requests while your browser is closed.
                     </p>
                   </>
                 ) : null}
@@ -6102,7 +6112,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                 <section className='simple-delegate-section simple-delegate-setup-section'>
                   <div className='simple-delegate-section-head'>
                     <div>
-                      <h4 className='simple-delegate-title'>Proxy account</h4>
+                      <h4 className='simple-delegate-title'>1. Guardian account</h4>
                     </div>
                     <UiButton icon='key' className='simple-voter-secondary' onPress={generateWorkerCredentials}>
                       New account
@@ -6110,7 +6120,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </div>
                    <div className='simple-delegate-copy-field'>
                      <UiTextField
-                       label='Audit proxy npub'
+                        label='Guardian npub'
                        inputClassName='simple-voter-input simple-delegate-copy-value'
                        inputProps={{
                          id: 'delegated-worker-npub',
@@ -6127,7 +6137,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                          },
                        }}
                      />
-                     <UiButton icon={isCopyLabelActive("worker-npub") ? 'check' : 'copy'} iconOnly aria-label='Copy audit proxy npub' className='simple-delegate-copy-button' onPress={() => void copyWorkerCommand(delegatedWorkerNpub, "worker-npub")} />
+                      <UiButton icon={isCopyLabelActive("worker-npub") ? 'check' : 'copy'} iconOnly aria-label='Copy Guardian npub' className='simple-delegate-copy-button' onPress={() => void copyWorkerCommand(delegatedWorkerNpub, "worker-npub")} />
                    </div>
                   {generatedWorkerNsec ? (
                     <div className='simple-delegate-copy-field'>
@@ -6148,7 +6158,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                 <section className='simple-delegate-section simple-delegate-direct-launch-section'>
                   <div className='simple-delegate-section-head'>
                     <div>
-                      <h4 className='simple-delegate-title'>Start proxy</h4>
+                      <h4 className='simple-delegate-title'>2. Start Guardian</h4>
                     </div>
                   </div>
                   <div className='simple-delegate-launch-controls'>
@@ -6173,7 +6183,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </div>
                   <div className='simple-delegate-confirm-panel'>
                     <div>
-                      <h4 className='simple-delegate-confirm-title'>Not confirmed automatically?</h4>
+                      <h4 className='simple-delegate-confirm-title'>3. Confirm connection</h4>
                     </div>
                     <UiButton
                       icon='check'
@@ -6185,11 +6195,12 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                   </div>
                 </section>
 
-                <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Audit proxy status</h4>
+                <p className='simple-organiser-connection' role='status'>Connection: {delegationStatusLabel}</p>
+                <details className='simple-delegate-section simple-organiser-disclosure'>
+                  <summary>Connection details</summary>
                   <div className='simple-delegate-status-grid'>
                     <p className='simple-voter-note'><strong>Delegation state</strong><span className={delegationStatusLabel === "Active" ? "simple-delegate-status-value is-active" : "simple-delegate-status-value"}>{delegationStatusLabel}</span></p>
-                    <p className='simple-voter-note'><strong>Audit proxy npub</strong><span>{selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</span></p>
+                    <p className='simple-voter-note'><strong>Guardian npub</strong><span>{selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</span></p>
                     <p className='simple-voter-note'><strong>Last heartbeat</strong><span>{formatWorkerTime(selectedWorkerStatus?.heartbeatAt, "Not seen")}</span></p>
                     <p className='simple-voter-note'><strong>Last blind issuance</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastBlindIssuanceAt, "Not reported")}</span></p>
                     <p className='simple-voter-note'><strong>Last vote verification</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastVoteVerificationAt, "Not reported")}</span></p>
@@ -6206,7 +6217,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       Revoke delegation
                     </UiButton>
                   </div>
-                </section>
+                </details>
 
                 <section className={`simple-delegate-section simple-collapsible-section${workerMoreOptionsCollapsed ? " is-collapsed" : ""}`}>
                   <div className='simple-collapsible-header'>

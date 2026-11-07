@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
 vi.mock("./questionnaireFlowMode", () => ({
@@ -121,84 +121,137 @@ function readStoredDraft() {
 }
 
 describe("QuestionnaireCoordinatorPanel conditional questions UI", () => {
-  it("renders Show always / Show if dropdown for each question", () => {
-    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
-
-    // The first question should have a "Show if" visibility select
-    const visibilitySelect = screen.getByLabelText("Question 1 visibility") as HTMLSelectElement;
-    expect(visibilitySelect).toBeTruthy();
-    expect(visibilitySelect.value).toBe("always");
+  it('places the questionnaire ID inside the shared settings disclosure', () => {
+    render(<QuestionnaireCoordinatorPanel view='build' />);
+    expect(screen.getByLabelText('Questionnaire ID').closest('details')?.querySelector('summary')?.textContent).toBe('Questionnaire settings');
   });
 
-  it("switching to Show if reveals dependency question dropdown", () => {
-    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
-
-    // Add a second question so we have an earlier question to depend on
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-
-    // Question 2 should have a visibility select
-    const visibilitySelect = screen.getByLabelText("Question 2 visibility") as HTMLSelectElement;
-    fireEvent.change(visibilitySelect, { target: { value: "conditional" } });
-
-    // Now the dependency question dropdown should appear
-    expect(screen.getByLabelText("Question 2 depends on")).toBeTruthy();
+  it('requires a non-blank description before publishing a draft', () => {
+    const secret = generateSecretKey();
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={nip19.npubEncode(getPublicKey(secret))} coordinatorNsec={nip19.nsecEncode(secret)} />);
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Residents vote' } });
+    fireEvent.change(screen.getByLabelText('Question 1 prompt'), { target: { value: 'Do you agree?' } });
+    const publish = screen.getByRole('button', { name: 'Go Live' }) as HTMLButtonElement;
+    const description = screen.getByLabelText('Description') as HTMLTextAreaElement;
+    expect(description.required).toBe(true);
+    expect(publish.disabled).toBe(true);
+    fireEvent.change(description, { target: { value: '   ' } });
+    expect(publish.disabled).toBe(true);
+    fireEvent.change(description, { target: { value: 'Decide whether to adopt the proposal.' } });
+    expect(publish.disabled).toBe(false);
+    fireEvent.change(description, { target: { value: '' } });
+    expect(publish.disabled).toBe(true);
   });
 
-  it("dependency dropdown only lists earlier questions", () => {
+  it('keeps the questionnaire selector available when results are hidden on the voters step', () => {
+    const { rerender } = render(<QuestionnaireCoordinatorPanel view='responses' hideResults coordinatorNpub='npub1organiser' />);
+    expect(screen.getByLabelText('Questionnaire')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Live Results' })).toBeNull();
+    rerender(<QuestionnaireCoordinatorPanel view='responses' coordinatorNpub='npub1organiser' />);
+    expect(screen.getByRole('heading', { name: 'Live Results' })).toBeTruthy();
+  });
+
+  it("renders a follow-up as question 1-A inside its parent's card", () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add follow-up to question 1' }));
+    const child = screen.getByRole('group', { name: 'Question 1-A' });
+    const parent = screen.getByRole('group', { name: 'Question 1' });
+    expect(parent.contains(child)).toBe(true);
+    expect(within(child).getByText('1-A', { exact: true })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add Question' }));
+    expect(screen.getByRole('group', { name: 'Question 2' })).toBeTruthy();
+  });
+  it('moves a parent with its children and keeps child ordering within the parent', async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add follow-up to question 1' }));
+    expect((screen.getByRole('button', { name: 'Move question 1-A up' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Move question 1-A down' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Question' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move question 1 down' }));
+    await waitFor(() => expect(readStoredDraft().questions.map((entry: {questionId: string}) => entry.questionId)).toEqual(['q3', 'q1', 'q2']));
+    expect(screen.getByRole('group', { name: 'Question 2' }).contains(screen.getByRole('group', { name: 'Question 2-A' }))).toBe(true);
+  });
+  it("adds a linked follow-up immediately after its parent without a prior-question picker", async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+    fireEvent.change(screen.getByLabelText("Question 1 prompt"), { target: { value: "Do you agree?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
+    fireEvent.change(screen.getByLabelText("Question 2 prompt"), { target: { value: "Unrelated question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
+    expect((screen.getByLabelText("Question 2 prompt") as HTMLInputElement).value).toBe("Unrelated question");
+    expect(screen.queryByLabelText("Question 1 visibility")).toBeNull();
+    expect(screen.queryByLabelText("Question 2 depends on")).toBeNull();
+    expect(screen.getByText("Follow-up to question 1")).toBeTruthy();
+    await waitFor(() => expect(readStoredDraft().questions[1].showIf).toEqual({
+      dependsOnQuestionId: "q1", requiredAnswer: { answerType: "yes_no", value: true },
+    }));
+  });
+  it("creates a follow-up for a multiple-choice answer and inherits the parent's voter group", async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+    fireEvent.change(screen.getByLabelText("Question 1 type"), { target: { value: "multiple_choice" } });
+    fireEvent.change(screen.getByLabelText("Add voter group"), { target: { value: "Residents" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add group" }));
+    const group = (screen.getByLabelText("Question 1 voter group") as HTMLSelectElement).options[1].value;
+    fireEvent.change(screen.getByLabelText("Question 1 voter group"), { target: { value: group } });
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
+    await waitFor(() => {
+      const questions = readStoredDraft().questions;
+      expect(questions[1].showIf).toEqual({ dependsOnQuestionId: questions[0].questionId, requiredAnswer: { answerType: "multiple_choice", selectedOptionIds: ["option_1"] } });
+      expect(questions[1].requiredScope).toBe(group);
+    });
+  });
+  it("keeps the parent link when changing the follow-up question type", async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
+    fireEvent.change(screen.getByLabelText("Question 1-A type"), { target: { value: "multiple_choice" } });
+    await waitFor(() => expect(readStoredDraft().questions[1].showIf?.dependsOnQuestionId).toBe("q1"));
+    expect(screen.getByLabelText("Question 1-A required answer Yes")).toBeTruthy();
+  });
+  it("offers follow-ups without a misleading visibility dropdown on the first question", () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    // Add a second and third question
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
+    expect(screen.queryByLabelText("Question 1 visibility")).toBeNull();
+    expect(screen.getByRole("button", { name: "Add follow-up to question 1" })).toBeTruthy();
+  });
 
-    // Set question 3 to conditional
-    const visibilitySelect = screen.getByLabelText("Question 3 visibility") as HTMLSelectElement;
-    fireEvent.change(visibilitySelect, { target: { value: "conditional" } });
+  it("adds a follow-up with the triggering answer controls", () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    const depSelect = screen.getByLabelText("Question 3 depends on") as HTMLSelectElement;
-    const optionValues = [...depSelect.options].map((opt) => opt.value);
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
+    expect(screen.getByLabelText("Question 1-A required answer Yes")).toBeTruthy();
+    expect(screen.queryByLabelText("Question 2 depends on")).toBeNull();
+  });
 
-    // Should contain question 1 and 2, but NOT question 3 itself
-    expect(optionValues).toContain("q1");
-    expect(optionValues).toContain("q2");
-    expect(optionValues).not.toContain("q3");
+  it("can create a nested follow-up linked to the selected parent", async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1-A" }));
+    await waitFor(() => expect(readStoredDraft().questions[2].showIf.dependsOnQuestionId).toBe("q2"));
   });
 
   it("selecting a yes_no dependency shows Yes/No radio options", () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    // Add a second question (Q1 is yes_no by default)
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-
-    // Set question 2 to conditional
-    fireEvent.change(screen.getByLabelText("Question 2 visibility"), { target: { value: "conditional" } });
-
-    // Select question 1 as the dependency
-    fireEvent.change(screen.getByLabelText("Question 2 depends on"), { target: { value: "q1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
 
     // Since Q1 is yes_no, we should see Yes/No radio buttons
-    expect(screen.getByLabelText("Question 2 required answer Yes")).toBeTruthy();
-    expect(screen.getByLabelText("Question 2 required answer No")).toBeTruthy();
+    expect(screen.getByLabelText("Question 1-A required answer Yes")).toBeTruthy();
+    expect(screen.getByLabelText("Question 1-A required answer No")).toBeTruthy();
   });
 
-  it("selecting a multiple_choice dependency shows option checkboxes", () => {
+  it("a single-choice parent shows mutually exclusive answer triggers", async () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
     // Change Q1 to multiple_choice
     fireEvent.change(screen.getByLabelText("Question 1 type"), { target: { value: "multiple_choice" } });
 
-    // Add a second question
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-
-    // Set question 2 to conditional
-    fireEvent.change(screen.getByLabelText("Question 2 visibility"), { target: { value: "conditional" } });
-
-    // Select question 1 as the dependency
-    fireEvent.change(screen.getByLabelText("Question 2 depends on"), { target: { value: "q1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
 
     // Since Q1 is multiple_choice with option_1 and option_2, we should see checkboxes
-    expect(screen.getByLabelText("Question 2 require option_1")).toBeTruthy();
-    expect(screen.getByLabelText("Question 2 require option_2")).toBeTruthy();
+    expect(screen.getByLabelText("Question 1-A require option_1")).toBeTruthy();
+    expect(screen.getByLabelText("Question 1-A require option_2")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Question 1-A require option_2"));
+    await waitFor(() => expect(readStoredDraft().questions[1].showIf.requiredAnswer.selectedOptionIds).toEqual(["option_2"]));
   });
 
   it("produces correct showIf in definition for yes_no dependency", async () => {
@@ -217,20 +270,13 @@ describe("QuestionnaireCoordinatorPanel conditional questions UI", () => {
     // Set a title so the form is valid
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Test election" } });
 
-    // Add a second question
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
 
     // Set Q2 prompt
-    fireEvent.change(screen.getByLabelText("Question 2 prompt"), { target: { value: "Follow up" } });
-
-    // Set Q2 to conditional
-    fireEvent.change(screen.getByLabelText("Question 2 visibility"), { target: { value: "conditional" } });
-
-    // Select Q1 as dependency
-    fireEvent.change(screen.getByLabelText("Question 2 depends on"), { target: { value: "q1" } });
+    fireEvent.change(screen.getByLabelText("Question 1-A prompt"), { target: { value: "Follow up" } });
 
     // Select "Yes" as required answer
-    fireEvent.click(screen.getByLabelText("Question 2 required answer Yes"));
+    fireEvent.click(screen.getByLabelText("Question 1-A required answer Yes"));
 
     // Wait for localStorage persistence
     await waitFor(() => {
@@ -260,19 +306,12 @@ describe("QuestionnaireCoordinatorPanel conditional questions UI", () => {
     // Change Q1 to multiple_choice
     fireEvent.change(screen.getByLabelText("Question 1 type"), { target: { value: "multiple_choice" } });
 
-    // Add a second question
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
 
-    fireEvent.change(screen.getByLabelText("Question 2 prompt"), { target: { value: "Follow up" } });
-
-    // Set Q2 to conditional
-    fireEvent.change(screen.getByLabelText("Question 2 visibility"), { target: { value: "conditional" } });
-
-    // Select Q1 as dependency
-    fireEvent.change(screen.getByLabelText("Question 2 depends on"), { target: { value: "q1" } });
+    fireEvent.change(screen.getByLabelText("Question 1-A prompt"), { target: { value: "Follow up" } });
 
     // Check option_1 as required
-    fireEvent.click(screen.getByLabelText("Question 2 require option_1"));
+    fireEvent.click(screen.getByLabelText("Question 1-A require option_1"));
 
     await waitFor(() => {
       const stored = readStoredDraft();
@@ -283,25 +322,18 @@ describe("QuestionnaireCoordinatorPanel conditional questions UI", () => {
     });
   });
 
-  it("switching back to Show always clears showIf", async () => {
+  it("making a follow-up standalone clears showIf", async () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-
-    const visibilitySelect = screen.getByLabelText("Question 2 visibility") as HTMLSelectElement;
-
-    // Set to conditional and configure
-    fireEvent.change(visibilitySelect, { target: { value: "conditional" } });
-    fireEvent.change(screen.getByLabelText("Question 2 depends on"), { target: { value: "q1" } });
-    fireEvent.click(screen.getByLabelText("Question 2 required answer Yes"));
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
+    fireEvent.click(screen.getByLabelText("Question 1-A required answer Yes"));
 
     await waitFor(() => {
       const stored = readStoredDraft();
       expect(stored.questions[1].showIf).toBeTruthy();
     });
 
-    // Switch back to always
-    fireEvent.change(visibilitySelect, { target: { value: "always" } });
+    fireEvent.click(screen.getByRole("button", { name: "Make question 1-A standalone" }));
 
     await waitFor(() => {
       const stored = readStoredDraft();
@@ -309,23 +341,18 @@ describe("QuestionnaireCoordinatorPanel conditional questions UI", () => {
     });
   });
 
-  it("first question cannot be conditional (no earlier questions)", () => {
+  it("disables follow-up creation for unsupported parent answer types", () => {
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    // Q1 visibility dropdown should only have "always" option
-    const visibilitySelect = screen.getByLabelText("Question 1 visibility") as HTMLSelectElement;
-    const optionValues = [...visibilitySelect.options].map((opt) => opt.value);
-    expect(optionValues).toEqual(["always"]);
+    fireEvent.change(screen.getByLabelText("Question 1 type"), { target: { value: "free_text" } });
+    expect((screen.getByRole("button", { name: "Add follow-up to question 1" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("persists showIf through localStorage reload", async () => {
     const { unmount } = render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
-
-    fireEvent.change(screen.getByLabelText("Question 2 visibility"), { target: { value: "conditional" } });
-    fireEvent.change(screen.getByLabelText("Question 2 depends on"), { target: { value: "q1" } });
-    fireEvent.click(screen.getByLabelText("Question 2 required answer Yes"));
+    fireEvent.click(screen.getByRole("button", { name: "Add follow-up to question 1" }));
+    fireEvent.click(screen.getByLabelText("Question 1-A required answer Yes"));
 
     await waitFor(() => {
       const stored = readStoredDraft();
@@ -338,13 +365,9 @@ describe("QuestionnaireCoordinatorPanel conditional questions UI", () => {
     // Re-mount — the showIf should be restored from localStorage
     render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
 
-    const visibilitySelect = screen.getByLabelText("Question 2 visibility") as HTMLSelectElement;
-    expect(visibilitySelect.value).toBe("conditional");
+    expect(screen.getByText("Follow-up to question 1")).toBeTruthy();
 
-    const depSelect = screen.getByLabelText("Question 2 depends on") as HTMLSelectElement;
-    expect(depSelect.value).toBe("q1");
-
-    const yesRadio = screen.getByLabelText("Question 2 required answer Yes") as HTMLInputElement;
+    const yesRadio = screen.getByLabelText("Question 1-A required answer Yes") as HTMLInputElement;
     expect(yesRadio.checked).toBe(true);
   });
 });

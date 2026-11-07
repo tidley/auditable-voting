@@ -60,6 +60,22 @@ function renderDashboard() {
 }
 
 describe("QuestionnaireResultsDashboard", () => {
+  it('uses parent and follow-up labels consistently in results', () => {
+    const questions = [
+      { questionId: 'parent1', prompt: 'Parent one', type: 'yes_no' as const, required: true },
+      { questionId: 'child1', prompt: 'Child one', type: 'yes_no' as const, required: true, showIf: { dependsOnQuestionId: 'parent1', requiredAnswer: { answerType: 'yes_no' as const, value: true } } },
+      { questionId: 'parent2', prompt: 'Parent two', type: 'yes_no' as const, required: true },
+      { questionId: 'child2', prompt: 'Child two', type: 'yes_no' as const, required: true, showIf: { dependsOnQuestionId: 'parent2', requiredAnswer: { answerType: 'yes_no' as const, value: false } } },
+    ];
+    const { container } = render(<QuestionnaireResultsDashboard
+      questionnaire={{ questionnaireId: 'nested', title: 'Nested results', questions }}
+      questionSummaries={questions.map(question => ({ questionId: question.questionId, answerType: 'yes_no', yesCount: 0, noCount: 0 }))}
+      responseDetails={[]} displayValidCount={0} coordinatorText='Organiser' publishedAtLabel='Not published'
+    />);
+    expect([...container.querySelectorAll('.simple-session-question-number')].map(node => node.textContent)).toEqual(['Q1', 'Q1-A', 'Q2', 'Q2-A']);
+    expect(screen.getByText('Q1-A. Child one')).toBeTruthy();
+    expect(screen.getByText('Q2-A. Child two')).toBeTruthy();
+  });
   it("uses the UI framework disclosure for result dropdown toggles", async () => {
     const user = userEvent.setup();
     renderDashboard();

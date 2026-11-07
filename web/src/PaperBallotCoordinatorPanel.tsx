@@ -1,10 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
-import PaperBallotPrint from "./PaperBallotPrint";
+import { buildPaperBallotDocument } from './paperBallotDocument';
 import { generatePaperBallot } from "./paperBallot";
 import type { QuestionnaireOptionACoordinatorRuntime } from "./questionnaireOptionARuntime";
 import { createPaperBallotAdmissionSheet, normalisePaperBallotMasterlistNumber, paperBallotExpiryToIsoUtc, type PrintablePaperBallotAdmission } from "./paperBallotAdmission";
 import { UiButton, UiTextArea } from "./ui/DesignLayer";
+import UiDateTimeField from './ui/UiDateTimeField';
 
 export default function PaperBallotCoordinatorPanel(props: {
   electionId: string;
@@ -16,7 +17,19 @@ export default function PaperBallotCoordinatorPanel(props: {
   const [expiresAt, setExpiresAt] = useState("");
   const [sheet, setSheet] = useState<PrintablePaperBallotAdmission[]>([]);
   const [status, setStatus] = useState("");
+  const [printDocumentUrl, setPrintDocumentUrl] = useState('');
   const generating = useRef(false);
+
+  useEffect(() => {
+    if (!sheet.length || !props.definition || props.definition.questionnaireId !== props.electionId) {
+      setPrintDocumentUrl('');
+      return;
+    }
+    const html = buildPaperBallotDocument(sheet.map(entry => generatePaperBallot({ definition: props.definition!, masterlistNumber: entry.masterlistNumber, code: entry.code, expiresAt: entry.admission.expiresAt })));
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+    setPrintDocumentUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [sheet, props.definition, props.electionId]);
 
   async function generate() {
     if (generating.current) return;
@@ -49,7 +62,7 @@ export default function PaperBallotCoordinatorPanel(props: {
       next.forEach((entry) => props.runtime?.addPaperBallotAdmission(entry.admission));
       props.onAdmissionsChanged?.();
       setSheet([...sheet, ...next]);
-      setStatus(`${next.length} paper ballot code${next.length === 1 ? "" : "s"} saved. Print this page now; codes are not retained here after reload.`);
+      setStatus(`${next.length} paper ballot code${next.length === 1 ? "" : "s"} saved. Open or download the printable document now; codes are not retained here after reload.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not generate paper ballot codes.");
     } finally {
@@ -59,24 +72,26 @@ export default function PaperBallotCoordinatorPanel(props: {
 
   return <section className='simple-settings-card' aria-label='Paper ballot access'>
     <h3 className='simple-voter-question'>Paper ballot access</h3>
-    <p className='simple-voter-note'>Generate one code for each master-list record. The organiser stores only an opaque admission key; print the codes before leaving this page.</p>
-    <p className='simple-voter-note'>Duplicate numbers are detected only in this open print batch. After reload, new codes cannot replace or revoke earlier codes for the same number. Earlier codes remain usable until redeemed, expired or explicitly revoked by admission key. Do not generate another batch for the same roster.</p>
+    <p className='simple-voter-note'>Save or print codes before leaving. Do not generate another batch for the same roster.</p>
+    <details className='simple-organiser-disclosure'>
+      <summary>Code storage and expiry</summary>
+      <p className='simple-voter-note'>Only admission hashes are stored. Duplicate numbers are checked in this batch only. Reloading loses the printable codes, not their validity: they remain usable until redeemed, expired or explicitly revoked. New codes do not replace old codes.</p>
+    </details>
     <UiTextArea
       label='Master-list numbers'
       textAreaClassName='simple-voter-input'
       textAreaProps={{ value: masterlistNumbers, rows: 3, placeholder: "ML-001\nML-002", onChange: (event) => setMasterlistNumbers(event.target.value) }}
     />
-    <label className='simple-voter-field'>
-      <span>Code expiry</span>
-      <input className='simple-voter-input' type='datetime-local' value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
-    </label>
+    <UiDateTimeField label='Code expiry' value={expiresAt} onChange={setExpiresAt} />
+    <p className='simple-voter-note'>Local time; printed in UTC.</p>
     <div className='simple-voter-action-row simple-voter-action-row-inline'>
       <UiButton icon='key' className='simple-voter-secondary' onPress={() => void generate()} isDisabled={!props.electionId}>Generate printable codes</UiButton>
-      {sheet.length ? <UiButton icon='export' className='simple-voter-secondary' onPress={() => window.print()}>Print ballot instructions</UiButton> : null}
+      {printDocumentUrl ? <>
+        <a className='av-ui-button av-ui-button-secondary' href={printDocumentUrl} target='_blank' rel='noopener noreferrer'>Open printable ballots</a>
+        <a className='av-ui-button av-ui-button-secondary' href={printDocumentUrl} download={`paper-ballots-${props.electionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 100)}.html`}>Download HTML</a>
+      </> : null}
     </div>
     {status ? <p className='simple-voter-note' role='status'>{status}</p> : null}
-    {sheet.length ? <div className='simple-paper-ballot-sheet' aria-label='Printable paper ballot instructions'>
-      {props.definition ? sheet.map((entry) => <PaperBallotPrint key={entry.admission.registryKey} ballot={generatePaperBallot({ definition: props.definition!, masterlistNumber: entry.masterlistNumber, code: entry.code, expiresAt: entry.admission.expiresAt })} />) : null}
-    </div> : null}
+    {printDocumentUrl ? <p className='simple-voter-note'>Keep printed and downloaded codes private.</p> : null}
   </section>;
 }

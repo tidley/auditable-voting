@@ -22,6 +22,7 @@ test("active voter switches locales, retains answers and safely resolves conditi
   await expect(page.getByRole("button", { name: "ஆம்", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "இல்லை", exact: true }).click();
   await expect(page.getByRole("button", { name: /அடுத்து/ })).toHaveCount(0);
-  await expect(page.getByRole("textbox", { name: "Paper code", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Paper code character 1 of 10", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /^Paper code character \d+ of 10$/ })).toHaveCount(10);
   expect(errors).toEqual([]);
 });

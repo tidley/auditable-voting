@@ -1,0 +1,115 @@
+/* Shared presentation foundation for the application and isolated demo.
+   No scripts or external resources; fonts are shipped with the application. */
+/* Keep native menus readable too; their popup chrome remains platform-owned. */
+:root[data-theme='dark'] { color-scheme: dark; }
+select, input[type='datetime-local'] { color-scheme: light; }
+[data-theme='dark'] select, [data-theme='dark'] input[type='datetime-local'] { color-scheme: dark; }
+select option, select optgroup {
+  background-color: var(--surface-inset);
+  color: var(--simple-text);
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/PlusJakartaSans-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/PlusJakartaSans-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/PlusJakartaSans-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/PlusJakartaSans-700.woff2") format("woff2");
+}
+
+:root {
+  --app-font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --simple-bg: #070d10;
+  --simple-bg-2: #0b1217;
+  --simple-surface: #101820;
+  --simple-surface-2: #0c1319;
+  --simple-surface-3: #16222c;
+  --simple-border: #2a3a46;
+  --simple-border-strong: #3a4c59;
+  --simple-text: #f3f7fa;
+  --simple-muted: #b8c4cc;
+  --simple-soft: #d5dee5;
+  --simple-blue: #07827f;
+  --simple-blue-hover: #067674;
+  --simple-teal: #2dd4bf;
+  --simple-coral: #ef4444;
+  --simple-green: #14b8a6;
+  --simple-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --accent-solid: #0f948c;
+  --accent-solid-hover: #0d8a83;
+  --accent-tint-180: rgba(45, 212, 191, 0.18);
+  --accent-tint-280: rgba(45, 212, 191, 0.28);
+  --accent-tint-420: rgba(45, 212, 191, 0.42);
+  --accent-tint-720: rgba(45, 212, 191, 0.72);
+  --accent-tint-820: rgba(45, 212, 191, 0.82);
+  --surface-accent-active: #08333a;
+  --text-on-accent: #f8fafc;
+  --success-tint-780: rgba(20, 184, 166, 0.78);
+  --surface-button: #0b1520;
+  --surface-inset: #07101a;
+  --surface-nav-hover: #10202b;
+  --surface-sidebar: #08131d;
+  --surface-table-shell: #08111b;
+  --amber-tint-160: rgba(245, 158, 11, 0.16);
+  --amber-text-soft: #fed7aa;
+  --text-hi: #f8fafc;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --simple-bg: #FCFAF2;
+  --simple-bg-2: #F6F1E6;
+  --simple-surface: #FFFFFF;
+  --simple-surface-2: #FCFAF2;
+  --simple-surface-3: #F3EEE3;
+  --simple-border: #EAE6DF;
+  --simple-border-strong: #D9D2C6;
+  --simple-text: #2D312E;
+  --simple-muted: #68706A;
+  --simple-soft: #4A4F4B;
+  --simple-blue: #F2A93B;
+  --simple-blue-hover: #D9952B;
+  --simple-teal: #4A90E2;
+  --simple-coral: #E63946;
+  --simple-green: #52B788;
+  --simple-shadow: 0 6px 24px rgba(58, 52, 44, 0.08), 0 2px 8px rgba(58, 52, 44, 0.05);
+  --shadow-card: 0 6px 24px rgba(58, 52, 44, 0.08), 0 2px 8px rgba(58, 52, 44, 0.05);
+  --accent-solid: #F2A93B;
+  --accent-solid-hover: #D9952B;
+  --accent-tint-180: rgba(74, 144, 226, 0.18);
+  --accent-tint-280: rgba(74, 144, 226, 0.28);
+  --accent-tint-420: rgba(74, 144, 226, 0.42);
+  --accent-tint-720: rgba(74, 144, 226, 0.72);
+  --accent-tint-820: rgba(74, 144, 226, 0.82);
+  --surface-accent-active: #E7F0FB;
+  --text-on-accent: #FFFFFF;
+  --success-tint-780: rgba(82, 183, 136, 0.78);
+  --surface-button: #FFFFFF;
+  --surface-inset: #F6F1E6;
+  --surface-nav-hover: #F3EEE3;
+  --surface-sidebar: #F6F1E6;
+  --surface-table-shell: #FFFFFF;
+  --amber-text-soft: #8A5A0E;
+  --text-hi: #2D312E;
+}

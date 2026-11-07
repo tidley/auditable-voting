@@ -2,7 +2,7 @@
 
 Anonymous voting with public verification, using blind credentials and Nostr relays.
 
-If you are demonstrating the project to a general audience, start with the [plain-English demo guide](./demo-guide.md). It uses everyday language, gives a short action-first walkthrough, and keeps the technical terms out of the first explanation.
+Start with the canonical [voting workflow and role tutorials](./voting-workflow.md) for the shipped flowchart, milestones, privacy boundaries and recovery sequences. For a rehearsal, use the [offline demo guide](./demo-guide.md). Start demo opens an isolated sandbox; ordinary app publishing is separate and real.
 
 This is the short, public-facing explanation. For the protocol and implementation detail, see [`docs/technical-protocol-note.md`](./technical-protocol-note.md). For the questionnaire-specific protocol reference, see [`docs/questionnaire-blind-token-protocol.md`](./questionnaire-blind-token-protocol.md). The broader [voting protocol specification](./voting-protocol-specification.md) defines the trust boundaries and the shipped configurable general-invite proof-of-work control, including audit-proxy support in worker 0.1.44 or later.
 
@@ -19,6 +19,8 @@ Observers can independently recompute the result from public data.
 
 ## The short version
 
+The organiser follows **Prepare → Guardian → Voters → Results**. Guardian is the setup name for the delegated audit-proxy worker; proxy voting is unchanged. Back/Next buttons only navigate; publishing and invitations remain explicit actions. Title, description and questions stay visible. A non-blank description is required to go live. Questionnaire ID is inside **Questionnaire settings**. Settings, Guardian diagnostics and invitation methods expand on demand. Voter management and results are separate views. Paper-ballot forms keep the save/print and duplicate-batch warnings visible.
+
 1. An organiser admits a voter or confirms that a voter is eligible.
 2. The voter requests fresh blind ballot credentials for this questionnaire. Current questionnaires use one internal response group, or two credentials for that group when the voter is marked as a proxy voter; large bundles can be compressed before encryption, while small bundles stay plain JSON.
 3. For paper ballots, the organiser prints a ten-character Crockford code, master-list number, UTC expiry and instructions for each conditional question. No voter private key is printed. The voter selects this route and enters both values to request, not yet receive, a blind credential. The issuer stores and receives only the combined election/number/code admission hash, expiry and redemption state. There is no separate master-list hash or persistent roster-to-admission mapping. Duplicate numbers are detected only in the open print batch. After reload, regenerating codes cannot automatically revoke the old ones; both may admit separate requests until redeemed, expired or explicitly revoked by admission key. Do not generate another batch for the same roster. The browser discards legacy records with separate roster identifiers and strips unknown admission metadata on load/save and recovery. The worker strips legacy identifiers and unknown fields; a record without a combined admission hash cannot authorise a request. The anonymous ballot contains neither paper value.
@@ -27,7 +29,16 @@ Observers can independently recompute the result from public data.
 5. The voter submits the questionnaire response anonymously; all questions share one proof, like one multi-part question.
 6. Anyone can verify that accepted ballots are valid, unique, and correctly tallied.
 
-The app itself renders in a light theme by default, with a calm dark theme one tap away via the sun/moon toggle in the corner of any screen. The choice is remembered per browser, first visits always start light (the system colour-scheme preference is deliberately not consulted), and the protocol behaves identically in both themes.
+Paper instructions open in a separate tab as self-contained A4 HTML. Use **Download HTML** to keep the document, or the browser's Print command to print or save as PDF. Each record starts on a new printed sheet. The expiry picker follows the selected theme: input is local time and printed expiry is UTC. Codes display in two five-character groups, such as **7K3M9-T2X4R**. Voters enter them in ten boxes with automatic focus advance, backspace/arrow navigation and whole-code paste. The compact master-list field still accepts longer IDs. Hyphens and spaces are removed before admission hashing. Printed questions keep the editor/results labels, such as **1-A**. The document needs no scripts or external assets. Downloads contain plaintext codes and master-list numbers; keep them private. Reload still discards the app's plaintext print batch.
+
+The app renders in a light theme by default, with a calm dark theme via the sun/moon toggle to the right of **How it works**. The choice is remembered per browser and shared with the offline demo. First visits start light, ignoring the system colour-scheme preference; the protocol behaves identically in both themes.
+
+The demo also shares the app's bundled fonts, palette, panels and controls.
+It presents app-like task screens with short hints, not a long tutorial essay;
+expand **Help for this step** for the detailed privacy and protocol explanation.
+Before the simulated **Go Live**, organisers can edit the pre-filled title and
+question wording and add required Yes/No questions. Added answers appear in
+released records and results. Reset/reload restores the original sample.
 
 When a signed questionnaire definition pins a private ballot worker and a matching active delegation grants private queueing, the voter sends the ballot only to that worker's signed DM relays. The voter sees **Queued privately** only after a matching encrypted receipt from the pinned worker. If that configuration is missing, invalid, or does not match the active worker, the normal public ballot route remains in use.
 
@@ -118,7 +129,19 @@ Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text que
 
 ## Current limitations
 
-Conditional follow-up questions use an earlier yes/no or multiple-choice answer from the same submitted ballot. For multiple-choice conditions, all specified options must be selected. Voters skip hidden questions, and submissions omit their saved answers. A hidden ancestor cannot reveal a later question through a stale answer. Only visible questions can require an answer. Browser checks and public/private worker checks reject hidden answers and missing visible required answers within the submitted credential coverage. Malformed condition values and answer selections fail validation.
+Create a conditional question with **Add follow-up question** on its yes/no or multiple-choice parent. The editor inserts it immediately after the parent, links it automatically and lets you choose the triggering answer. It inherits the parent's voter group and ballot slot. Changing the follow-up's type keeps the link; **Make standalone** clears it. Existing saved conditions remain editable. Ranked and free-text answers cannot trigger follow-ups.
+
+The editor displays follow-ups inside the parent's card with a slight inset,
+labelled **1-A**, **1-B**, and so on. The next standalone question remains **2**.
+Deeper follow-ups use labels such as **1-A-A**. Results prefix these labels with **Q**, for example **Q1-A**. The parent link and answer condition
+appear first, above the child's number, type and prompt. Answer controls follow
+the selected theme, retain keyboard navigation and use native controls in forced-colour mode.
+Parent ordering arrows move the whole branch; child arrows reorder
+only siblings. Results cards, the results overview and submitted-answer details
+use the same labels. Filtering and summary arrival order do not renumber them.
+This is presentation numbering, not a change to stored question IDs.
+
+Conditional follow-up questions use an earlier yes/no or multiple-choice answer from the same submitted ballot. For multiple-choice conditions, all specified options must be selected. Single-choice parents use one answer trigger; multi-select parents allow several required options. Voters skip hidden questions, and submissions omit their saved answers. A hidden ancestor cannot reveal a later question through a stale answer. Only visible questions can require an answer. Browser checks and public/private worker checks reject hidden answers and missing visible required answers within the submitted credential coverage. Malformed condition values and answer selections fail validation.
 
 This is experimental software.
 
@@ -148,7 +171,7 @@ Known weak points:
 - **Backup** creates an encrypted full-state snapshot for the current app namespace. It includes local questionnaire definitions/drafts, invite and roster state, blind-issuance state, responses, relay/proxy settings, and actor state; restoring replaces the current namespace state on the device.
 - Account menus, response rows, and backup filenames show a deterministic three-word label from the BIP39 English word list for matching a profile, anonymous response identity, or backup. It is not a BIP39/NIP-06 recovery mnemonic and cannot restore the private key without the `nsec` or backup file.
 - Private invite links default to one voter, but the organiser can set a bounded capacity from 1 to 10,000 voters when creating a link. Each distinct claimant receives independent blind credentials; the organiser keeps the claimant list locally while public status publishes only the invite-code hash, aggregate redemption count, and capacity until the link is full.
-- The organiser **Start demo** publishes a real Nostr questionnaire and shows general, private, and resident invitation paths. Resident imports stay only in the organiser browser. The resident-number access link and email OTP delivery are previews, not authentication, until a server-side verification service exists.
+- **Start demo** on the home screen and **Offline demo sandbox** in the account menu open the standalone sandbox, not the live organiser runtime. Nine deterministic chapters cover all four roles, paper admission, conditional answers, lost receipts, batch release and simulated recovery. It uses no identities, stored election data, relay/worker connections or payments. Only `av-theme` is shared with the live app; theme persists while reset/reload starts the election over. It runs without connectivity after its assets load; a cold offline start requires a locally served build. Cryptography, disk durability and live transport are not tested. Resident import/OTP previews in the real app are not cross-device admission; reusable signed grants and automated OTP admission remain planned.
 - If the organiser changes an answer-bearing question's required scope after credentials exist, voters need a fresh scoped credential.
 - The built-in **Messages** view needs a local `nsec` identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.
 - The cryptographic design needs external review before production use.

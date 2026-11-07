@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import PaperBallotCoordinatorPanel from "../src/PaperBallotCoordinatorPanel";
+import PaperBallotCodeInput from '../src/PaperBallotCodeInput';
 import "../src/styles.css";
 import type { QuestionnaireDefinition } from "../src/questionnaireProtocol";
 
@@ -46,8 +47,12 @@ if (!root) {
   throw new Error("harness root missing");
 }
 // Only persistence is stubbed; generation, UI, print component and CSS are real.
-createRoot(root).render(React.createElement(PaperBallotCoordinatorPanel, {
+function CodeEntryHarness() {
+  const [code, setCode] = React.useState('');
+  return React.createElement('section', { className: 'simple-settings-card', 'aria-label': 'Paper code entry preview' }, React.createElement(PaperBallotCodeInput, { value: code, onChange: setCode }));
+}
+createRoot(root).render(React.createElement(React.Fragment, null, React.createElement(PaperBallotCoordinatorPanel, {
   electionId: definition.questionnaireId,
   definition,
   runtime: { addPaperBallotAdmission() {} } as never,
-}));
+}), React.createElement(CodeEntryHarness)));

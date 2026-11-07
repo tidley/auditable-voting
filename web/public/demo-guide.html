@@ -517,6 +517,12 @@
     </header>
 
     <main>
+      <aside class="panel" aria-label="Canonical workflow guide">
+        <p><a href="./demo.html"><strong>Start the offline sandbox</strong></a> for a safe, repeatable nine-chapter rehearsal. Explore Organiser, Voter, Worker and Observer; paper codes, conditional questions, lost receipts, batch release and simulated recovery. No real identities, stored election data, messages or payments are used. Only the saved light/dark preference is shared with the live app. Reset/reload starts the election over. It runs offline after assets load; cold offline access needs a locally served build. Signatures, encryption and real delivery are not tested.</p>
+        <p>Edit the pre-filled title and question wording or use <strong>Add question</strong> for extra required Yes/No questions before <strong>Go Live</strong>. The second sample question retains its North/South options and follows Yes to question 1. Added answers appear in released records and results. Reset/reload restores the original sample.</p>
+        <p>Read the <a href="./voting-workflow.html">voting flowchart and role tutorials</a> for the real protocol. <strong>The remaining steps on this page are a separate live integration rehearsal</strong>: normal Go Live and Submit controls publish real records. Use test identities and fictional answers.</p>
+        <p>Request sent, ballot received, queued privately, public release, verified acceptance and final result are separate milestones. If private batching is enabled, wait for batch release before expecting a public Observer row.</p>
+      </aside>
       <div class="hero" id="overview">
         <div>
           <p class="eyebrow">Demo guide</p>
@@ -528,7 +534,8 @@
             <li>Submit a response and verify it</li>
           </ol>
           <div class="actions">
-            <a class="button primary" href="#demo">Run the demo</a>
+            <a class="button primary" href="./demo.html">Start offline demo</a>
+            <a class="button" href="#demo">Live integration steps (real relays)</a>
             <a class="button" href="#questions">Answer likely questions</a>
             <a class="button" href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Open Organiser</a>
             <a class="button" href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer">Open Voter</a>

@@ -1,6 +1,75 @@
-# Demo guide
+# Demo and live integration guide
 
-Run through a voting loop.
+## Default: the offline sandbox
+
+Open `/demo.html`, select **Start demo — offline sandbox** on the login page,
+or use **Offline demo sandbox** in the account menu. There is no duplicate
+launcher at the top of Organiser setup. No account, signer, worker or relay is needed.
+
+The sandbox is a separate page, not the live application in a special mode.
+It uses the application's light/dark palette, Plus Jakarta Sans fonts, panels
+and controls. Work through the screens as an app: short hints explain the next
+action; **Help for this step** holds the longer explanation. On phones, expand
+**Walkthrough** if you want to see the full chapter list.
+It makes no transport connections and stores no election or identity data.
+The only shared browser preference is `av-theme`: the light/dark setting, saved
+by the toggle immediately to the right of **How it works** in both app and demo.
+Existing identities, drafts, voter lists and backups stay untouched. All
+credentials and event IDs are fictional, and every screen says it is simulated.
+
+### Nine guided chapters
+
+1. **Prepare the election:** use the pre-filled questions or edit the title and
+   question wording. **Add question** adds a required Yes/No question; added
+   questions can be removed. The second sample question keeps its North/South
+   options and appears only after Yes to question 1. Select **Review questionnaire**.
+2. **Open and invite:** inspect its three-ballot threshold and 10:12 deadline,
+   then select **Go Live**. Questions lock at this point. This is still a
+   simulation: it publishes nothing.
+3. **Admit a paper voter:** try an invalid entry, then use **Fill example
+   values** and **Request ballot**. The returned credential is fictional.
+4. **Answer the questionnaire:** answer Yes to show the required plot question;
+   switch to No to see it removed. Optionally lose the intake receipt, then
+    answer any added questions and select **Submit response**.
+5. **Understand the private receipt:** compare all four role views. Observer
+   sees nothing public yet. Retry the same submission to recover the receipt
+   without another accepted ballot.
+6. **Release at the threshold:** add two anonymous examples. The third ballot
+   releases a fixed example shuffle at one common release time.
+7. **Deadline and recovery:** queue the final ballot, keep the publication
+   failure selected, and advance the clock. Simulate restart and retry the
+   prepared batch with the same event ID. Uncheck failure for a direct release.
+8. **Audit the records:** try late and duplicate examples; neither adds a vote.
+    Check the fixture records, batch counts, conditional answers and tally.
+    Added answers appear in released records and have their own Yes/No counts.
+9. **Reconcile and repeat:** inspect the checks and choose **Reset and repeat**.
+    Reset is immediate and affects only this page. Reload also starts from zero.
+    Both restore the original pre-filled title and questions.
+
+Role buttons can be used at any chapter; return to the recommended role to
+continue. The event journal filters messages by the selected role. The example
+batch inspector is illustrative: the live Observer does not yet have that UI.
+The demo is currently English-only.
+
+### Offline and repeatability limits
+
+After its HTML, scripts and stylesheet load, disconnect the browser and the
+whole walkthrough still runs. Reloading while disconnected is not guaranteed:
+this feature does not install a service worker. For a cold offline start, serve
+a previously built copy locally. Nothing is stored; closing/reloading the page
+loses progress. The example restart is a JSON snapshot in memory, not actual
+worker disk recovery. Reconciliation checks fixture structure and arithmetic,
+not signatures, encryption, actual randomness or live network delivery.
+
+## Separate: live integration rehearsal
+
+The steps below operate the real application. They are not the default demo.
+Only use them when you intentionally want to exercise real relays and issuers.
+
+First read the [canonical workflow and role tutorials](./voting-workflow.md)
+for the flowchart, paper access, private batching and recovery. This short guide
+rehearses the general-invite route. **Normal Go Live and Submit controls use
+real Nostr relays; use test identities and fictional answers.**
 
 Use this guide to:
 
@@ -9,6 +78,11 @@ Use this guide to:
 3. Submit a response and verify it
 
 This demo takes about **5 minutes**.
+
+Relay delivery and private batch deadlines can make it take longer. Admission
+request, credential receipt, private queue receipt, public release, verified
+acceptance and final result are separate milestones. With private batching,
+wait for release before following the public Observer checks below.
 
 By the end you will:
 
@@ -46,9 +120,9 @@ Publish and verify results
 
 Use these pages:
 
-- [Open Organiser](../web/public/simple-coordinator.html?role=coordinator)
-- [Open Voter](../web/public/simple.html?role=voter)
-- [Open Observer](../web/public/dashboard.html?role=auditor)
+- Open the deployed app's `/dashboard.html?role=coordinator` as Organiser.
+- Open an invite to enter Vote, or use `/vote.html` to join.
+- Open `/dashboard.html?role=auditor` as Observer.
 
 ## Roles
 

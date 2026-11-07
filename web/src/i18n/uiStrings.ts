@@ -107,8 +107,8 @@ export const UI_STRINGS = {
   readinessQuestions: { en: "Questions", fr: "Questions", ta: "கேள்விகள்" },
   readinessPublished: { en: "Published", fr: "Publié", ta: "வெளியிடப்பட்டது" },
   readinessPub: { en: "Pub", fr: "Pub", ta: "வெளி" },
-  readinessProxySetup: { en: "Proxy Setup", fr: "Configuration du proxy", ta: "ப்ராக்ஸி அமைப்பு" },
-  readinessProxy: { en: "Proxy", fr: "Proxy", ta: "ப்ராக்ஸி" },
+  readinessProxySetup: { en: "Guardian setup", fr: "Configuration du proxy", ta: "ப்ராக்ஸி அமைப்பு" },
+  readinessProxy: { en: "Guardian", fr: "Proxy", ta: "ப்ராக்ஸி" },
   readinessResultsVoters: { en: "Results & Voters", fr: "Résultats et électeurs", ta: "முடிவுகள் மற்றும் வாக்காளர்கள்" },
   readinessVoters: { en: "Voters", fr: "Électeurs", ta: "வாக்காளர்கள்" },
 

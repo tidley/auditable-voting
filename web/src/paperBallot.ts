@@ -1,5 +1,6 @@
 import type { QuestionnaireDefinition, QuestionnaireQuestion } from "./questionnaireProtocol";
 import { resolveLocalised } from "./i18n/resolveLocale";
+import { buildQuestionLabelMap } from './questionnaireEditorTree';
 
 export type PaperBallotQuestion = QuestionnaireQuestion & { conditionInstruction?: string };
 
@@ -20,6 +21,7 @@ export function generatePaperBallot(input: {
   code: string;
   expiresAt: string;
 }): PaperBallot {
+  const questionLabels = buildQuestionLabelMap(input.definition.questions);
   return {
     questionnaireId: input.definition.questionnaireId,
     questionnaireTitle: resolveLocalised(input.definition.title, "en"),
@@ -37,7 +39,7 @@ export function generatePaperBallot(input: {
         ? `answered ${answer.value ? "Yes" : "No"}.`
         : `includes all of: ${answer.selectedOptionIds.map((id) => parent?.type === "multiple_choice"
           ? resolveLocalised(parent.options.find((option) => option.optionId === id)?.label, "en") || id : id).join("; ")}. Other selections are allowed.`;
-      return { ...question, conditionInstruction: `Answer only if question ${index + 1} (${resolveLocalised(parent?.prompt, "en") || condition.dependsOnQuestionId}) is applicable and ${requirement} Otherwise leave blank.` };
+      return { ...question, conditionInstruction: `Answer only if question ${questionLabels.get(condition.dependsOnQuestionId) ?? condition.dependsOnQuestionId} (${resolveLocalised(parent?.prompt, "en") || condition.dependsOnQuestionId}) is applicable and ${requirement} Otherwise leave blank.` };
     }),
   };
 }

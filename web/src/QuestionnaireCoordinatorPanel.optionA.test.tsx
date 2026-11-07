@@ -311,7 +311,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const idInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
-    const workerNpubInput = screen.getByLabelText("Audit proxy npub") as HTMLInputElement;
+    const workerNpubInput = screen.getByLabelText("Guardian npub") as HTMLInputElement;
     const previousId = idInput.value;
 
     expect(screen.queryByLabelText("Private key")).toBeNull();
@@ -358,7 +358,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
 
     await waitFor(() => {
-      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(liveWorkerNpub);
+      expect((screen.getByLabelText("Guardian npub") as HTMLInputElement).value).toBe(liveWorkerNpub);
     });
     expect(screen.queryByLabelText("Private key")).toBeNull();
     expect((document.querySelector("#delegated-worker-relays") as HTMLTextAreaElement | null)?.value).toContain("wss://relay.nostr.net");
@@ -397,7 +397,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       />,
     );
 
-    const workerNpubInput = await screen.findByLabelText("Audit proxy npub") as HTMLInputElement;
+    const workerNpubInput = await screen.findByLabelText("Guardian npub") as HTMLInputElement;
     const workerNsecInput = await screen.findByLabelText("Private key") as HTMLTextAreaElement;
     await waitFor(() => {
       expect(workerNpubInput.value).toMatch(/^npub1/);
@@ -407,7 +407,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     expect(screen.getByRole("button", { name: "Copy quick start" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "Confirm configuration" }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.getByText("Not confirmed automatically?")).toBeTruthy();
+    expect(screen.getByText("3. Confirm connection")).toBeTruthy();
   });
 
   it("does not replace the generated setup account with an older proxy heartbeat", async () => {
@@ -439,7 +439,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     await waitFor(() => expect(fetchOptionAWorkerStatusDmsWithNsec).toHaveBeenCalled());
     await new Promise((resolve) => window.setTimeout(resolve, 25));
-    const generatedWorkerNpub = (screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value;
+    const generatedWorkerNpub = (screen.getByLabelText("Guardian npub") as HTMLInputElement).value;
     expect(generatedWorkerNpub).toMatch(/^npub1/);
     expect(generatedWorkerNpub).not.toBe(oldWorkerNpub);
     expect(screen.getByRole("button", { name: "Copy quick start" })).toBeTruthy();
@@ -454,7 +454,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "New account" }));
 
     const workerNsecInput = await screen.findByLabelText("Private key") as HTMLTextAreaElement;
-    const workerNpubInput = screen.getByLabelText("Audit proxy npub") as HTMLInputElement;
+    const workerNpubInput = screen.getByLabelText("Guardian npub") as HTMLInputElement;
     const generatedWorkerNsec = workerNsecInput.value;
     const generatedWorkerNpub = workerNpubInput.value;
     await waitFor(() => {
@@ -470,8 +470,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const restoredWorkerNsecInput = await screen.findByLabelText("Private key") as HTMLTextAreaElement;
     await waitFor(() => {
-      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toMatch(/^npub1/);
-      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(generatedWorkerNpub);
+      expect((screen.getByLabelText("Guardian npub") as HTMLInputElement).value).toMatch(/^npub1/);
+      expect((screen.getByLabelText("Guardian npub") as HTMLInputElement).value).toBe(generatedWorkerNpub);
       expect(restoredWorkerNsecInput.value).toMatch(/^nsec1/);
       expect(restoredWorkerNsecInput.value).toBe(generatedWorkerNsec);
     });
@@ -493,7 +493,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       />,
     );
     const firstWorkerNpub = await waitFor(() => {
-      const value = (screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value;
+      const value = (screen.getByLabelText("Guardian npub") as HTMLInputElement).value;
       expect(value).toMatch(/^npub1/);
       return value;
     });
@@ -508,7 +508,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     );
 
     await waitFor(() => {
-      const value = (screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value;
+      const value = (screen.getByLabelText("Guardian npub") as HTMLInputElement).value;
       expect(value).toMatch(/^npub1/);
       expect(value).not.toBe(firstWorkerNpub);
     });
@@ -1101,7 +1101,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       complete: false,
     });
     expect(latestReadiness.find((item: { id: string }) => item.id === "proxy")).toMatchObject({
-      label: "Proxy Setup",
+      label: "Guardian setup",
       group: "session",
       action: "setup_proxy",
       disabled: true,
@@ -1222,11 +1222,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     render(<QuestionnaireCoordinatorPanel coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New delegated questionnaire" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "A delegated questionnaire for residents." } });
     fireEvent.change(screen.getByPlaceholderText("Question prompt"), { target: { value: "Proceed?" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Translations" })[0]);
     fireEvent.change(screen.getByLabelText("Title (French)"), { target: { value: "Nouveau questionnaire" } });
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
-    fireEvent.change(screen.getByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    fireEvent.change(screen.getByLabelText("Guardian npub"), { target: { value: workerNpub } });
     const publishButton = screen.getByRole("button", { name: "Go Live" });
     await waitFor(() => expect(publishButton.matches(":disabled")).toBe(false));
     fireEvent.click(publishButton);
@@ -1255,11 +1256,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     render(<QuestionnaireCoordinatorPanel coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Private queue" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Collect responses through the private ballot queue." } });
     fireEvent.change(screen.getByPlaceholderText("Question prompt"), { target: { value: "Proceed?" } });
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
     fireEvent.click(screen.getByRole("button", { name: "Show" }));
     fireEvent.click(screen.getByLabelText("Enable private ballot queue"));
-    fireEvent.change(screen.getByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    fireEvent.change(screen.getByLabelText("Guardian npub"), { target: { value: workerNpub } });
     fireEvent.change(screen.getByLabelText("Private ballot relays"), { target: { value: "wss://private.example" } });
     fireEvent.change(screen.getByLabelText("Private batch threshold"), { target: { value: "3" } });
     fireEvent.change(screen.getByLabelText("Private submission deadline"), { target: { value: "2027-01-01T12:00:00Z" } });
@@ -1369,7 +1371,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     );
 
     fireEvent.change(await screen.findByLabelText("Mode"), { target: { value: "delegated_worker" } });
-    fireEvent.change(await screen.findByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    fireEvent.change(await screen.findByLabelText("Guardian npub"), { target: { value: workerNpub } });
     fireEvent.click(screen.getByRole("button", { name: "Confirm configuration" }));
 
     await waitFor(() => {
@@ -1466,7 +1468,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     );
 
     fireEvent.change(await screen.findByLabelText("Mode"), { target: { value: "delegated_worker" } });
-    fireEvent.change(await screen.findByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    fireEvent.change(await screen.findByLabelText("Guardian npub"), { target: { value: workerNpub } });
     fireEvent.click(screen.getByRole("button", { name: "Confirm configuration" }));
 
     await waitFor(() => {

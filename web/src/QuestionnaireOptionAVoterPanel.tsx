@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import PaperBallotCodeInput from './PaperBallotCodeInput';
+import { normalisePaperBallotCode, PAPER_BALLOT_CODE_PATTERN } from './paperBallotAdmission';
 import { createPortal } from "react-dom";
 import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
 import {
@@ -4498,13 +4500,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           <p className='simple-voter-note'>Have a paper ballot? Enter the code printed for your master-list record. These details are used only to admit you and never form part of your ballot.</p>
           <label className='simple-voter-field'>
             <span>Master-list number</span>
-            <input className='simple-voter-input' value={paperBallotMasterlistNumber} onChange={(event) => setPaperBallotMasterlistNumber(event.target.value)} autoComplete='off' />
+            <input className='simple-voter-input simple-paper-masterlist-input' value={paperBallotMasterlistNumber} onChange={(event) => setPaperBallotMasterlistNumber(event.target.value)} autoComplete='off' spellCheck={false} />
           </label>
-          <label className='simple-voter-field'>
-            <span>Paper code</span>
-            <input className='simple-voter-input' value={paperBallotCode} onChange={(event) => setPaperBallotCode(event.target.value)} autoComplete='off' maxLength={10} />
-          </label>
-          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!snapshot?.loginVerified || Boolean(privateInviteBlock) || proofOfWorkInFlight || !paperBallotCode.trim() || !paperBallotMasterlistNumber.trim()} onPress={() => void requestPaperBallot()}>
+          <PaperBallotCodeInput value={paperBallotCode} onChange={setPaperBallotCode} />
+          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!snapshot?.loginVerified || Boolean(privateInviteBlock) || proofOfWorkInFlight || !PAPER_BALLOT_CODE_PATTERN.test(normalisePaperBallotCode(paperBallotCode)) || !paperBallotMasterlistNumber.trim()} onPress={() => void requestPaperBallot()}>
             Use paper ballot code
           </UiButton>
         </div> : null;

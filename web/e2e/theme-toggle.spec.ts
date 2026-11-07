@@ -57,6 +57,50 @@ test("theme toggle button is visible on gateway screen", async ({ page }) => {
   await expect(toggle).toHaveAttribute("aria-label", "Switch to dark theme");
 });
 
+for (const theme of ['light', 'dark'] as const) {
+  test(`native dropdown menus use the ${theme} palette in app and demo`, async ({ page }) => {
+    await setThemePreference(page, theme);
+    for (const route of ['/', '/demo.html']) {
+      await page.goto(route);
+      const colours = await page.evaluate(() => {
+        const select = document.createElement('select');
+        select.className = 'av-ui-input av-ui-select';
+        select.innerHTML = '<option>First answer</option><option>Second answer</option>';
+        document.body.append(select);
+        const probe = document.createElement('span');
+        probe.style.backgroundColor = 'var(--surface-inset)';
+        probe.style.color = 'var(--simple-text)';
+        document.body.append(probe);
+        const optionStyle = getComputedStyle(select.options[0]);
+        return {
+          scheme: getComputedStyle(select).colorScheme,
+          optionBackground: optionStyle.backgroundColor, optionText: optionStyle.color,
+          expectedBackground: getComputedStyle(probe).backgroundColor, expectedText: getComputedStyle(probe).color,
+        };
+      });
+      expect(colours.scheme).toBe(theme);
+      expect(colours.optionBackground).toBe(colours.expectedBackground);
+      expect(colours.optionText).toBe(colours.expectedText);
+    }
+  });
+}
+
+test('theme toggle sits to the right of How it works without overlap', async ({ page }) => {
+  await page.goto('/');
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    const help = page.locator('.simple-app-version').getByRole('link', { name: 'How it works', exact: true });
+    const toggle = page.locator('.simple-theme-toggle');
+    await toggle.scrollIntoViewIfNeeded();
+    const linkBox = await help.boundingBox();
+    const toggleBox = await toggle.boundingBox();
+    expect(linkBox).not.toBeNull();
+    expect(toggleBox).not.toBeNull();
+    expect(toggleBox!.x).toBeGreaterThanOrEqual(linkBox!.x + linkBox!.width);
+    expect(Math.abs(toggleBox!.y + toggleBox!.height / 2 - (linkBox!.y + linkBox!.height / 2))).toBeLessThan(2);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 2. Clicking toggle switches light → dark
 // ---------------------------------------------------------------------------

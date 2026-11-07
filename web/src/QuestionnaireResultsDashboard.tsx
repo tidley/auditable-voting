@@ -24,6 +24,7 @@ import {
   normaliseRankedOptionIds,
 } from "./questionnaireProtocol";
 import { resolveLocalised } from "./i18n/resolveLocale";
+import { buildQuestionLabelMap } from "./questionnaireEditorTree";
 import type {
   QuestionnaireQuestion,
   QuestionnaireResponseAnswer,
@@ -228,7 +229,7 @@ export default function QuestionnaireResultsDashboard({
     [questionnaire?.questions],
   );
   const selectedQuestionNumberById = useMemo(
-    () => new Map((questionnaire?.questions ?? []).map((question, index) => [question.questionId, index + 1])),
+    () => buildQuestionLabelMap(questionnaire?.questions ?? []),
     [questionnaire?.questions],
   );
   const acceptedQuestionResponseCountById = useMemo(() => {

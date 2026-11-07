@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voting workflow and tutorials</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.6; }
+    body { max-width: 70rem; margin: auto; padding: 1.5rem; }
+    h1, h2, h3 { line-height: 1.25; }
+    section { margin-block: 3rem; }
+    a { text-underline-offset: .2em; }
+    a:focus-visible { outline: 3px solid currentColor; outline-offset: 4px; }
+    .notice, .flow li { border: 1px solid; padding: 1rem; }
+    .flow { display: grid; gap: .75rem; padding-left: 1.5rem; }
+    .flow li::marker { font-weight: bold; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; vertical-align: top; border-bottom: 1px solid; padding: .65rem; }
+    .scroll { overflow-x: auto; }
+    pre { padding: 1rem; border: 1px solid; overflow-x: auto; }
+    li { margin-block: .5rem; }
+    @media print { body { max-width: none; padding: 0; } section { break-inside: auto; } a { color: inherit; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Voting workflow and tutorials</h1>
+  <p>The shipped questionnaire flow: admission, blind credentials, anonymous answers, release and verification.</p>
+  <p class="notice"><a href="./demo.html"><strong>Start demo — isolated offline sandbox</strong></a>. Fictional roles, no live publishing, stored election data or connections. Only the saved light/dark preference is shared with the live app. Reset/reload repeats the same election. Runs offline after assets load; cold offline access needs a locally served build. The tutorials below describe the real app: normal publish/submit controls create real records. Use fictional data for a live rehearsal.</p>
+  <nav aria-label="Guide sections"><a href="#overview">Flowchart</a> · <a href="#milestones">Statuses</a> · <a href="#privacy">Who sees what</a> · <a href="#organiser">Organiser</a> · <a href="#voter">Voter</a> · <a href="#observer">Observer</a> · <a href="#sequences">Sequences</a> · <a href="#planned">Planned work</a></nav>
+</header>
+<main>
+<section id="overview">
+  <h2>1. End-to-end flow</h2>
+  <ol class="flow" aria-label="Voting flowchart with admission and publication branches">
+    <li><strong>Organiser:</strong> prepare questions and eligibility → publish the signed definition.</li>
+    <li><strong>Admission branch:</strong> general/private invitation <em>or</em> paper code + master-list number. Paper inputs derive a combined election/number/code hash locally.</li>
+    <li><strong>Configured issuer:</strong> browser or Linux worker checks election window, eligibility, scope and admission state. Invalid/pending requests need correction or approval; valid requests receive a blind signature.</li>
+    <li><strong>Voter:</strong> unblind credentials locally → answer visible applicable questions → submit.</li>
+    <li><strong>Publication branch:</strong>
+      <ul>
+        <li><strong>Valid signed private-worker route and matching queue/release delegation:</strong> encrypted ballot → worker validates and persists → encrypted <strong>Queued privately</strong> receipt → threshold/deadline → shuffled public batch.</li>
+        <li><strong>No valid private route:</strong> normal public ballot publication. This is the current fallback, not private batching.</li>
+      </ul>
+    </li>
+    <li><strong>Observer:</strong> verify proofs, scopes, answers and uniqueness → check public tally and final results.</li>
+  </ol>
+  <p><strong>Do not assume timing privacy merely because a worker is configured.</strong> Inspect the signed definition and matching private-queue and batch-release capabilities before a real election.</p>
+</section>
+<section id="milestones">
+  <h2>2. Separate milestones</h2>
+  <div class="scroll"><table>
+    <thead><tr><th scope="col">Status</th><th scope="col">Meaning</th><th scope="col">Not a guarantee of</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Admission request sent</th><td>Access requested</td><td>Eligibility accepted</td></tr>
+      <tr><th scope="row">Ballot received</th><td>All required credentials arrived</td><td>Answers submitted</td></tr>
+      <tr><th scope="row">Queued privately</th><td>Pinned worker acknowledged durable intake</td><td>Public inclusion or final tally</td></tr>
+      <tr><th scope="row">Public release</th><td>Response available for verification</td><td>Valid acceptance</td></tr>
+      <tr><th scope="row">Verified acceptance</th><td>Proof, scope, answer and uniqueness checks passed</td><td>Final result published</td></tr>
+      <tr><th scope="row">Final results</th><td>Published result can be checked</td><td>Correctness without independent verification</td></tr>
+    </tbody>
+  </table></div>
+</section>
+<section id="privacy">
+  <h2>3. Who can see what?</h2>
+  <ul>
+    <li><strong>Organiser / issuer:</strong> eligibility, admission hashes and identity-bound issuance/recovery records. Paper code and number are not in the anonymous ballot.</li>
+    <li><strong>Private ballot worker:</strong> arrival metadata and payloads it handles; reports aggregate queue progress rather than voter-linked decisions.</li>
+    <li><strong>Relays:</strong> public records, encrypted envelopes and network/timing metadata.</li>
+    <li><strong>Observer:</strong> released responses, proofs and results. Encrypted answers require the appropriate key.</li>
+    <li><strong>Voter:</strong> their identities, admission inputs, credentials, answers and recovery state.</li>
+  </ul>
+  <p>Blind issuance separates eligibility from the anonymous response. It does not prevent timing correlation, coercion or device compromise. An operator running issuer and ballot worker has both roles' visibility.</p>
+</section>
+<section id="organiser">
+  <h2>4. Organiser tutorial</h2>
+  <ol>
+    <li><a href="./dashboard.html?role=coordinator">Open Organiser</a>. For rehearsals use test identities; for real operation retain encrypted backups.</li>
+    <li>Create questions, opening/closing times, groups, required questions and conditional follow-ups. English is the base; French/Tamil are optional. Paper output is English.</li>
+    <li>Choose browser issuance or the delegated Linux worker. Keep the issuer online and deliver the worker's private configuration before use.</li>
+    <li>Choose general/private invites or paper codes. For private batching, set the signed worker identity, DM relay allowlist, threshold and deadline with queue/release delegation before publishing. Do not add these to an immutable published definition.</li>
+    <li>Publish and open/select the questionnaire in Organiser so its issuer runtime is available. Under <strong>Session → Results &amp; Voters</strong> (Voters), find <strong>Paper ballot access</strong>. Enter master-list numbers and a future expiry; generate and print the Crockford codes. Treat printouts as sensitive bearer material.</li>
+    <li>Only the combined election/number/code hash and lifecycle metadata persist. No separate roster mapping is stored. <strong>Do not regenerate for the same roster after reload:</strong> earlier codes cannot automatically be found/revoked and both may remain usable. Duplicate checks cover only the open print session.</li>
+    <li>Test receipts and batch release in a separate rehearsal election before using the configuration for real voters. Share invites only once the issuer is ready. Separate credential delivery from aggregate queue progress. General requests may need approval; valid paper requests issue without another manual approval.</li>
+    <li>Allow final batch release to finish, then close and publish results through the organiser controls. Paper rounds use organiser-controlled closure, not automatic expected-count completion.</li>
+    <li>Have an independent Observer verify the result.</li>
+  </ol>
+</section>
+<section id="voter">
+  <h2>5. Voter tutorial</h2>
+  <ol>
+    <li>Open your questionnaire invite. For paper access, enter the printed code and master-list number on Vote. They derive the admission hash locally and never enter the anonymous response.</li>
+    <li>Send the request and wait for credentials. Correct a mistyped paper request while pending. An admitted code binds to that voter identity, not another identity. Retain browser state or an encrypted backup.</li>
+    <li>Select a language if needed. Answer applicable questions only; required visible questions must be complete. Follow printed answer/leave-blank instructions.</li>
+    <li>Submit. With private batching, wait for the authenticated <strong>Queued privately</strong> receipt. Read any rejection reason; sending a DM alone does not mean acceptance.</li>
+    <li>Keep submission details. Wait for batch release before expecting a public row. Do not create another identity merely because release is delayed.</li>
+    <li>Check release and final results in Observer. <strong>Ballot details</strong> in Settings helps diagnose requests/receipts.</li>
+  </ol>
+</section>
+<section id="observer">
+  <h2>6. Observer tutorial</h2>
+  <ol>
+    <li><a href="./dashboard.html?role=auditor">Open Observer</a> and find the signed questionnaire by ID/organiser.</li>
+    <li>Check the definition, issuer authority and private-release policy. No public row before batch release need not indicate a failure.</li>
+    <li>Inspect Submitted Votes: proofs, scopes, conditional answers, duplicates/nullifiers and rejection reasons. Paper codes/numbers must not appear in response payloads.</li>
+    <li>Aggregate batch records contain batch ID, reason and count, not a voter mapping. <strong>Observer does not display them yet.</strong> Inspecting them requires an external Nostr relay/event inspection tool and the worker's public records; it is a technical audit task, not an Observer control.</li>
+    <li>Recompute and compare the final tally. Report missing/inconsistent evidence; a private receipt alone is not public proof of inclusion.</li>
+  </ol>
+</section>
+<section id="sequences">
+  <h2>7. Protocol sequences</h2>
+  <h3>Admission and credential issuance</h3>
+  <pre aria-label="Admission message sequence">Organiser → issuer: private configuration with combined admission hashes
+Organiser → voter: paper code + number + expiry + instructions
+Voter → voter: derive admission hash; blind fresh credential request
+Voter → issuer: encrypted request, admission hash and request identity
+Issuer: check election window, scope, expiry and admission state
+  invalid / bound elsewhere → refuse
+  valid → persist redemption binding and recoverable issuance state
+Issuer → voter: encrypted blind signature / credential bundle
+Voter: unblind locally; retain credentials and recovery state</pre>
+  <h3>Private ballot batching</h3>
+  <pre aria-label="Private batch message sequence">Voter → pinned worker: encrypted ballot on signed DM relays
+Worker: validate; persist accepted queue entry
+Worker → voter: encrypted receipt
+Worker → organiser: encrypted aggregate progress
+  No public ballot before threshold or deadline
+Worker: fix batch membership; shuffle; persist exact signed events
+Worker → public relays: fresh ballots with common release time
+Worker → public relays: aggregate batch record
+Worker → organiser: updated aggregate progress
+Observer: independently verify and tally</pre>
+  <h3>Retry and recovery</h3>
+  <pre aria-label="Recovery message sequence">Voter → issuer/worker: retry the same request after lost response
+Issuer/worker → durable state: look up existing request/result
+Issuer/worker → voter: replay result, not another credential
+Restored voter: resume receipt listening with the response key
+Restarted worker: load prepared signed public event
+Worker → relay: retry identical event with the same event ID
+Worker: persist completion; retry failed entries only</pre>
+  <p>Retries may send the same event more than once; stable event IDs support relay deduplication. Lost issuer state, keys or voter recovery secrets require the election's recovery procedure, not an extra vote.</p>
+</section>
+<section id="planned">
+  <h2>8. Planned, not shipped as a complete admission service</h2>
+  <ul>
+    <li>Signed reusable admission grants scoped to group, issuer, voter and expiry are future work. Elections still need fresh credentials.</li>
+    <li>Resident imports and OTP previews are not cross-device authentication. Proposed automated email delivery is not merged; an OTP UI flag is not protocol admission.</li>
+    <li>SMS integration is not implemented. Worker/Nostr connectivity is separate from SMS/email delivery.</li>
+  </ul>
+</section>
+</main>
+<footer><a href="./demo-guide.html">Demo walkthrough</a> · <a href="./project-explainer.html">Project explanation</a></footer>
+</body>
+</html>

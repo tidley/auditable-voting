@@ -48,6 +48,21 @@ function rankQuestion(
 }
 
 describe("deriveHumanReadableResults", () => {
+  it('keeps hierarchical labels when summaries are filtered or arrive in a different order', () => {
+    const questions: QuestionnaireQuestion[] = [
+      yesNoQuestion('q1', 'Parent'),
+      { ...yesNoQuestion('q2', 'Follow-up'), showIf: { dependsOnQuestionId: 'q1', requiredAnswer: { answerType: 'yes_no', value: true } } },
+      yesNoQuestion('q3', 'Next parent'),
+    ];
+    const result = deriveHumanReadableResults({
+      acceptedResponseCount: 1, rejectedResponseCount: 0, questions,
+      questionSummaries: [
+        { questionId: 'q3', answerType: 'yes_no', yesCount: 1, noCount: 0 },
+        { questionId: 'q2', answerType: 'yes_no', yesCount: 1, noCount: 0 },
+      ],
+    });
+    expect(result.breakdowns.map(entry => entry.questionNumber)).toEqual(['2', '1-A']);
+  });
   it("returns plain counts with zero-answer breakdown when there are no questions", () => {
     const result = deriveHumanReadableResults({
       acceptedResponseCount: 7,

@@ -2,6 +2,13 @@
 
 This is the detailed protocol and implementation note for Auditable Voting. For the shorter public-facing explanation, see [`docs/project-explainer.md`](./project-explainer.md).
 
+For the **shipped questionnaire path**, use the canonical [workflow and role
+tutorials](./voting-workflow.md), including paper admission, browser/worker
+issuance, private batching and retry sequences. This note also describes
+multi-organiser and Rust/Wasm round variants; its diagrams must not be read as
+one mandatory sequence for every questionnaire. Reusable signed admission
+grants and automated OTP admission are not a completed shipped service.
+
 This document is written as a technical explainer for readers who want to understand:
 
 - what the system is trying to achieve

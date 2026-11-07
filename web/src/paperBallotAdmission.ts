@@ -112,7 +112,12 @@ export function loadPaperBallotAdmission(input: { registryKey: string }) {
 }
 
 export function normalisePaperBallotCode(code: string | null | undefined) {
-  return (code ?? "").trim().toUpperCase().replace(/[IL]/g, "1").replace(/O/g, "0");
+  return (code ?? "").replace(/[\s-]/g, "").toUpperCase().replace(/[IL]/g, "1").replace(/O/g, "0");
+}
+
+export function formatPaperBallotCode(code: string) {
+  const normalised = normalisePaperBallotCode(code);
+  return PAPER_BALLOT_CODE_PATTERN.test(normalised) ? `${normalised.slice(0, 5)}-${normalised.slice(5)}` : normalised;
 }
 
 export function normalisePaperBallotMasterlistNumber(masterlistNumber: string | null | undefined) {

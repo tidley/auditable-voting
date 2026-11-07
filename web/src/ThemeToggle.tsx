@@ -43,7 +43,7 @@ function applyTheme(theme: Theme) {
 }
 
 /**
- * Corner sun/moon control that flips the app between the default light
+ * In-flow sun/moon control beside How it works that flips the default light
  * theme and the dark theme. The choice is remembered in localStorage
  * ("av-theme"); first visits start light and do NOT follow the system
  * colour-scheme preference.

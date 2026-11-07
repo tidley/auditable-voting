@@ -180,7 +180,6 @@ import {
 } from "./questionnaireProtocolConstants";
 import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
-import OrganiserDemoTour from "./OrganiserDemoTour";
 import ResidentImportPreview from "./ResidentImportPreview";
 import PaperBallotCoordinatorPanel from "./PaperBallotCoordinatorPanel";
 import type { PaperBallotAdmissionEntry } from "./paperBallotAdmission";
@@ -433,7 +432,7 @@ const DEFAULT_QUESTIONNAIRE_READINESS_ITEMS: QuestionnaireReadinessItem[] = [
   { id: "basics", label: "Title & Description", shortLabel: "Info", complete: false, stageLabel: "1", group: "questionnaire", action: "setup_basics" },
   { id: "answers", label: "Add a Question", shortLabel: "Questions", complete: false, stageLabel: "2", group: "questionnaire", action: "setup_questions" },
   { id: "publish", label: "Published", shortLabel: "Pub", complete: false, stageLabel: "3", group: "session" },
-  { id: "proxy", label: "Proxy Setup", shortLabel: "Proxy", complete: false, optional: true, stageLabel: "3a", group: "session", action: "setup_proxy" },
+  { id: "proxy", label: "Guardian setup", shortLabel: "Guardian", complete: false, optional: true, stageLabel: "3a", group: "session", action: "setup_proxy" },
   { id: "invite", label: "Results & Voters", shortLabel: "Voters", complete: false, stageLabel: "4", group: "session", action: "invite_voters" },
 ];
 
@@ -1686,9 +1685,6 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
   const [questionnaireReadinessItems, setQuestionnaireReadinessItems] = useState<QuestionnaireReadinessItem[]>(DEFAULT_QUESTIONNAIRE_READINESS_ITEMS);
   const [questionnairePrimaryPublishAction, setQuestionnairePrimaryPublishAction] = useState<QuestionnairePrimaryPublishAction>(null);
   const [primaryPublishActionSignal, setPrimaryPublishActionSignal] = useState(0);
-  const [demoSetupSignal, setDemoSetupSignal] = useState(0);
-  const [demoPublishedSignal, setDemoPublishedSignal] = useState(0);
-  const [demoActive, setDemoActive] = useState(false);
   const [proxySetupSignal, setProxySetupSignal] = useState(0);
   const [editPublished, setEditPublished] = useState(false);
   const [proxySeenActive, setProxySeenActive] = useState(false);
@@ -7593,6 +7589,14 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
     }
   }
 
+  useEffect(() => {
+    const panel = document.querySelector<HTMLElement>('.simple-coordinator-page > .simple-voter-tab-panel');
+    if (!panel) return;
+    panel.tabIndex = -1;
+    panel.focus({ preventScroll: true });
+    document.documentElement.scrollTop = 0;
+  }, [activeTab, participantNavSection]);
+
   function openQuestionnaireProxy(questionnaireId: string) {
     updateQuestionnaireRosterAnnouncement({ questionnaireId, state: null });
     selectTab("proxy");
@@ -7637,6 +7641,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
   }
 
   function openInviteVotersSection() {
+    setParticipantNavSection('voters');
     selectTab("participants");
     if (typeof window === "undefined") {
       return;
@@ -8979,20 +8984,20 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
           </div>
         </div>
         <nav className='simple-coordinator-sidebar-readiness simple-coordinator-sidebar-tabs' aria-label='Questionnaire navigation'>
-          <UiButton icon='edit' className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}${editPublished ? ' is-confirmed' : ''}`} onPress={() => selectTab('configure')}>Edit</UiButton>
-          <UiButton icon='shield' className={`simple-coordinator-nav-button${activeTab === 'proxy' ? ' is-active' : ''}${proxySeenActive ? ' is-confirmed' : ''}`} onPress={() => {
+          <UiButton icon={false} aria-current={activeTab === 'configure' ? 'step' : undefined} className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}${editPublished ? ' is-confirmed' : ''}`} onPress={() => selectTab('configure')}><span className='simple-organiser-step-number' aria-hidden='true'>1</span>Prepare</UiButton>
+          <UiButton icon={false} aria-current={activeTab === 'proxy' ? 'step' : undefined} className={`simple-coordinator-nav-button${activeTab === 'proxy' ? ' is-active' : ''}${proxySeenActive ? ' is-confirmed' : ''}`} onPress={() => {
             selectTab('proxy');
             setProxySetupSignal((current) => current + 1);
-          }}>Proxy</UiButton>
-          <UiButton icon='users' className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'voters' ? ' is-active' : ''}`} onPress={() => {
+          }}><span className='simple-organiser-step-number' aria-hidden='true'>2</span>Guardian</UiButton>
+          <UiButton icon={false} aria-current={activeTab === 'participants' && participantNavSection === 'voters' ? 'step' : undefined} className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'voters' ? ' is-active' : ''}`} onPress={() => {
             setParticipantNavSection('voters');
             selectTab('participants');
             scheduleAfterNextPaint(() => document.getElementById('coordinator-invite-voters-section')?.scrollIntoView({ block: 'start' }));
-          }}>Voters</UiButton>
-          <UiButton id='coordinator-results-nav' icon='view' className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'results' ? ' is-active' : ''}`} onPress={() => {
+          }}><span className='simple-organiser-step-number' aria-hidden='true'>3</span>Voters</UiButton>
+          <UiButton id='coordinator-results-nav' icon={false} aria-current={activeTab === 'participants' && participantNavSection === 'results' ? 'step' : undefined} className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'results' ? ' is-active' : ''}`} onPress={() => {
             setParticipantNavSection('results');
             selectTab('participants');
-          }}>Results</UiButton>
+          }}><span className='simple-organiser-step-number' aria-hidden='true'>4</span>Results</UiButton>
           <UiButton icon='message' aria-label={hasUnreadMessages ? "Messages, new message" : "Messages"} className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}${hasUnreadMessages ? ' has-unread-message' : ''}`} onPress={() => selectTab('messages')}>Messages</UiButton>
           <UiButton icon='settings' className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`} onPress={() => selectTab('settings')}>Settings</UiButton>
         </nav>
@@ -9008,25 +9013,6 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
       <section className='simple-voter-page simple-coordinator-page'>
         {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
-        <OrganiserDemoTour
-          showLauncher={activeTab === 'configure'}
-          onPrepareDemo={() => {
-            setDemoActive(true);
-            setNewRoundMode(false);
-            setActiveTab('configure');
-            setDemoSetupSignal((current) => current + 1);
-          }}
-          onShowVoters={() => {
-            setParticipantNavSection('voters');
-            setActiveTab('participants');
-          }}
-          onShowResults={() => {
-            setParticipantNavSection('results');
-            setActiveTab('participants');
-          }}
-          publishedSignal={demoPublishedSignal}
-          onExit={() => setDemoActive(false)}
-        />
 
         {activeTab === 'configure' ? (
           <section
@@ -9062,11 +9048,9 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
               draftQuestionnaireId={draftQuestionnaireId}
               canApplyAdmissionsOnPublish={canApplyAdmissionsOnPublish}
               onAfterPublishQuestionnaire={handlePublishedQuestionnaire}
-              onDemoPublished={demoActive ? () => setDemoPublishedSignal((current) => current + 1) : undefined}
               onReadinessChange={handleQuestionnaireReadinessChange}
               onPrimaryPublishActionChange={handleQuestionnairePrimaryPublishActionChange}
               primaryPublishActionSignal={primaryPublishActionSignal}
-              demoSetupSignal={demoSetupSignal}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>
@@ -9076,7 +9060,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Audit proxy'
+            aria-label='Guardian'
           >
             <QuestionnaireCoordinatorPanel
               key={`${activeCoordinatorNpub}:proxy`}
@@ -9119,10 +9103,11 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Voting'
+            aria-label={participantNavSection === 'voters' ? 'Voters' : 'Results'}
           >
             <QuestionnaireCoordinatorPanel
               key={`${activeCoordinatorNpub}:participants`}
+              hideResults={participantNavSection !== 'results'}
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={optionAKnownVoterCount}
@@ -9146,6 +9131,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
               primaryPublishActionSignal={primaryPublishActionSignal}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
+            <div hidden={participantNavSection !== 'voters'}>
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
               <SimpleCollapsibleSection
                 title='Voters'
@@ -9170,7 +9156,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
                       value: participantSearchQuery,
                       onChange: (event) => setParticipantSearchQuery(event.target.value),
                       'aria-label': 'Search participants',
-                      placeholder: 'Search by voter, private invite, request, response ID, or token...',
+                              placeholder: 'Search participants',
                     }}
                   />
                   {participantRosterTotalCount === 0 ? (
@@ -9297,8 +9283,10 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	                    ) : null}
 	                    {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
 	                    {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
-	                    <ResidentImportPreview />
-	                    <PaperBallotCoordinatorPanel key={optionAElectionId} electionId={optionAElectionId} definition={readCachedQuestionnaireDefinition(optionAElectionId)} runtime={optionACoordinatorRuntime} onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)} />
+                      <details className='simple-organiser-disclosure'>
+                        <summary>Paper ballots</summary>
+                        <PaperBallotCoordinatorPanel key={optionAElectionId} electionId={optionAElectionId} definition={readCachedQuestionnaireDefinition(optionAElectionId)} runtime={optionACoordinatorRuntime} onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)} />
+                      </details>
 	                    {optionAElectionId ? (
 	                      <>
                       <div id='demo-general-invite' className='simple-general-invite-block' aria-label='Share questionnaire link'>
@@ -9329,6 +9317,8 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	                          </div>
 	                        </div>
 	                      </div>
+                      <details className='simple-organiser-disclosure'>
+                        <summary>Private invites</summary>
                       <section id='demo-private-invite' className='simple-private-invite-section' aria-label='Private invites'>
 	                        <div className='simple-private-invite-section-heading'>
 	                          <h3 className='simple-voter-question simple-invite-section-title'>
@@ -9376,18 +9366,24 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	                            <span>{privateInviteCreateInFlight ? "Creating private link..." : privateInviteCreateCopied ? "Copied" : "Create proxy invite link"}</span>
 	                          </UiButton>
 	                        </div>
-	                      </section>
+                      </section>
+                      </details>
 	                      </>
 	                    ) : null}
 	                  </div>
 	                </div>
 	              </SimpleCollapsibleSection>
             </div>
+            <details className='simple-organiser-disclosure simple-organiser-preview-tools'>
+              <summary>Resident tools (preview)</summary>
+              <ResidentImportPreview />
             <div id='coordinator-resident-admission-section'>
               <ResidentOtpAdmission />
             </div>
             <div id='coordinator-delivery-section'>
               <DeliveryPanel electionId={optionAElectionId} />
+            </div>
+            </details>
             </div>
           </section>
         ) : null}
@@ -9445,9 +9441,6 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
                 />
                 <span>Use relay hints</span>
               </label>
-              <p className='simple-voter-note'>
-                Advanced. Helps clients find your relays.
-              </p>
             </section>
             <div id='coordinator-relays-settings'>
               <SimpleRelayPanel
@@ -9457,6 +9450,20 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
               />
             </div>
           </section>
+        ) : null}
+        {activeTab === 'configure' || activeTab === 'proxy' || activeTab === 'participants' ? (
+          <nav className='simple-organiser-next' aria-label='Next organiser step'>
+            {activeTab !== 'configure' ? <UiButton icon='chevronLeft' className='simple-voter-secondary' onPress={() => {
+              if (activeTab === 'proxy') selectTab('configure');
+              else if (participantNavSection === 'voters') selectTab('proxy');
+              else setParticipantNavSection('voters');
+            }}>Back: {activeTab === 'proxy' ? 'Prepare' : participantNavSection === 'voters' ? 'Guardian' : 'Voters'}</UiButton> : null}
+            {activeTab !== 'participants' || participantNavSection === 'voters' ? <UiButton icon='chevronRight' className='simple-voter-secondary' onPress={() => {
+              if (activeTab === 'configure') { selectTab('proxy'); setProxySetupSignal(value => value + 1); }
+              else if (activeTab === 'proxy') { setParticipantNavSection('voters'); selectTab('participants'); }
+              else setParticipantNavSection('results');
+            }}>Next: {activeTab === 'configure' ? 'Guardian' : activeTab === 'proxy' ? 'Voters' : 'Results'}</UiButton> : null}
+          </nav>
         ) : null}
         <InviteQrOverlay preview={expandedInviteQr} onClose={closeExpandedInviteQr} />
       </section>

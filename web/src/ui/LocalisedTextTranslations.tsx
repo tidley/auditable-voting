@@ -22,6 +22,7 @@ export function LocalisedTextTranslations({
   rows = 3,
   disabled = false,
   invalid = false,
+  required = false,
   idPrefix,
 }: {
   value: LocalisedText | string;
@@ -34,6 +35,7 @@ export function LocalisedTextTranslations({
   rows?: number;
   disabled?: boolean;
   invalid?: boolean;
+  required?: boolean;
   idPrefix?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -55,6 +57,7 @@ export function LocalisedTextTranslations({
         id: idPrefix ? `${idPrefix}-en` : undefined,
         "aria-label": ariaLabel,
         "aria-invalid": invalid || undefined,
+        required,
         rows,
         value: enValue,
         placeholder,
@@ -70,6 +73,7 @@ export function LocalisedTextTranslations({
         id: idPrefix ? `${idPrefix}-en` : undefined,
         "aria-label": ariaLabel,
         "aria-invalid": invalid || undefined,
+        required,
         value: enValue,
         placeholder,
         onChange: (event) => setLocaleValue("en", event.target.value),

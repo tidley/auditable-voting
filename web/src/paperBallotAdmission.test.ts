@@ -36,6 +36,12 @@ describe("paper ballot admission", () => {
     }));
   });
 
+  it('accepts the printed 5–5 grouping without changing admission keys', async () => {
+    expect(normalisePaperBallotCode(' 7k3m9-t2x4r ')).toBe('7K3M9T2X4R');
+    const input = { electionId: 'election-a', masterlistNumber: '1234', code: '7K3M9T2X4R' };
+    expect(await hashPaperBallotAdmissionKey({ ...input, code: '7K3M9-T2X4R' })).toBe(await hashPaperBallotAdmissionKey(input));
+  });
+
   it("creates one printable code and opaque registry entry for each master-list record", async () => {
     const sheet = await createPaperBallotAdmissionSheet({
       electionId: "election-a",
