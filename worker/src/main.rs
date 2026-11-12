@@ -30,23 +30,19 @@ use ::rand::seq::SliceRandom;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use blind_rsa_signatures::{DefaultRng, PublicKeySha384PSSDeterministic, Signature};
+use auditable_voting_blind_credentials::PublicKey as BlindCredentialPublicKey;
 use chrono::Utc;
-use crypto_bigint::BoxedUint;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use nostr_sdk::prelude::*;
 use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
-use rsa::hazmat::rsa_decrypt;
-use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
@@ -124,17 +120,6 @@ const CONTROL_BLIND_REQUEST_QUEUE_SIZE: usize = 1024;
 const CONTROL_BLIND_REQUEST_BATCH_MAX_REQUESTS: usize = 128;
 const CONTROL_BLIND_REQUEST_BATCH_INTERVAL_MS: u64 = 75;
 
-fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
-    let value = jwk
-        .get(key)
-        .and_then(|entry| entry.as_str())
-        .with_context(|| format!("missing JWK component '{key}'"))?;
-    let decoded = URL_SAFE_NO_PAD
-        .decode(value.as_bytes())
-        .with_context(|| format!("invalid base64url for JWK component '{key}'"))?;
-    Ok(BoxedUint::from_be_slice_vartime(&decoded))
-}
-
 fn decode_hex_bytes(input: &str, label: &str) -> Result<Vec<u8>> {
     let clean = input.trim();
     if clean.is_empty() || clean.len() % 2 != 0 {
@@ -150,26 +135,9 @@ fn decode_hex_bytes(input: &str, label: &str) -> Result<Vec<u8>> {
 }
 
 fn sign_blinded_message(blinded_hex: &str, private_jwk: &serde_json::Value) -> Result<String> {
-    let blinded_bytes = decode_hex_bytes(blinded_hex, "blinded message")?;
-    let n = parse_jwk_component(private_jwk, "n")?;
-    let e = parse_jwk_component(private_jwk, "e")?;
-    let d = parse_jwk_component(private_jwk, "d")?;
-    let p = parse_jwk_component(private_jwk, "p")?;
-    let q = parse_jwk_component(private_jwk, "q")?;
-    let mut key = RsaPrivateKey::from_components(n, e, d, vec![p, q])
-        .context("unable to construct RSA private key from JWK")?;
-    key.validate().context("invalid RSA private key")?;
-    key.precompute().context("unable to precompute RSA key")?;
-    let blinded = BoxedUint::from_be_slice_vartime(&blinded_bytes);
-    let signature =
-        rsa_decrypt::<DefaultRng>(None, &key, &blinded).context("raw blind signing failed")?;
-    let mut bytes = signature.to_be_bytes().into_vec();
-    if bytes.len() < blinded_bytes.len() {
-        let mut padded = vec![0; blinded_bytes.len() - bytes.len()];
-        padded.append(&mut bytes);
-        bytes = padded;
-    }
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    let blinded_bytes = auditable_voting_blind_credentials::decode_hex(blinded_hex)?;
+    let signature = auditable_voting_blind_credentials::sign(private_jwk, &blinded_bytes)?;
+    Ok(auditable_voting_blind_credentials::encode_hex(&signature))
 }
 
 fn canonical_json(value: &serde_json::Value) -> String {
@@ -1200,11 +1168,8 @@ fn blind_signing_key_material_changed(
     }
 }
 
-fn public_key_from_jwk(jwk: &serde_json::Value) -> Result<PublicKeySha384PSSDeterministic> {
-    let n = parse_jwk_component(jwk, "n")?;
-    let e = parse_jwk_component(jwk, "e")?;
-    let key = RsaPublicKey::new(n, e).context("unable to construct RSA public key from JWK")?;
-    Ok(PublicKeySha384PSSDeterministic::new(key))
+fn public_key_from_jwk(jwk: &serde_json::Value) -> Result<BlindCredentialPublicKey> {
+    Ok(BlindCredentialPublicKey::from_jwk(jwk)?)
 }
 
 fn blind_response_proofs(submission: &QuestionnaireBlindResponseEvent) -> Vec<&BlindTokenProof> {
@@ -1230,7 +1195,7 @@ fn blind_response_nullifiers(submission: &QuestionnaireBlindResponseEvent) -> Ve
 }
 
 fn verify_blind_response_proof(
-    public_key: &PublicKeySha384PSSDeterministic,
+    public_key: &BlindCredentialPublicKey,
     submission: &QuestionnaireBlindResponseEvent,
     proof: &BlindTokenProof,
 ) -> bool {
@@ -1241,7 +1206,7 @@ fn verify_blind_response_proof(
         return false;
     }
     let signature = match decode_hex_bytes(&proof.signature, "blind token signature") {
-        Ok(bytes) => Signature(bytes),
+        Ok(bytes) => bytes,
         Err(_) => return false,
     };
     let message = build_blind_token_signed_message(
@@ -1249,9 +1214,7 @@ fn verify_blind_response_proof(
         proof.token_commitment.trim(),
         proof.ballot_scope.as_ref(),
     );
-    public_key
-        .verify(&signature, None, message.as_bytes())
-        .is_ok()
+    public_key.verify(message.as_bytes(), &signature)
 }
 
 fn verify_blind_response_proofs(
@@ -2595,10 +2558,17 @@ fn forget_deferred_blind_request(election: &mut ElectionRuntimeState, request_id
     election.deferred_blind_requests.remove(request_id);
 }
 
+fn worker_client(keys: &Keys) -> Client {
+    Client::builder()
+        .authenticator(SignerAuthenticator::new(keys.clone()))
+        .build()
+}
+
 #[derive(Clone)]
 struct WorkerRuntime {
     config: WorkerConfig,
     client: Client,
+    keys: Keys,
     worker_pubkey: PublicKey,
     worker_npub: String,
     coordinator_pubkey: PublicKey,
@@ -2758,7 +2728,7 @@ async fn main() -> Result<()> {
     } else {
         let (sender, receiver) = mpsc::channel(config.public_archive_queue_size);
         spawn_public_archive_task(
-            Client::new(keys.clone()),
+            worker_client(&keys),
             config.public_archive_relays.clone(),
             receiver,
             Duration::from_millis(config.public_archive_interval_ms),
@@ -2768,7 +2738,7 @@ async fn main() -> Result<()> {
     let (control_blind_request_sender, control_blind_request_receiver) =
         mpsc::channel(CONTROL_BLIND_REQUEST_QUEUE_SIZE);
 
-    let client = Client::new(keys);
+    let client = worker_client(&keys);
     for relay in &config.worker_relays {
         client
             .add_relay(relay.clone())
@@ -2801,6 +2771,7 @@ async fn main() -> Result<()> {
     let runtime = WorkerRuntime {
         config,
         client,
+        keys,
         worker_pubkey,
         worker_npub: worker_npub.clone(),
         coordinator_pubkey,
@@ -3001,7 +2972,7 @@ fn spawn_public_archive_task(
             }
             let result = timeout(
                 Duration::from_secs(PUBLIC_ARCHIVE_SEND_TIMEOUT_SECS),
-                client.send_event_to([job.relay.clone()], &job.event),
+                client.send_event(&job.event).to([job.relay.clone()]),
             )
             .await;
             match result {
@@ -3167,6 +3138,12 @@ impl WorkerRuntime {
             .await
     }
 
+    fn private_message_event(&self, recipient: PublicKey, content: String) -> Result<Event> {
+        PrivateDirectMessageBuilder::new(recipient, content)
+            .finalize(&self.keys)
+            .context("gift-wrap construction failed")
+    }
+
     async fn send_private_msg_to_relays_best_effort(
         &self,
         recipient: PublicKey,
@@ -3174,11 +3151,9 @@ impl WorkerRuntime {
         label: &str,
         relays: Vec<RelayUrl>,
     ) -> Result<usize> {
-        let signer = self.client.signer().await?;
-        let event =
-            EventBuilder::private_msg(&signer, recipient, content, std::iter::empty::<Tag>())
-                .await
-                .with_context(|| format!("{label} gift-wrap construction failed"))?;
+        let event = self
+            .private_message_event(recipient, content)
+            .with_context(|| format!("{label} gift-wrap construction failed"))?;
         let mut tasks = tokio::task::JoinSet::new();
         self.ensure_relays_connected(&relays).await;
         for relay in relays {
@@ -3187,7 +3162,7 @@ impl WorkerRuntime {
             tasks.spawn(async move {
                 let result = timeout(
                     Duration::from_secs(PRIVATE_DM_SEND_TIMEOUT_SECS),
-                    client.send_event_to([relay.clone()], &event_for_task),
+                    client.send_event(&event_for_task).to([relay.clone()]),
                 )
                 .await;
                 (relay, result)
@@ -3650,15 +3625,15 @@ impl WorkerRuntime {
         builder: EventBuilder,
         label: &str,
     ) -> Result<String> {
-        let event = self.client.sign_event_builder(builder).await?;
+        let event = builder.finalize(&self.keys)?;
         self.publish_public_event(&event, label).await
     }
 
     async fn publish_public_event(&self, event: &Event, label: &str) -> Result<String> {
         let relays = self.effective_worker_relays().await;
         self.ensure_relays_connected(&relays).await;
-        let output = self.client.send_event_to(relays.clone(), event).await?;
-        for relay in output.success.iter() {
+        let output = self.client.send_event(event).to(relays.clone()).await?;
+        for relay in output.success.keys() {
             self.record_relay_attempt_result(relay, true, label, None)
                 .await;
         }
@@ -3687,21 +3662,23 @@ impl WorkerRuntime {
         let since_ts = fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS);
         let filter = Filter::new()
             .kind(Kind::GiftWrap)
-            .custom_tag(
-                SingleLetterTag::lowercase(Alphabet::P),
-                self.worker_pubkey.to_hex(),
-            )
+            .custom_tag(SingleLetterTag::LOWERCASE_P, self.worker_pubkey.to_hex())
             .since(since_ts)
             .limit(500);
         let relays = self.effective_worker_private_relays().await;
         self.ensure_relays_connected(&relays).await;
 
+        let mut notification_receiver = self.client.notifications();
         let output = self
             .client
-            .subscribe_to(relays.clone(), filter, None)
+            .subscribe(ReqTarget::manual(
+                relays
+                    .iter()
+                    .map(|relay| (relay.clone(), vec![filter.clone()])),
+            ))
             .await
             .context("failed to subscribe to control plane")?;
-        for relay in output.success.iter() {
+        for relay in output.success.keys() {
             self.record_relay_attempt_result(relay, true, "control subscription", None)
                 .await;
         }
@@ -3728,15 +3705,14 @@ impl WorkerRuntime {
         }
         info!(
             "control plane subscription active: id={}, relays={}",
-            output.val,
+            output.value,
             relays.len()
         );
-        let control_subscription_id = output.val;
+        let control_subscription_id = output.value;
 
-        let mut notification_receiver = self.client.notifications();
         loop {
-            match notification_receiver.recv().await {
-                Ok(RelayPoolNotification::Event {
+            match notification_receiver.next().await {
+                Some(ClientNotification::Event {
                     subscription_id: event_subscription_id,
                     event,
                     ..
@@ -3745,21 +3721,12 @@ impl WorkerRuntime {
                         warn!("control plane event {} failed: {error}", event.id);
                     }
                 }
-                Ok(RelayPoolNotification::Event { .. }) => {}
-                Ok(RelayPoolNotification::Shutdown) => {
+                Some(ClientNotification::Event { .. }) => {}
+                Some(ClientNotification::Shutdown) | None => {
                     info!(
                         "control plane notification channel closed; stopping control worker loop"
                     );
                     return Ok(false);
-                }
-                Err(RecvError::Closed) => {
-                    info!(
-                        "control plane notification receiver closed; stopping control worker loop"
-                    );
-                    return Ok(false);
-                }
-                Err(RecvError::Lagged(skipped)) => {
-                    warn!("control plane subscription lagged by {skipped} events");
                 }
                 _ => {}
             }
@@ -3769,21 +3736,19 @@ impl WorkerRuntime {
     async fn poll_control_plane_events(&self) -> Result<()> {
         let filter = Filter::new()
             .kind(Kind::GiftWrap)
-            .custom_tag(
-                SingleLetterTag::lowercase(Alphabet::P),
-                self.worker_pubkey.to_hex(),
-            )
+            .custom_tag(SingleLetterTag::LOWERCASE_P, self.worker_pubkey.to_hex())
             .since(fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS))
             .limit(500);
         let relays = self.effective_worker_private_relays().await;
         self.ensure_relays_connected(&relays).await;
         let events = self
             .client
-            .fetch_events_from(
-                relays,
-                filter,
-                Duration::from_secs(WORKER_RELAY_CONNECT_TIMEOUT_SECS),
-            )
+            .fetch_events(ReqTarget::manual(
+                relays
+                    .into_iter()
+                    .map(|relay| (relay, vec![filter.clone()])),
+            ))
+            .timeout(Duration::from_secs(WORKER_RELAY_CONNECT_TIMEOUT_SECS))
             .await
             .context("failed to backfill control DMs")?;
         for event in events.iter() {
@@ -3830,7 +3795,7 @@ impl WorkerRuntime {
             return Ok(());
         }
 
-        let unwrapped = self.client.unwrap_gift_wrap(event).await?;
+        let unwrapped = UnwrappedGift::from_gift_wrap(&self.keys, event)?;
         log_decrypted_worker_dm(event, &unwrapped.rumor);
         let authenticated_sender = unwrapped
             .rumor
@@ -4218,13 +4183,18 @@ impl WorkerRuntime {
         let relays = self.effective_worker_relays().await;
         self.ensure_relays_connected(&relays).await;
 
+        let mut notification_receiver = self.client.notifications();
         let response_output = self
             .client
-            .subscribe_to(relays.clone(), response_filter, None)
+            .subscribe(ReqTarget::manual(
+                relays
+                    .iter()
+                    .map(|relay| (relay.clone(), vec![response_filter.clone()])),
+            ))
             .await
             .context("failed to subscribe to public response plane")?;
-        let public_response_subscription_id = response_output.val.clone();
-        for relay in response_output.success.iter() {
+        let public_response_subscription_id = response_output.value.clone();
+        for relay in response_output.success.keys() {
             self.record_relay_attempt_result(relay, true, "public response subscription", None)
                 .await;
         }
@@ -4251,13 +4221,12 @@ impl WorkerRuntime {
         }
         info!(
             "public response subscription active: id={}, relays={}",
-            response_output.val,
+            response_output.value,
             response_output.success.len()
         );
-        let mut notification_receiver = self.client.notifications();
         loop {
-            match notification_receiver.recv().await {
-                Ok(RelayPoolNotification::Event {
+            match notification_receiver.next().await {
+                Some(ClientNotification::Event {
                     subscription_id: event_subscription_id,
                     event,
                     ..
@@ -4280,17 +4249,10 @@ impl WorkerRuntime {
                         }
                     });
                 }
-                Ok(RelayPoolNotification::Event { .. }) => {}
-                Ok(RelayPoolNotification::Shutdown) => {
+                Some(ClientNotification::Event { .. }) => {}
+                Some(ClientNotification::Shutdown) | None => {
                     info!("public plane notification channel closed; stopping public worker loop");
                     return Ok(false);
-                }
-                Err(RecvError::Closed) => {
-                    info!("public plane notification receiver closed; stopping public worker loop");
-                    return Ok(false);
-                }
-                Err(RecvError::Lagged(skipped)) => {
-                    warn!("public plane subscription lagged by {skipped} events");
                 }
                 _ => {}
             }
@@ -4815,7 +4777,7 @@ impl WorkerRuntime {
         if let Some(definition_event_id) = definition_event_id {
             builder = builder.tag(Tag::parse(["e", definition_event_id])?);
         }
-        let event = self.client.sign_event_builder(builder).await?;
+        let event = builder.finalize(&self.keys)?;
         let mut state = self.state.lock().await;
         let publication = state.elections.get_mut(election_id)
             .and_then(|election| election.private_submission_publications.get_mut(submission_id))
@@ -4875,7 +4837,7 @@ impl WorkerRuntime {
             ] {
                 builder = builder.tag(Tag::parse(tag)?);
             }
-            let event = self.client.sign_event_builder(builder).await?;
+            let event = builder.finalize(&self.keys)?;
             let mut state = self.state.lock().await;
             let batch = state.elections.get_mut(election_id)
                 .and_then(|election| election.private_batch_publications.get_mut(batch_id))
@@ -5430,7 +5392,7 @@ impl WorkerRuntime {
             "Upload questionnaire result pack",
         )
         .tags(tags)
-        .sign_with_keys(keys)
+        .finalize(keys)
         .context("failed to sign Blossom upload auth")?;
         Ok(format!("Nostr {}", URL_SAFE_NO_PAD.encode(event.as_json())))
     }
@@ -6710,7 +6672,8 @@ mod tests {
                 public_archive_queue_size: 10_000,
                 blossom_result_pack_servers: Vec::new(),
             },
-            client: Client::new(worker_keys.clone()),
+            client: worker_client(&worker_keys),
+            keys: worker_keys.clone(),
             worker_pubkey: worker_keys.public_key(),
             worker_npub,
             coordinator_pubkey: coordinator_keys.public_key(),
@@ -6724,6 +6687,152 @@ mod tests {
             control_blind_request_sender,
         };
         (runtime, state_dir)
+    }
+
+    #[tokio::test]
+    async fn guardian_private_message_preserves_nip17_sender_recipient_and_content() {
+        let coordinator = Keys::generate();
+        let (runtime, state_dir) =
+            test_runtime_with_state(&coordinator, WorkerPersistentState::default());
+        let content = r#"{"type":"worker_status","version":1}"#;
+        let event = runtime
+            .private_message_event(coordinator.public_key(), content.to_string())
+            .expect("build gift wrap");
+        event.verify().expect("valid outer signature");
+        let unwrapped = UnwrappedGift::from_gift_wrap(&coordinator, &event).expect("unwrap");
+        assert_eq!(unwrapped.sender, runtime.worker_pubkey);
+        assert_eq!(unwrapped.rumor.pubkey, runtime.worker_pubkey);
+        assert_eq!(unwrapped.rumor.kind, Kind::PrivateDirectMessage);
+        assert_eq!(unwrapped.rumor.content, content);
+        assert!(UnwrappedGift::from_gift_wrap(&Keys::generate(), &event).is_err());
+        let mut forged = event;
+        forged.content.push('x');
+        assert!(UnwrappedGift::from_gift_wrap(&coordinator, &forged).is_err());
+        fs::remove_dir_all(state_dir).expect("cleanup test state");
+    }
+
+    #[tokio::test]
+    async fn guardian_sdk_keeps_explicit_relay_targets_and_acknowledgements() {
+        let target = LocalRelay::builder()
+            .addr(std::net::Ipv4Addr::LOCALHOST.into())
+            .nip42(LocalRelayBuilderNip42::write())
+            .build();
+        let excluded = LocalRelay::builder()
+            .addr(std::net::Ipv4Addr::LOCALHOST.into())
+            .build();
+        target.run().await.expect("target relay");
+        excluded.run().await.expect("excluded relay");
+        let target_url = target.url().await;
+        let excluded_url = excluded.url().await;
+        let keys = Keys::generate();
+        let client = worker_client(&keys);
+        client
+            .add_relay(target_url.clone())
+            .await
+            .expect("add target");
+        client
+            .add_relay(excluded_url.clone())
+            .await
+            .expect("add excluded");
+        client.try_connect().timeout(Duration::from_secs(5)).await;
+        let event = EventBuilder::new(Kind::TextNote, "fictional offline test")
+            .finalize(&keys)
+            .expect("sign event");
+        let reader = worker_client(&Keys::generate());
+        reader
+            .add_relay(target_url.clone())
+            .await
+            .expect("add read target");
+        reader
+            .add_relay(excluded_url.clone())
+            .await
+            .expect("add read excluded");
+        reader.try_connect().timeout(Duration::from_secs(5)).await;
+        let mut notifications = reader.notifications();
+        let subscribed = reader
+            .subscribe(ReqTarget::single(
+                target_url.clone(),
+                [Filter::new().id(event.id)],
+            ))
+            .await
+            .expect("subscribe");
+        let sent = client
+            .send_event(&event)
+            .to([target_url.clone()])
+            .await
+            .expect("send with NIP-42 authentication");
+        assert_eq!(sent.success.len(), 1);
+        assert!(sent.success.contains_key(&target_url));
+        assert!(sent.failed.is_empty());
+        let live = timeout(Duration::from_secs(5), async {
+            while let Some(notification) = notifications.next().await {
+                if let ClientNotification::Event {
+                    subscription_id,
+                    event,
+                    ..
+                } = notification
+                {
+                    if subscription_id == subscribed.value {
+                        return event;
+                    }
+                }
+            }
+            panic!("notification stream ended before the event");
+        })
+        .await
+        .expect("receive live event");
+        assert_eq!(*live, event);
+        // Cached IDs must not permit modified event content to be sent.
+        let mut forged = event.clone();
+        forged.content.push('x');
+        assert!(client
+            .send_event(&forged)
+            .to([target_url.clone()])
+            .await
+            .is_err());
+        // Backfill still returns an already-known, authentic event.
+        let received = reader
+            .fetch_events(ReqTarget::single(target_url, [Filter::new().id(event.id)]))
+            .timeout(Duration::from_secs(5))
+            .await
+            .expect("read target");
+        assert!(received.iter().any(|received| received == &event));
+        let absent = reader
+            .fetch_events(ReqTarget::single(
+                excluded_url,
+                [Filter::new().id(event.id)],
+            ))
+            .timeout(Duration::from_secs(5))
+            .await
+            .expect("read excluded");
+        assert!(absent.is_empty());
+        // An already-known event is still returned for a newly created fetch subscription.
+        let replayed = reader
+            .fetch_events(ReqTarget::single(
+                target.url().await,
+                [Filter::new().id(event.id)],
+            ))
+            .timeout(Duration::from_secs(5))
+            .await
+            .expect("backfill known event");
+        assert_eq!(replayed, received);
+        reader
+            .unsubscribe(&subscribed.value)
+            .await
+            .expect("unsubscribe");
+        client.shutdown().await;
+        reader.shutdown().await;
+        assert!(timeout(Duration::from_secs(5), async {
+            while let Some(notification) = notifications.next().await {
+                if matches!(notification, ClientNotification::Shutdown) {
+                    return;
+                }
+            }
+        })
+        .await
+        .is_ok());
+        target.shutdown();
+        excluded.shutdown();
     }
 
     #[tokio::test]
@@ -6945,7 +7054,7 @@ mod tests {
             Tag::parse(["q", questionnaire_id]).expect("q tag"),
             Tag::parse(["questionnaire-id", questionnaire_id]).expect("questionnaire id tag"),
         ])
-        .sign_with_keys(keys)
+        .finalize(keys)
         .expect("sign definition event")
     }
 
@@ -8869,7 +8978,7 @@ mod tests {
             Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND),
             serde_json::to_string(&submission).expect("serialize submission"),
         )
-        .sign_with_keys(&response_keys)
+        .finalize(&response_keys)
         .expect("sign response event");
         assert!(public_response_event_is_authentic(&event, &submission));
 
@@ -8877,7 +8986,7 @@ mod tests {
             Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND),
             serde_json::to_string(&submission).expect("serialize submission"),
         )
-        .sign_with_keys(&other_keys)
+        .finalize(&other_keys)
         .expect("sign mismatched response event");
         assert!(!public_response_event_is_authentic(
             &mismatched_event,
@@ -10999,6 +11108,7 @@ mod tests {
             .client
             .relay(relay)
             .await
+            .expect("relay lookup")
             .expect("added relay")
             .status();
         assert_ne!(status, RelayStatus::Initialized);

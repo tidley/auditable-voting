@@ -1,0 +1,27 @@
+[package]
+name = "auditable-voting-blind-credentials"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared native/Wasm blind-credential primitives for Auditable Voting"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+wasm = ["dep:wasm-bindgen", "getrandom/wasm_js"]
+
+[dependencies]
+base64 = "0.22"
+blind-rsa-signatures = { version = "=0.18.0", path = "../vendor/blind-rsa-signatures" }
+# Require the stable release marked patched by RUSTSEC-2023-0071.
+rsa = { version = "=0.10.0", features = ["hazmat"] }
+getrandom = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+wasm-bindgen = { version = "0.2", optional = true }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

@@ -40,7 +40,7 @@ export interface ChannelAvailability {
  * `fetch` dependency rather than reaching for the global.
  */
 export interface DeliveryChannel {
-  id: "manual" | "email-nomail" | "sms";
+  id: "manual" | "email-nomail" | "email-smtp2go" | "sms";
   label: string;
   available(): Promise<ChannelAvailability>;
   send(recipient: Recipient, otp: string): Promise<DeliveryResult>;

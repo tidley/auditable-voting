@@ -5,7 +5,7 @@ import {
   verifyEvent,
   type VerifiedEvent,
 } from "nostr-tools";
-import { RSABSSA } from "@cloudflare/blindrsa-ts";
+import { blindCredential, signBlindCredential, finalizeBlindCredential, verifyBlindCredential } from "./wasm/blindCredentials";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { publishOwnNip65RelayHints, resolveNip65OutboxRelays } from "./nip65RelayHints";
 import { getSharedNostrPool } from "./sharedNostrPool";
@@ -132,8 +132,6 @@ type RsaJwk = {
   e?: string;
   d?: string;
 };
-
-const simpleBlindSuite = RSABSSA.SHA384.PSS.Deterministic();
 
 type BlindKeySubscriber = {
   id: number;
@@ -378,46 +376,14 @@ function toSimpleBlindPublicJwk(publicKey: SimpleBlindPublicKey): JsonWebKey {
   };
 }
 
-async function importSimpleBlindPublicCryptoKey(
-  publicKey: SimpleBlindPublicKey,
-  webCryptoOverride?: Crypto,
-) {
-  const webCrypto = getWebCrypto(webCryptoOverride);
-  return webCrypto.subtle.importKey(
-    "jwk",
-    toSimpleBlindPublicJwk(publicKey),
-    {
-      name: "RSA-PSS",
-      hash: SIMPLE_BLIND_HASH,
-    },
-    true,
-    ["verify"],
-  );
-}
-
-async function importSimpleBlindPrivateCryptoKey(
-  privateKey: SimpleBlindPrivateKey,
-  webCryptoOverride?: Crypto,
-) {
-  const webCrypto = getWebCrypto(webCryptoOverride);
-  return webCrypto.subtle.importKey(
-    "jwk",
-    privateKey.jwk,
-    {
-      name: "RSA-PSS",
-      hash: SIMPLE_BLIND_HASH,
-    },
-    true,
-    ["sign"],
-  );
-}
-
 export async function generateSimpleBlindKeyPair(bits = SIMPLE_BLIND_KEY_BITS, webCryptoOverride?: Crypto): Promise<SimpleBlindPrivateKey> {
   const webCrypto = getWebCrypto(webCryptoOverride);
-  const keyPair = await simpleBlindSuite.generateKey({
+  const keyPair = await webCrypto.subtle.generateKey({
+    name: "RSA-PSS",
+    hash: SIMPLE_BLIND_HASH,
     modulusLength: bits,
     publicExponent: new Uint8Array([1, 0, 1]),
-  });
+  }, true, ["sign", "verify"]);
 
   const privateJwk = await webCrypto.subtle.exportKey("jwk", keyPair.privateKey) as JsonWebKey & RsaJwk;
   const publicJwk = await webCrypto.subtle.exportKey("jwk", keyPair.publicKey) as JsonWebKey & RsaJwk;
@@ -688,9 +654,7 @@ export function createSimpleBlindIssuanceRequest(input: {
 }): Promise<{ request: SimpleBlindIssuanceRequest; secret: SimpleBlindRequestSecret }> {
   return (async () => {
     const tokenMessage = input.tokenMessage?.trim() || `${input.votingId}:${randomUuid(input.webCrypto)}`;
-    const publicCryptoKey = await importSimpleBlindPublicCryptoKey(input.publicKey, input.webCrypto);
-    const preparedMessage = simpleBlindSuite.prepare(toSimpleBlindMessageBytes(tokenMessage));
-    const { blindedMsg, inv } = await simpleBlindSuite.blind(publicCryptoKey, preparedMessage);
+    const { blindedMessage, blindingFactor } = await blindCredential(toSimpleBlindPublicJwk(input.publicKey), toSimpleBlindMessageBytes(tokenMessage));
     const requestId = randomUuid(input.webCrypto);
     const createdAt = new Date().toISOString();
 
@@ -698,14 +662,14 @@ export function createSimpleBlindIssuanceRequest(input: {
       request: {
         requestId,
         votingId: input.votingId,
-        blindedMessage: bytesToHex(blindedMsg),
+        blindedMessage,
         createdAt,
       },
       secret: {
         requestId,
         votingId: input.votingId,
         tokenMessage,
-        blindingFactor: bytesToHex(inv),
+        blindingFactor,
         publicKey: input.publicKey,
         createdAt,
       },
@@ -723,17 +687,13 @@ export async function createSimpleBlindShareResponse(input: {
   thresholdN?: number;
   webCrypto?: Crypto;
 }): Promise<SimpleBlindShareResponse> {
-  const privateCryptoKey = await importSimpleBlindPrivateCryptoKey(input.privateKey, input.webCrypto);
-  const blindedSignature = await simpleBlindSuite.blindSign(
-    privateCryptoKey,
-    hexToBytes(input.request.blindedMessage),
-  );
+  const blindedSignature = await signBlindCredential(input.privateKey.jwk, input.request.blindedMessage);
 
   return {
     shareId: randomUuid(input.webCrypto),
     requestId: input.request.requestId,
     coordinatorNpub: input.coordinatorNpub,
-    blindedSignature: bytesToHex(blindedSignature),
+    blindedSignature,
     shareIndex: input.shareIndex,
     thresholdT: input.thresholdT,
     thresholdN: input.thresholdN,
@@ -763,18 +723,7 @@ export async function unblindSimpleBlindShare(input: {
     throw new Error("Blind response used the wrong public key.");
   }
 
-  const publicCryptoKey = await importSimpleBlindPublicCryptoKey(
-    keyAnnouncement.publicKey,
-  );
-  const preparedMessage = simpleBlindSuite.prepare(
-    toSimpleBlindMessageBytes(input.secret.tokenMessage),
-  );
-  const unblindedSignature = await simpleBlindSuite.finalize(
-    publicCryptoKey,
-    preparedMessage,
-    hexToBytes(input.response.blindedSignature),
-    hexToBytes(input.secret.blindingFactor),
-  );
+  const unblindedSignature = await finalizeBlindCredential(toSimpleBlindPublicJwk(keyAnnouncement.publicKey), toSimpleBlindMessageBytes(input.secret.tokenMessage), input.response.blindedSignature, input.secret.blindingFactor);
 
   const share: SimpleShardCertificate = {
     shareId: input.response.shareId,
@@ -782,7 +731,7 @@ export async function unblindSimpleBlindShare(input: {
     coordinatorNpub: input.response.coordinatorNpub,
     votingId: input.secret.votingId,
     tokenMessage: input.secret.tokenMessage,
-    unblindedSignature: bytesToHex(unblindedSignature),
+    unblindedSignature,
     shareIndex: input.response.shareIndex,
     thresholdT: input.response.thresholdT,
     thresholdN: input.response.thresholdN,
@@ -892,15 +841,7 @@ export async function verifySimpleShardCertificate(
   }
 
   try {
-    const publicCryptoKey = await importSimpleBlindPublicCryptoKey(parsed.publicKey);
-    const preparedMessage = simpleBlindSuite.prepare(
-      toSimpleBlindMessageBytes(share.tokenMessage),
-    );
-    const isValid = await simpleBlindSuite.verify(
-      publicCryptoKey,
-      hexToBytes(share.unblindedSignature),
-      preparedMessage,
-    );
+    const isValid = await verifyBlindCredential(toSimpleBlindPublicJwk(parsed.publicKey), toSimpleBlindMessageBytes(share.tokenMessage), share.unblindedSignature);
     return isValid ? parsed : null;
   } catch {
     return null;
@@ -917,15 +858,7 @@ export async function verifySimplePublicShardProof(
   }
 
   try {
-    const publicCryptoKey = await importSimpleBlindPublicCryptoKey(parsed.publicKey);
-    const preparedMessage = simpleBlindSuite.prepare(
-      toSimpleBlindMessageBytes(proof.tokenCommitment),
-    );
-    const isValid = await simpleBlindSuite.verify(
-      publicCryptoKey,
-      hexToBytes(proof.unblindedSignature),
-      preparedMessage,
-    );
+    const isValid = await verifyBlindCredential(toSimpleBlindPublicJwk(parsed.publicKey), toSimpleBlindMessageBytes(proof.tokenCommitment), proof.unblindedSignature);
     return isValid ? parsed : null;
   } catch {
     return null;

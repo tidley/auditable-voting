@@ -84,3 +84,21 @@ npm run verify:simple-blind-shares
 - The shipped entrypoints are `web/src/main.tsx`, `web/src/vote.tsx`, and `web/src/dashboard.tsx`, all mounted through `SimpleAppShell`.
 - The current protocol is Nostr-first and browser-local.
 - Keep visible copy in UK English.
+
+## Shared local rules
+
+For Tom's local workflow, read `~/.config/opencode/AGENTS.md` when available.
+OpenCode loads it automatically. Other agents must read it explicitly.
+Keep the project-specific instructions and safety gates in this file.
+If the shared file is absent, follow this file without requiring Tom's setup.
+
+## Release flow and artifact reuse
+
+Before builds or tags, inspect existing CI runs and artifacts and read the local
+release workflow. Prefer supported promotion of verified artifacts whose source,
+version, targets, build inputs, signing and test evidence meet release requirements;
+verify their SHA-256 checksums. Do not relabel artifacts from another commit/version.
+Explain required rebuilds before triggering them. Preserve all repository-specific
+review, version, platform, signing and publication gates; do not change CI to bypass
+them. Report branch/tag, installed version, release and mirror status separately.
+This guidance does not authorize publication, deployment or data migration.

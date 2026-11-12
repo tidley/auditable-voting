@@ -16,11 +16,19 @@ For the protocol boundary, trust model, and a proposed (not implemented) configu
 
 Experimental.
 
+Local dependency security updates resolve `source-map-js` to 1.2.2 and move the
+native Guardian to the maintained Nostr SDK 0.45 line with patched supporting
+dependencies. Coordinator/MLS dependency remediation remains TODO. These are
+source changes, not a deployment or a whole-repository security clearance; see
+the [dependency security follow-up](docs/dependency-security.md).
+
 The active product is the client in `web/` plus the optional audit proxy in `worker/`. Public relay behaviour, browser key custody, and live-network convergence remain operational constraints. Do not treat this as production election infrastructure without independent protocol and implementation review.
 
 The practical target is small-organisation and controlled-pilot voting, not high-stakes public elections. Before raising the stakes, define the threat model for the specific electorate, publish the operating procedure, and rehearse recovery, recount, dispute, and fallback paths. Remote browser voting cannot fully solve voter-device compromise or coercion by someone watching the voter; it can only reduce those risks with clear scope, receipt design, re-voting/spoil policy, and non-digital fallback.
 
 ## Features
+
+**Shared blind-credential core:** browser blinding, issuance, finalisation and verification now use the same Rust implementation as the native Guardian, compiled to Wasm for the browser. Existing JWKs, key IDs, SHA-384/PSS parameters, message formats and saved inverse factors remain compatible. Legacy JavaScript is retained as an independent test oracle. Stable RSA dependency pinning and a minimal documented vendor patch are covered by cross-language and RFC tests; this is not an independent cryptographic audit. See [compatibility and security boundaries](docs/shared-blind-credentials.md).
 
 - Browser voter, organiser, and observer flows.
 - Nostr-first transport using public events and NIP-17 private control traffic.
@@ -46,7 +54,7 @@ The practical target is small-organisation and controlled-pilot voting, not high
 - Organiser and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, rejection reasons, provisional live chart markers, and organiser-side automatic decryption of encrypted answer details when the local organiser key is available. Public decisions are the normal acceptance signal; private acceptance DMs are only a recovery path for older/private flows. Final summaries can point to a public Blossom CSV result pack mirrored to at least two servers; Observer verifies the advertised blob size and SHA-256 before using it as a relay readback fallback. The CSV opens directly in spreadsheet tools and includes response IDs, submittor pubkeys, accepted/rejected status, rejection reasons, answers, result-count metadata, nullifiers, token commitments, and blind-token signatures/proofs.
 - Observer-local `nsec` entry for decrypting encrypted response details when the organiser key is deliberately supplied.
 - Optional audit proxy that can issue credentials, verify submissions, publish decisions, close completed questionnaires, and publish result summaries.
-- Coordinator **resident admission** with one-time codes: upload a resident CSV, generate per-resident or batch codes (CSPRNG, salted-hash verification, rate limiting), and verify a 6-digit code. A **delivery** abstraction lets the coordinator pick a channel per election (manual, email-nomail, SMS), export name+code pairs for out-of-band distribution, and import a results CSV to see which residents were reached. Batch email sending runs on the coordinator machine, not in the browser; the manual channel is the recommended fallback.
+- **Resident invitations:** one CSV upload creates single-use links in the existing admission registry, shared by manual and SMTP2GO delivery. Links are hidden by default with Reveal/Copy controls; hiding is not protection against the organiser. Download a private JSON batch, send through the trusted coordinator CLI with mandatory validated STARTTLS, then import non-secret JSON results. The persistent sender ledger prevents duplicate sends and conservatively reserves a 250-email monthly budget, including prior tests/retries. Generated, Accepted by email provider, Redeemed and Blind credential issued are separate states, never proof of voting. After Go live, guidance explains Guardian setup/check, invitations and request monitoring. See [email delivery and recovery instructions](docs/email-delivery.md). The disconnected six-digit resident verification demo is no longer mounted in the organiser workflow.
 - Static deployment to GitHub Pages or nsite.
 
 The interface ships in a bright light theme by default and also offers a calm dark theme. The sun/moon toggle to the right of **How it works** switches between the two without overlapping the help link. The choice is remembered on the device and shared with the offline demo. First visits always start light: the system colour-scheme preference is deliberately not consulted.

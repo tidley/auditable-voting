@@ -1,0 +1,38 @@
+[package]
+name = "blind-rsa-signatures"
+version = "0.18.0"
+authors = ["Frank Denis <github@pureftpd.org>"]
+edition = "2018"
+description = "RSA blind signatures (RFC 9474) in pure Rust for anonymous tokens and unlinkable authentication"
+readme = "README.md"
+keywords = ["rsa", "blind", "signatures", "privacy", "rfc9474"]
+homepage = "https://github.com/jedisct1/rust-blind-rsa-signatures"
+repository = "https://github.com/jedisct1/rust-blind-rsa-signatures"
+categories = ["cryptography"]
+license = "MIT"
+
+[dependencies]
+rand = "0.10.3"
+rand_core = "0.10.1"
+rsa = { version = "=0.10.0", features = ["hazmat"] }
+crypto-bigint = "0.7.5"
+crypto-primes = { version = "=0.7.0", default-features = false }
+digest = "0.11.3"
+hmac-sha256 = { version = "1.1.14", features = ["traits011"] }
+hmac-sha512 = { version = "1.1.12", features = ["traits011", "sha384"] }
+ct-codecs = "1"
+derive-new = "0.7.0"
+derive_more = { version = "2.1.1", features = ["full"] }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+criterion = "0.8.2"
+serde_json = "1"
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "rsa/serde"]
+
+[[bench]]
+name = "speed_test"
+harness = false

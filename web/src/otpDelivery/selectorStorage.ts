@@ -6,7 +6,7 @@ import type { DeliveryChannel } from "./types";
  */
 export const CHANNEL_STORAGE_PREFIX = "otp-delivery-channel:";
 
-const VALID_CHANNEL_IDS: DeliveryChannel["id"][] = ["manual", "email-nomail", "sms"];
+const VALID_CHANNEL_IDS: DeliveryChannel["id"][] = ["manual", "email-nomail", "email-smtp2go", "sms"];
 
 /**
  * Load the selected channel id for an election, defaulting to `manual`.

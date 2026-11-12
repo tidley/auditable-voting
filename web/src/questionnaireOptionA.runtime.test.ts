@@ -47,6 +47,7 @@ import {
   buildQuestionnaireBlindTokenSignedMessage,
 } from "./questionnaireBlindToken";
 import { hashQuestionnaireInviteCode } from "./questionnaireInviteCode";
+import { invitationStatus } from "./otpDelivery/invitationStatus";
 import { hashPaperBallotAdmissionKey } from "./paperBallotAdmission";
 import {
   generateQuestionnaireBlindKeyPair,
@@ -2364,6 +2365,9 @@ describe("questionnaireOptionARuntime", () => {
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addBearerInviteCode(inviteCodeHash);
 
+    // CSV/manual/email delivery all use this registry, not a separate OTP store.
+    expect(invitationStatus(coordinator.getSnapshot()!.bearerInviteCodes[inviteCodeHash], {})).toBe('Generated');
+
     const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
     voter.setBearerInviteCode(inviteCode);
     await voter.loginWithSigner(null);
@@ -2374,6 +2378,8 @@ describe("questionnaireOptionARuntime", () => {
     const redeemed = coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash];
     expect(redeemed?.state).toBe("redeemed");
     expect(redeemed?.redeemedNpub).toBe(otherNpub);
+    expect(invitationStatus(redeemed!, {})).toBe('Redeemed');
+    expect(invitationStatus(redeemed!, coordinator.getSnapshot()?.issuedBlindResponses)).toBe('Blind credential issued');
     expect(coordinator.getSnapshot()?.whitelist[otherNpub]?.inviteCodeHash).toBe(inviteCodeHash);
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === otherNpub)).toBe(false);
     voter.refreshIssuanceAndAcceptance();

@@ -1,11 +1,12 @@
 {
   "name": "auditable-voting-web",
   "private": true,
-  "version": "0.1.166",
+  "version": "0.1.167",
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator",
+    "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator && npm run build:wasm:blind",
+    "build:wasm:blind": "cd ../blind-credential-core && wasm-pack build --target bundler --out-dir ../web/src/wasm/blind_credential_core/pkg -- --features wasm --locked",
     "build:wasm:legacy": "cd rust-core && wasm-pack build --target bundler --out-dir ../src/wasm/auditable_voting_core/pkg",
     "build:wasm:coordinator": "cd ../auditable-voting-core && wasm-pack build --target bundler --out-dir ../web/src/wasm/auditable_voting_coordinator_core/pkg -- --features openmls-engine",
     "predev": "node scripts/ensure-wasm-artifacts.mjs",
@@ -23,11 +24,15 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "test": "vitest run",
+    "test:email": "node --test scripts/smtpDelivery.test.mjs",
+    "send:email": "node scripts/otp-send-email.mjs",
     "test:relay-load": "vitest run src/simpleRelayLoad.test.ts",
     "test:rust": "cargo test --manifest-path rust-core/Cargo.toml",
     "test:watch": "vitest",
     "test:course-feedback-preflight": "vitest run src/questionnaireProtocol.test.ts src/questionnaireRuntime.test.ts src/questionnaireResponderIdentity.test.ts src/questionnaireTransport.test.ts src/questionnaireCourseFeedbackPreflight.test.ts",
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts",
+    "preverify:blind-compatibility": "node scripts/ensure-wasm-artifacts.mjs",
+    "verify:blind-compatibility": "node scripts/verify-blind-compatibility.mjs",
     "test:live-relays": "node scripts/live-simple-relay-check.js",
     "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js",
     "test:live-questionnaire-scale": "tsx scripts/live-questionnaire-scale-public.ts",
@@ -38,7 +43,6 @@
     "test:e2e": "npx playwright test"
   },
   "dependencies": {
-    "@cloudflare/blindrsa-ts": "^0.4.5",
     "@internationalized/date": "^3.12.2",
     "@noble/hashes": "^2.0.1",
     "@scure/bip39": "^2.0.1",
@@ -54,6 +58,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@cloudflare/blindrsa-ts": "0.4.5",
     "@emnapi/core": "^1.10.0",
     "@emnapi/runtime": "^1.10.0",
     "@playwright/test": "^1.62.1",
@@ -66,6 +71,7 @@
     "@vitejs/plugin-react": "^4.0.0",
     "@vitest/coverage-v8": "^4.1.2",
     "jsdom": "^29.0.1",
+    "nodemailer": "^10.5.0",
     "playwright": "^1.59.1",
     "tsx": "^4.20.6",
     "typescript": "^5.4.0",

@@ -62,6 +62,23 @@ jobs:
         run: npm test
         working-directory: web
 
+      - name: Run coordinator email tests (offline, no secrets)
+        run: npm run test:email
+        working-directory: web
+
+      - name: Test shared native blind credentials
+        run: cargo test --release --locked --manifest-path blind-credential-core/Cargo.toml --jobs 2
+
+      - name: Test native Guardian
+        run: cargo test --release --locked --manifest-path worker/Cargo.toml --jobs 2
+
+      - name: Test upstream RFC 9474 conformance
+        run: cargo test --release --manifest-path vendor/blind-rsa-signatures/Cargo.toml --test vectors --jobs 2
+
+      - name: Cross-check legacy JavaScript, native Rust and Wasm
+        run: npm run verify:blind-compatibility
+        working-directory: web
+
   # The Playwright specs under web/e2e are the project's end-to-end behaviour
   # contract (coordinator + voter flows, OTP admission, theme). Nothing in this
   # repo ran them on a PR, so an e2e regression could reach main unnoticed — the
@@ -128,7 +145,7 @@ jobs:
         # currently times out in harvestCodes() against that site. These
         # specs below run against the local dev server and are the behaviour
         # contract this job gates.
-        run: npx playwright test e2e/delivery-smoke.spec.ts e2e/resident-otp-admission.spec.ts e2e/theme-toggle.spec.ts e2e/branding-icon.spec.ts e2e/i18n-voter.spec.ts e2e/showif-video-harness.spec.ts e2e/ballot-print-smoke.spec.ts e2e/offline-demo.spec.ts e2e/demo-style-parity.spec.ts e2e/organiser-flow.spec.ts
+        run: npx playwright test e2e/delivery-smoke.spec.ts e2e/resident-otp-admission.spec.ts e2e/theme-toggle.spec.ts e2e/branding-icon.spec.ts e2e/i18n-voter.spec.ts e2e/showif-video-harness.spec.ts e2e/ballot-print-smoke.spec.ts e2e/offline-demo.spec.ts e2e/demo-style-parity.spec.ts e2e/organiser-flow.spec.ts e2e/blind-credentials.spec.ts
         working-directory: web
         env:
           PLAYWRIGHT_USE_BUNDLED_CHROMIUM: "1"

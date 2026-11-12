@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.167] - 2026-11-12
+
+### Added
+- Resident CSV invitations backed by the existing single-use admission registry, with hidden Reveal/Copy links, recoverable private JSON batches and imported delivery results.
+- A coordinator-only SMTP2GO sender with validated STARTTLS, durable duplicate protection, conservative retries and a 250-email monthly allowance including prior usage, tests and retries. Provider acceptance is not proof of inbox delivery or voting.
+- Post-publication guidance for Guardian setup, invitations and request monitoring.
+- A shared Rust native/Wasm blind-credential core with saved JavaScript compatibility fixtures, cross-language checks, RFC conformance tests and browser regression coverage.
+
+### Changed
+- Browser and Guardian blind-signature operations now share Rust code while preserving existing keys, key IDs, message encodings, signature parameters, saved inverse factors and credentials. Browser key generation remains WebCrypto.
+- Keep the legacy JavaScript blind-signature implementation as a pinned dev-only interoperability oracle, without a production fallback.
+- Bumped the web app package to `0.1.167` and Guardian package to `0.1.53`.
+
+### Security
+- Use stable RSA 0.10.0 and checked, randomly blinded private operations. Retain the BRSA dependency with three documented compatibility/test patches and upstream provenance checks; this is not an independent cryptographic audit.
+- Updated `source-map-js` to 1.2.2 and the Guardian to Nostr SDK 0.45.6/Nostr 0.45.7 with patched supporting dependencies. Production npm and Guardian RustSec scans report no vulnerabilities; Guardian RustSec also reports no warnings.
+- Coordinator/MLS dependency remediation remains TODO; development-only npm findings remain tracked in issue #42. The parallel MLS experiment is not included in this version.
+
 ## [0.1.165] - 2026-07-29
 
 ### Fixed

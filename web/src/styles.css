@@ -5480,6 +5480,30 @@ input.simple-paper-code-character {
   box-sizing: border-box;
 }
 
+.simple-delivery-panel input[type="file"] {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.simple-resident-invitation-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.simple-resident-invitation-table td {
+  min-width: 8rem;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.simple-resident-invite-secret {
+  display: block;
+  max-width: 24rem;
+  margin-top: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
 .simple-voter-input {
   width: 100%;
   margin-bottom: 12px;

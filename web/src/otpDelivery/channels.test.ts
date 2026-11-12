@@ -51,11 +51,10 @@ describe("sms stub", () => {
 });
 
 describe("channel registry", () => {
-  it("exposes manual, email-nomail and sms in a stable order", () => {
+  it("exposes only supported manual and SMTP2GO delivery in a stable order", () => {
     expect(DELIVERY_CHANNELS.map((c) => c.id)).toEqual([
       "manual",
-      "email-nomail",
-      "sms",
+      "email-smtp2go",
     ]);
   });
 

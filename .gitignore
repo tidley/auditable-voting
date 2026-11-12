@@ -42,3 +42,7 @@ web/rust-core/Cargo.lock
 web/src/wasm/auditable_voting_core/pkg/
 web/src/wasm/auditable_voting_coordinator_core/pkg/
 worker/target/
+blind-credential-core/target/
+vendor/blind-rsa-signatures/target/
+vendor/blind-rsa-signatures/Cargo.lock
+web/src/wasm/blind_credential_core/pkg/

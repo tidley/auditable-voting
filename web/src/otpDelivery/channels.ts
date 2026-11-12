@@ -1,6 +1,5 @@
 import { manualChannel } from "./manual";
-import { emailNomailChannel } from "./emailNomail";
-import { smsChannel } from "./sms";
+import { emailSmtp2goChannel } from "./emailSmtp2go";
 import type { DeliveryChannel } from "./types";
 
 /**
@@ -9,6 +8,5 @@ import type { DeliveryChannel } from "./types";
  */
 export const DELIVERY_CHANNELS: DeliveryChannel[] = [
   manualChannel,
-  emailNomailChannel,
-  smsChannel,
+  emailSmtp2goChannel,
 ];

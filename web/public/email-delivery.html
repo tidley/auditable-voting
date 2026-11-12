@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en-GB">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Email delivery — Auditable Voting</title><link rel="stylesheet" href="./app-theme.css"><style>body{margin:0;padding:clamp(1rem,4vw,3rem);font-family:system-ui,sans-serif;line-height:1.6}main{max-width:72ch;margin:auto}pre{overflow:auto;padding:1rem;border:1px solid currentColor}code{overflow-wrap:anywhere}a{color:inherit;text-underline-offset:.2em}</style></head>
+<body><main>
+<h1>Send resident invitations by email</h1>
+<p>The website creates registered single-use invitation links. Email sending runs separately on the trusted coordinator machine. Selecting SMTP2GO does not send anything.</p>
+<ol><li>Publish the questionnaire. Configure/check the Guardian, or keep the organiser browser open and connected to process requests.</li><li>In Voters, import one resident CSV, generate missing invitations and download the private email batch. Do not generate a replacement batch after reloading: restore the saved JSON batch with the original organiser state.</li><li>Move the batch outside the repository and public folders. Keep its directory private (mode 700) and the batch/password files mode 600.</li><li>Check SMTP2GO usage. Configure the current UTC <code>SMTP_QUOTA_MONTH</code> and verified <code>SMTP_MONTHLY_BASELINE</code>, including tests and all sends outside the ledger.</li><li>Validate using the coordinator CLI below. Add <code>--send</code> only with recipient authorisation.</li><li>Import the new JSON results into Voters. Monitor redemption and blind-credential issuance separately.</li></ol>
+<h2>Coordinator command</h2>
+<p>Install web dependencies, including dev dependencies, then run from <code>web/</code>. Provision <code>SMTP_PASSWORD_FILE</code> privately, or use the default <code>~/.config/auditable-voting/smtp-password</code>. Never paste credentials into the website.</p>
+<pre><code>node scripts/otp-send-email.mjs \
+  --batch PRIVATE_DIR/private-invitations.json \
+  --ledger PRIVATE_DIR/ledger.json \
+  --results PRIVATE_DIR/results-001.json</code></pre>
+<p>Without <code>--send</code>, this is a dry run: no SMTP connection or email. The sender pins SMTP2GO, port 587, mandatory certificate-validated STARTTLS, user <code>organiser</code>, and From <code>Auditable Voting &lt;organiser@voting.bitsbytom.com&gt;</code>. The address has no receiving inbox.</p>
+<h2>Quota and recovery</h2>
+<p>Use one persistent ledger for the whole SMTP account. The local budget is 250 emails per UTC month, including prior usage and every reserved attempt. It cannot observe other senders: account-wide usage must be reconciled. Do not delete/reset the ledger to gain quota.</p>
+<p>Accepted messages are not resent. Only confirmed pre-DATA transient failures retry, once. Uncertain outcomes and interrupted attempts require provider reconciliation, never blind retries. A failure stops the rest of the batch. Preserve locks/write remnants after crashes until the old process is stopped and evidence is checked. Results paths must be new.</p>
+<h2>What the statuses mean</h2>
+<ul><li><strong>Generated:</strong> registered invitation; no email implied.</li><li><strong>Accepted by email provider:</strong> SMTP acceptance, not confirmed inbox delivery.</li><li><strong>Redeemed:</strong> admission registry bound a claimant.</li><li><strong>Blind credential issued:</strong> organiser issuance record exists, not proof of voting.</li></ul>
+<p>Links are bearer secrets. Hiding them reduces accidental exposure, not access by the coordinator. They are not anonymous ballot credentials. Email receipt proves neither eligibility nor voting.</p>
+<p><a href="https://github.com/tidley/auditable-voting/blob/main/docs/email-delivery.md" rel="noreferrer">Detailed operating and recovery guide</a> — consult the version supplied with your checkout if this feature is not yet on main.</p>
+</main></body></html>

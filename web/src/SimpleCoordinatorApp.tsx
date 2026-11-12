@@ -60,8 +60,9 @@ import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
-import ResidentOtpAdmission from "./ResidentOtpAdmission";
-import DeliveryPanel from "./otpDelivery/DeliveryPanel";
+import DeliveryPanel, { type ResidentInvitation } from "./otpDelivery/DeliveryPanel";
+import PostPublicationSteps from "./PostPublicationSteps";
+import { invitationStatus } from "./otpDelivery/invitationStatus";
 import { UiButton, UiDataTable, UiIcon, UiSelect, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import { useLocaleSafe, useTSafe } from "./i18n/LanguageContext";
 import { t, type UiStringKey } from "./i18n/uiStrings";
@@ -180,7 +181,6 @@ import {
 } from "./questionnaireProtocolConstants";
 import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
-import ResidentImportPreview from "./ResidentImportPreview";
 import PaperBallotCoordinatorPanel from "./PaperBallotCoordinatorPanel";
 import type { PaperBallotAdmissionEntry } from "./paperBallotAdmission";
 
@@ -601,7 +601,7 @@ function whitelistStatusIndicator(state: WhitelistClaimState): StatusIndicatorVi
       return {
         className: "simple-vote-status-icon simple-status-indicator is-voter-issued",
         icon: "S",
-        label: "Ballot issued",
+        label: "Blind credential issued",
       };
     case "blind_request_received":
       return {
@@ -763,7 +763,7 @@ function privateInviteVoterStatusIndicator(input: {
     }
     const indicator = whitelistStatusIndicator(input.claimState);
     if (input.claimState === "blind_signature_issued") {
-      return { ...indicator, label: "Ballot sent" };
+      return { ...indicator, label: "Blind credential issued" };
     }
     return indicator;
   }
@@ -771,20 +771,20 @@ function privateInviteVoterStatusIndicator(input: {
     return {
       className: "simple-vote-status-icon simple-status-indicator is-voter-claimed",
       icon: "O",
-      label: "Ballot opened",
+      label: "Redeemed",
     };
   }
   if ((input.redemptionCount ?? 0) > 0) {
     return {
       className: "simple-vote-status-icon simple-status-indicator is-voter-claimed",
       icon: "O",
-      label: `${input.redemptionCount} of ${input.maxRedemptions ?? 1} ballots opened`,
+      label: `${input.redemptionCount} of ${input.maxRedemptions ?? 1} invitations redeemed`,
     };
   }
   return {
     className: "simple-vote-status-icon simple-status-indicator is-voter-whitelisted",
     icon: "-",
-    label: "Not claimed",
+    label: "Generated",
   };
 }
 
@@ -1687,6 +1687,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
   const [primaryPublishActionSignal, setPrimaryPublishActionSignal] = useState(0);
   const [proxySetupSignal, setProxySetupSignal] = useState(0);
   const [editPublished, setEditPublished] = useState(false);
+  const [residentDeliveryRows, setResidentDeliveryRows] = useState<Record<string, ResidentInvitation[]>>({});
   const [proxySeenActive, setProxySeenActive] = useState(false);
   const [activeReadinessItemId, setActiveReadinessItemId] = useState<QuestionnaireReadinessItem["id"] | null>("basics");
   const [pendingParticipantSettingsByNpub, setPendingParticipantSettingsByNpub] = useState<Record<string, PendingParticipantSettings>>({});
@@ -6047,13 +6048,15 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
     });
   }, [activeCoordinatorNpub, currentQuestionnaireBlindRequestKey, optionAElectionId]);
 
-  async function createPrivateInviteCodeLink(options?: { credentialsPerVoter?: 1 | 2; ballotGroup?: string | null; maxRedemptions?: number }) {
+  async function createPrivateInviteCodeLink(options?: { credentialsPerVoter?: 1 | 2; ballotGroup?: string | null; maxRedemptions?: number; forDelivery?: boolean }) {
     const electionId = optionAElectionId.trim();
     if (!optionACoordinatorRuntime || !electionId) {
       setAdmittedVoterStatus("Publish or open a vote first.");
+      if (options?.forDelivery) throw new Error("Publish or open a vote first.");
       return;
     }
     if (privateInviteCreateInFlightRef.current) {
+      if (options?.forDelivery) throw new Error("Another invitation is being registered. Try again when it finishes.");
       return;
     }
     privateInviteCreateInFlightRef.current = true;
@@ -6093,12 +6096,6 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
       const ballotGroup = normaliseQuestionnaireBallotGroup(options?.ballotGroup);
       const inviteCode = generateQuestionnaireInviteCode();
       const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
-      optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash, {
-        credentialsPerVoter,
-        ballotGroup,
-        maxRedemptions: Math.max(1, Math.floor(options?.maxRedemptions ?? 1)),
-      });
-      const workerConfigRequired = buildActiveWorkerElectionConfigSnapshot(electionId) !== null;
       const inviteUrl = buildQuestionnaireInviteUrl({
         electionId,
         coordinatorNpub: activeCoordinatorNpub.trim() || undefined,
@@ -6110,11 +6107,20 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
         autoRequestBallot: true,
         ballotGroup,
       });
+      if (options?.forDelivery && inviteUrl.length > 8192) {
+        throw new Error('Invitation URL exceeds the email limit. Shorten relay hints before registering invitations.');
+      }
+      optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash, {
+        credentialsPerVoter,
+        ballotGroup,
+        maxRedemptions: Math.max(1, Math.floor(options?.maxRedemptions ?? 1)),
+      });
+      const workerConfigRequired = buildActiveWorkerElectionConfigSnapshot(electionId) !== null;
       setPrivateInviteLinksByHash((current) => ({
         ...current,
         [inviteCodeHash]: inviteUrl,
       }));
-      const copied = await tryWriteClipboard(inviteUrl);
+      const copied = options?.forDelivery ? false : await tryWriteClipboard(inviteUrl);
       const feedback = buildPrivateInviteCreationFeedback({ credentialsPerVoter, copied });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       if (copied) {
@@ -6133,8 +6139,10 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
           setAdmittedVoterStatus("Private link created, but the audit proxy configuration is still pending. The voter request will be held until it arrives.");
         });
       }
+      return { id: inviteCodeHash, inviteUrl };
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not create private link.");
+      if (options?.forDelivery) throw error;
     } finally {
       privateInviteCreateInFlightRef.current = false;
       setPrivateInviteCreateInFlight(false);
@@ -9013,6 +9021,12 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
       <section className='simple-voter-page simple-coordinator-page'>
         {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
+        {editPublished && activeTab !== 'messages' && activeTab !== 'settings' ? (
+          <PostPublicationSteps
+            onGuardian={() => { selectTab('proxy'); setProxySetupSignal(current => current + 1); }}
+            onVoters={openInviteVotersSection}
+          />
+        ) : null}
 
         {activeTab === 'configure' ? (
           <section
@@ -9374,16 +9388,22 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	                </div>
 	              </SimpleCollapsibleSection>
             </div>
-            <details className='simple-organiser-disclosure simple-organiser-preview-tools'>
-              <summary>Resident tools (preview)</summary>
-              <ResidentImportPreview />
-            <div id='coordinator-resident-admission-section'>
-              <ResidentOtpAdmission />
-            </div>
-            <div id='coordinator-delivery-section'>
-              <DeliveryPanel electionId={optionAElectionId} />
-            </div>
-            </details>
+            {participantNavSection === 'voters' ? <div id='coordinator-delivery-section'>
+              <DeliveryPanel
+                key={`${activeCoordinatorNpub}:${optionAElectionId}`}
+                electionId={optionAElectionId}
+                rows={residentDeliveryRows[`${activeCoordinatorNpub}:${optionAElectionId}`] ?? []}
+                onRowsChange={rows => setResidentDeliveryRows(current => ({ ...current, [`${activeCoordinatorNpub}:${optionAElectionId}`]: rows }))}
+                disabled={!editPublished || !optionACoordinatorRuntime || privateInviteCreateInFlight}
+                createInvitation={async () => {
+                  const result = await createPrivateInviteCodeLink({ maxRedemptions: 1, forDelivery: true });
+                  if (!result) throw new Error('Invitation could not be registered.');
+                  return result;
+                }}
+                isRegistered={id => Boolean(optionACoordinatorRuntime?.getSnapshot()?.bearerInviteCodes[id])}
+                lifecycle={Object.fromEntries(privateInviteCodeEntries.map(entry => [entry.codeHash, invitationStatus(entry, optionACoordinatorRuntime?.getSnapshot()?.issuedBlindResponses)]))}
+              />
+            </div> : null}
             </div>
           </section>
         ) : null}

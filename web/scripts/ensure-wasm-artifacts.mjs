@@ -12,12 +12,20 @@ const requiredFiles = [
   resolve(webDir, "src/wasm/auditable_voting_coordinator_core/pkg/auditable_voting_core.js"),
   resolve(webDir, "src/wasm/auditable_voting_coordinator_core/pkg/auditable_voting_core_bg.js"),
   resolve(webDir, "src/wasm/auditable_voting_coordinator_core/pkg/auditable_voting_core_bg.wasm"),
+  resolve(webDir, "src/wasm/blind_credential_core/pkg/auditable_voting_blind_credentials.js"),
+  resolve(webDir, "src/wasm/blind_credential_core/pkg/auditable_voting_blind_credentials_bg.js"),
+  resolve(webDir, "src/wasm/blind_credential_core/pkg/auditable_voting_blind_credentials_bg.wasm"),
 ];
 const rustSourceRoots = [
   resolve(webDir, "rust-core/Cargo.toml"),
   resolve(webDir, "rust-core/src"),
   resolve(webDir, "../auditable-voting-core/Cargo.toml"),
   resolve(webDir, "../auditable-voting-core/src"),
+  resolve(webDir, "../blind-credential-core/Cargo.toml"),
+  resolve(webDir, "../blind-credential-core/Cargo.lock"),
+  resolve(webDir, "../blind-credential-core/src"),
+  resolve(webDir, "../vendor/blind-rsa-signatures/Cargo.toml"),
+  resolve(webDir, "../vendor/blind-rsa-signatures/src"),
 ];
 
 function collectFilePaths(path) {
@@ -38,15 +46,17 @@ function latestMtimeMs(paths) {
     .reduce((latest, path) => Math.max(latest, statSync(path).mtimeMs), 0);
 }
 
-const missingFiles = requiredFiles.filter((file) => !existsSync(file));
-const latestRustInputMtimeMs = latestMtimeMs(rustSourceRoots);
-const latestArtifactMtimeMs = latestMtimeMs(requiredFiles);
+// Each package must be fresh independently: a new blind-core artifact must
+// not hide a stale coordinator or legacy artifact (or the reverse).
+const groups = [
+  { artifacts: requiredFiles.slice(0, 3), sources: rustSourceRoots.slice(0, 2) },
+  { artifacts: requiredFiles.slice(3, 6), sources: rustSourceRoots.slice(2, 4) },
+  { artifacts: requiredFiles.slice(6), sources: rustSourceRoots.slice(4) },
+];
+const fresh = groups.every(({ artifacts, sources }) => artifacts.every(file => existsSync(file))
+  && Math.min(...artifacts.map(file => statSync(file).mtimeMs)) >= latestMtimeMs(sources));
 
-if (
-  missingFiles.length === 0
-  && latestArtifactMtimeMs >= latestRustInputMtimeMs
-  && process.env.FORCE_WASM_BUILD !== "1"
-) {
+if (fresh && process.env.FORCE_WASM_BUILD !== "1") {
   process.exit(0);
 }
 
