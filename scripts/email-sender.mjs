@@ -234,6 +234,10 @@ export function createEmailSenderServer(options = {}) {
           sent: result.sentCount,
           skipped: result.skipCount,
           failed: result.failCount,
+          notAttempted: result.notAttemptedCount,
+          satsSpent: result.satsSpent,
+          capUsedToday: result.capUsedToday,
+          capRemaining: result.capRemaining,
           results: result.results,
         }, responseOrigin);
       } catch (error) {

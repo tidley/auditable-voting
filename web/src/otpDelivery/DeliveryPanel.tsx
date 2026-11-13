@@ -307,11 +307,19 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
         sent?: number;
         skipped?: number;
         failed?: number;
+        notAttempted?: number;
+        satsSpent?: number;
+        capUsedToday?: number;
+        capRemaining?: number;
         results?: Array<{ master: string; ok: boolean; detail: string; ref?: string }>;
       };
       applyDeliveryResults(payload.results ?? []);
       if (!response.ok) throw new Error(payload.error || "The local sender rejected the batch.");
-      setStatus(`Email delivery: ${payload.sent ?? 0} sent, ${payload.skipped ?? 0} already sent, ${payload.failed ?? 0} failed.`);
+      const notAttempted = payload.notAttempted ?? 0;
+      const capSuffix = transport === "cashu" && typeof payload.satsSpent === "number"
+        ? ` ${payload.satsSpent} sats; daily cap ${payload.capUsedToday ?? 0}/100 used, ${payload.capRemaining ?? 0} remaining.`
+        : "";
+      setStatus(`Email delivery: ${payload.sent ?? 0} sent, ${payload.skipped ?? 0} already sent, ${payload.failed ?? 0} failed${notAttempted ? `, ${notAttempted} not attempted` : ""}.${capSuffix}`);
     } catch (error) {
       setStatus(`Email sending failed: ${error instanceof Error ? error.message : "local sender unavailable"}`);
     } finally {
@@ -389,7 +397,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
               else setStatus("Clipboard access was unavailable. Keep the code revealed and copy it manually.");
             })()}>{copied ? "Copied" : "Copy"}</button> : null}
           </div> : <span className="simple-voter-note">Not generated</span>}</td>
-          <td>{deliveryRow ? <span title={deliveryRow.detail}>{deliveryRow.ok ? "Sent" : `Failed: ${deliveryRow.detail}`}</span> : <span>Not sent</span>}</td>
+          <td>{deliveryRow ? <span title={deliveryRow.detail}>{deliveryRow.ok ? "Sent" : deliveryRow.detail.startsWith("not attempted") ? `Not sent: ${deliveryRow.detail.slice("not attempted: ".length)}` : `Failed: ${deliveryRow.detail}`}</span> : <span>Not sent</span>}</td>
           <td><button type="button" className="simple-voter-secondary" aria-label={`Remove resident row ${resident.id}`} disabled={Boolean(issued.length)} onClick={() => removeRow(resident.id)}>Remove</button></td>
         </tr>;
       })}</tbody>

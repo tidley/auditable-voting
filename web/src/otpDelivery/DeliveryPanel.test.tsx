@@ -254,4 +254,37 @@ describe("Resident email admission", () => {
     expect(screen.queryByRole("button", { name: "Send emails" })).toBeNull();
     expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();
   });
+
+  it("shows cashu cost, daily-cap and not-attempted status from the local sender", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["cashu"], maxRecipients: 1000 }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          sent: 1,
+          skipped: 0,
+          failed: 1,
+          notAttempted: 1,
+          satsSpent: 100,
+          capUsedToday: 100,
+          capRemaining: 0,
+          results: [
+            { master: "101", ok: true, detail: "sent", ref: "cashu-1" },
+            { master: "102", ok: false, detail: "send failed (HTTP 402)" },
+            { master: "103", ok: false, detail: "not attempted: cashu daily send limit reached" },
+          ],
+        }),
+      };
+    }));
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv([CSV_HEADER, "101,alice@example.org,,Alice Smith", "102,bob@example.org,,Bob Jones", "103,carol@example.org,,Carol Cruz"].join("\n"));
+    await generateAdmissions();
+    expect(await screen.findByLabelText("Email sender")).toHaveProperty("value", "cashu");
+    await userEvent.click(screen.getByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText("Email delivery: 1 sent, 0 already sent, 1 failed, 1 not attempted. 100 sats; daily cap 100/100 used, 0 remaining.")).toBeTruthy();
+    expect(screen.getByText("Not sent: cashu daily send limit reached")).toBeTruthy();
+  });
 });

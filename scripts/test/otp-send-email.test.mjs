@@ -9,9 +9,11 @@ import { spawnSync } from "node:child_process";
 import { createServer as createTcpServer } from "node:net";
 import {
   buildAdmissionEmail,
+  cashuCapUsage,
   formatAdmissionCode,
   parseAdmissionBundle,
   runBatch,
+  sanitiseProviderMessage,
 } from "../otp-send-email.mjs";
 
 const SCRIPT = new URL("../otp-send-email.mjs", import.meta.url).pathname;
@@ -172,7 +174,10 @@ test("SMTP authentication failure stops before claiming delivery", async () => {
     },
   }), /stopped early/);
   assert.equal(sends, 1);
-  assert.equal(existsSync(paths.ledger), false);
+  const failed = JSON.parse(readFileSync(paths.ledger, "utf8"));
+  assert.equal(Object.values(failed)[0].pending, false);
+  assert.equal(Object.values(failed)[0].failed, true);
+  assert.equal(Object.values(failed)[0].deliveryUnknown, undefined);
   const results = readFileSync(paths.results, "utf8");
   assert.match(results, /SMTP authentication failed/);
   assert.ok(!results.includes("authentication detail"));
@@ -340,7 +345,8 @@ test("payment/auth failures stop the batch instead of silently claiming delivery
     "cashu-tokens-file": paths.tokens,
   }), /stopped early/);
   assert.equal(sendAttempts, 1);
-  assert.equal(existsSync(paths.ledger), false);
+  assert.equal(existsSync(paths.ledger), true);
+  assert.equal(Object.values(JSON.parse(readFileSync(paths.ledger, "utf8")))[0].failed, true);
   assert.ok(readFileSync(paths.results, "utf8").includes("send failed (HTTP 402)"));
 });
 
@@ -414,7 +420,7 @@ test("unknown delivery requires an explicit retry decision and a fresh payment t
   await assert.rejects(runBatch(options), /stopped early/);
   assert.ok(readFileSync(paths.results, "utf8").includes("delivery-unknown"));
   assert.equal(JSON.parse(readFileSync(paths.ledger, "utf8"))[Object.keys(JSON.parse(readFileSync(paths.ledger, "utf8")))[0]].deliveryUnknown, true);
-  await assert.rejects(runBatch(options), /unknown delivery/);
+  await assert.rejects(runBatch(options), /did not record confirmed delivery/);
   writeFileSync(paths.tokens, "cashuBtest-one\ncashuBtest-fresh\n");
   let sentBodies = [];
   globalThis.fetch = async (url, init = {}) => {
@@ -432,4 +438,96 @@ test("unknown delivery requires an explicit retry decision and a fresh payment t
   assert.equal(sentBodies.length, 1);
   assert.equal(sentBodies[0].cashuToken, "cashuBtest-fresh");
   assert.ok(sentBodies[0].text.includes("Admission code: ABCD1-234EF"));
+});
+
+test("provider failure hints are shown with recipient, token and key redaction", async () => {
+  assert.equal(
+    sanitiseProviderMessage(
+      "Daily limit reached for alice@example.test",
+      "Top up cashuBsecret with nsec1verysecret or retry",
+    ),
+    "Email service: Daily limit reached for [redacted recipient] — Top up [redacted token] with [redacted key] or retry",
+  );
+  delete process.env.TEST_API_STUB;
+  const paths = fixture();
+  writeFileSync(paths.csv, BUNDLE.split("\n").slice(0, 2).join("\n"));
+  writeFileSync(paths.tokens, "cashuBtest-one\n");
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.endsWith("/api/auth/challenge")) return new Response(JSON.stringify({ nonce: "n" }), { status: 200 });
+    if (value.endsWith("/api/auth/verify")) return new Response("{}", { status: 200, headers: { "set-cookie": "session=test" } });
+    if (value.endsWith("/api/send")) {
+      return new Response("{}", {
+        status: 429,
+        headers: {
+          "x-reason": "Daily limit reached for alice@example.test",
+          "x-hint": "Top up cashuBsecret or retry",
+        },
+      });
+    }
+    throw new Error("unexpected request");
+  };
+  await assert.rejects(runBatch({
+    nsec: TEST_NSEC,
+    csv: paths.csv,
+    api: "https://email.test",
+    ledger: paths.ledger,
+    results: paths.results,
+    "cashu-tokens-file": paths.tokens,
+  }), /stopped early/);
+  const results = readFileSync(paths.results, "utf8");
+  const ledger = readFileSync(paths.ledger, "utf8");
+  for (const output of [results, ledger]) {
+    assert.match(output, /Daily limit reached for \[redacted recipient\]/);
+    assert.ok(!output.includes("alice@example.test"));
+    assert.ok(!output.includes("cashuBsecret"));
+  }
+});
+
+test("cashu batches stop at the local daily cap and report remaining work", async () => {
+  process.env.TEST_API_STUB = "1";
+  const paths = fixture();
+  const now = new Date().toISOString();
+  const previous = Object.fromEntries(Array.from({ length: 99 }, (_, index) => [
+    `previous:${index}`,
+    { ok: true, transport: "cashu", sentAt: now },
+  ]));
+  writeFileSync(paths.ledger, JSON.stringify(previous));
+  assert.deepEqual(cashuCapUsage(previous), { used: 99, remaining: 1, cap: 100 });
+  const result = await runBatch({
+    transport: "cashu",
+    nsec: TEST_NSEC,
+    csv: paths.csv,
+    ledger: paths.ledger,
+    results: paths.results,
+  });
+  assert.equal(result.sentCount, 1);
+  assert.equal(result.notAttemptedCount, 2);
+  assert.equal(result.failCount, 0);
+  assert.equal(result.satsSpent, 100);
+  assert.equal(result.capUsedToday, 100);
+  assert.equal(result.capRemaining, 0);
+  const results = readFileSync(paths.results, "utf8");
+  assert.match(results, /not attempted: cashu daily send limit reached/);
+});
+
+test("a pending ledger entry from an interrupted process blocks automatic retry", async () => {
+  const paths = fixture();
+  const { rows, bundleScope } = parseAdmissionBundle(BUNDLE);
+  writeFileSync(paths.ledger, JSON.stringify({
+    [`${bundleScope}:${rows[0].master}`]: {
+      ok: false,
+      pending: true,
+      fingerprint: rows[0].fingerprint,
+      transport: "cashu",
+      attemptedAt: new Date().toISOString(),
+    },
+  }));
+  await assert.rejects(runBatch({
+    nsec: TEST_NSEC,
+    csv: paths.csv,
+    ledger: paths.ledger,
+    results: paths.results,
+    "cashu-tokens-file": paths.tokens,
+  }), /did not record confirmed delivery/);
 });

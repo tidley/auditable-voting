@@ -80,6 +80,9 @@ time.
   recipient, then inspect the provider's outbound log. Acceptance only proves the
   provider took the message, not inbox placement. Do not blindly resend; the
   status may be unknown.
+- Provider HTTP failures surface a sanitised short reason/hint when available;
+  recipient addresses, cashu tokens and nsec values are redacted from results and
+  ledger detail.
 - **A downloaded bundle was lost after reload** — do not silently generate a
   second batch. Earlier admissions may still be valid; follow the election's
   revocation/recovery procedure.
@@ -202,6 +205,23 @@ token per pending recipient via `CASHU_TOKENS_FILE`, then use
 `--transport cashu`. A single-recipient test can use `CASHU_TOKEN`. The service
 charges 100 sats per email and may impose a daily cap. See the current provider
 documentation for service availability, receipts and privacy terms.
+
+cashu.email batches also enforce a local 100-sends-per-UTC-day allowance from
+successful ledger entries. Batches stop at the remaining allowance, report
+not-attempted recipients rather than pretending they failed, and show the sats
+cost plus cap usage. SMTP is not subject to this account cap. The provider's own
+429 remains authoritative if its accounting differs.
+
+Quote-based payment (`POST /api/send/quote`, `paidQuoteId`) is not implemented in
+this revision; it is tracked as a focused follow-up in
+[issue #44](https://github.com/tidley/auditable-voting/issues/44).
+
+Before each transport request, the sender writes a pending ledger entry. If the
+process stops before a confirmed result, the next run refuses automatic resend
+for that recipient even if no error was caught. Check delivery, then use
+`--retry-unknown` deliberately and provide a fresh cashu payment token if
+applicable. Definite provider rejections are recorded as failed and may be
+retried normally.
 
 Each email contains the recipient name when available (otherwise “Resident”),
 master-list number, formatted code, human-readable UTC expiry, public voter link

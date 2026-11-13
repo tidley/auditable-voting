@@ -82,6 +82,19 @@ Deliver one focused contribution that lets an organiser upload a resident contac
 - [x] Run the production web build after final documentation edits.
 - [x] Run the full web test suite and existing worker tests.
 
+### PR39 consolidation and follow-up
+
+- [x] Add cashu.email daily-cap accounting and sats-cost reporting without imposing an SMTP cap.
+- [x] Surface per-recipient not-attempted state when the cashu daily budget stops a batch.
+- [x] Add sanitised cashu provider reason/hint handling with email/token/key redaction.
+- [x] Persist a pending attempt before transport I/O so a crash cannot silently lose unknown delivery.
+- [x] Require explicit `--retry-unknown` for pending or unknown attempts and avoid reused payment tokens.
+- [x] Update sender, companion, component and browser tests for limits, sanitisation and pending recovery.
+- [x] Update coordinator documentation and the PR43 implementation-record description.
+- [x] Create a focused follow-up issue for quoted Cashu/Lightning payment support ([#44](https://github.com/tidley/auditable-voting/issues/44)).
+- [x] Post a supersession cross-reference on PR39 and close it after this decision is recorded.
+- [x] Re-run focused/full verification at the final revision.
+
 ### Documentation and manual acceptance
 
 - [x] Align `README.md`, operator documentation, project explainer and presentation copy where relevant.
@@ -98,15 +111,17 @@ Record the tested revision, preview URL, test addresses, send/retry results, rec
 
 Base revision: `a3246c03` (upstream `main` at checkout), with the present uncommitted feature diff.
 
-- Exact-code sender: **19/19 passing** Node tests across the sender, companion and opt-in live smoke, including:
+- Exact-code sender: **22/22 passing** Node tests across the sender, companion and opt-in live smoke, including:
   - exact generated codes and recipient instructions in text/HTML;
   - mocked cashu.email transport and a real local SMTP socket;
   - cookie/payment-token scoping and partial/unknown-delivery resume;
   - loopback Host/Origin rejection and redacted health/API responses;
-  - same-origin companion → SMTP delivery.
-- Revised admission/CSV components: **21/21 passing** focused Vitest tests, covering one Import control, editable/add/remove rows, 24-hour defaults, context-sensitive Export, generated-code masking, integrated delivery results, roster locking and companion-backed **Send emails**.
+  - same-origin companion → SMTP delivery;
+  - cashu daily-cap/cost accounting, not-attempted rows and sanitised provider failures;
+  - pending ledger entries blocking silent retry after interruption.
+- Revised admission/CSV components: **22/22 passing** focused Vitest tests, covering one Import control, editable/add/remove rows, 24-hour defaults, context-sensitive Export, generated-code masking, integrated delivery results, roster locking, companion-backed **Send emails** and cashu cap/not-attempted status.
 - Browser integration harness: **3/3 passing** Playwright tests (production UI/code generation/export, result import and mocked local sender submission; not a relay/real-email test).
-- Full web suite: **82 test files, 742/742 tests passing**.
+- Full web suite: **82 test files, 743/743 tests passing**.
 - TypeScript `npx tsc --noEmit`: clean.
 - Production `npm run build`: successful.
 - Worker suite: **108 passing, 3 ignored, 0 failed** (worker code unchanged).

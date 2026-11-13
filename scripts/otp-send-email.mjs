@@ -23,6 +23,8 @@ const { finalizeEvent, getPublicKey } = require("nostr-tools/pure");
 const API_DEFAULT = "https://cashu.email";
 const CODE_PATTERN = /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10}$/;
 const TRANSPORTS = new Set(["cashu", "smtp"]);
+export const CASHU_EMAIL_COST_SATS = 100;
+export const CASHU_DAILY_SEND_CAP = 100;
 
 function parseNsec(raw) {
   const value = raw.trim();
@@ -227,15 +229,33 @@ export function buildAdmissionEmail(row, subjectOverride = "") {
   return { to: row.email, subject, text, html };
 }
 
-function serviceError(operation, status) {
+function serviceError(operation, status, response) {
+  const reason = response?.headers?.get("x-reason") ?? "";
+  const hint = response?.headers?.get("x-hint") ?? "";
+  const providerMessage = sanitiseProviderMessage(reason, hint);
   return Object.assign(new Error(`${operation} failed with HTTP ${status}.`), {
     status,
     fatal: [401, 402, 403, 407, 408, 409, 410, 412, 413, 429].includes(status),
+    ...(providerMessage ? { providerMessage } : {}),
   });
 }
 
+export function sanitiseProviderMessage(reason, hint = "") {
+  const combined = [reason, hint]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join(" — ")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\bnsec1[0-9a-z]+\b/gi, "[redacted key]")
+    .replace(/\bcashu[0-9a-z]+\b/gi, "[redacted token]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted recipient]")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!combined) return "";
+  return `Email service: ${combined.slice(0, 160)}`;
+}
+
 async function responseError(res, operation) {
-  return serviceError(operation, res.status);
+  return serviceError(operation, res.status, res);
 }
 
 async function postJson(api, path, body) {
@@ -386,9 +406,32 @@ export function writeLedger(path, ledger) {
   renameSync(temporary, path);
 }
 
+function sameUtcDay(leftMs, rightMs) {
+  const left = new Date(leftMs);
+  const right = new Date(rightMs);
+  return left.getUTCFullYear() === right.getUTCFullYear()
+    && left.getUTCMonth() === right.getUTCMonth()
+    && left.getUTCDate() === right.getUTCDate();
+}
+
+export function cashuCapUsage(ledger, now = Date.now()) {
+  let used = 0;
+  for (const entry of Object.values(ledger)) {
+    if (!entry || entry.ok !== true || entry.transport !== "cashu" || typeof entry.sentAt !== "string") continue;
+    const sentAt = Date.parse(entry.sentAt);
+    if (Number.isFinite(sentAt) && sameUtcDay(sentAt, now)) used += 1;
+  }
+  return {
+    used,
+    remaining: Math.max(0, CASHU_DAILY_SEND_CAP - used),
+    cap: CASHU_DAILY_SEND_CAP,
+  };
+}
+
 function publicFailure(error) {
   if (error?.deliveryUnknown) return "delivery-unknown; do not retry until delivery is checked";
   if (error?.message && /^SMTP /.test(error.message)) return error.message;
+  if (error?.providerMessage) return error.providerMessage;
   if (Number.isInteger(error?.status)) return `send failed (HTTP ${error.status})`;
   return "send failed before a delivery response";
 }
@@ -413,6 +456,7 @@ export async function runBatch(opts) {
   let dryRunCount = 0;
   let skipCount = 0;
   let failCount = 0;
+  let notAttemptedCount = 0;
 
   for (const row of rows) {
     const key = `${bundleScope}:${row.master}`;
@@ -420,18 +464,21 @@ export async function runBatch(opts) {
     if (existing && existing.fingerprint && existing.fingerprint !== row.fingerprint) {
       throw new Error(`The ledger belongs to different admission details for master-list number ${row.master}. Use a new ledger for a new bundle; do not overwrite an existing admission batch.`);
     }
-    if (existing?.deliveryUnknown && !opts["retry-unknown"]) {
-      throw new Error(`A previous send has unknown delivery for master-list number ${row.master}. Check delivery before retrying. If resending is intentional, add --retry-unknown.`);
+    if ((existing?.deliveryUnknown || existing?.pending) && !opts["retry-unknown"]) {
+      throw new Error(`A previous send did not record confirmed delivery for master-list number ${row.master}. Check delivery before retrying. If resending is intentional, add --retry-unknown; use a fresh payment token for cashu.email.`);
     }
   }
 
+  const capUsage = transport === "cashu" ? cashuCapUsage(ledger) : null;
   const pendingRows = opts.dryRun ? rows : rows.filter((row) => !ledger[`${bundleScope}:${row.master}`]?.ok);
+  const plannedSends = capUsage ? Math.min(pendingRows.length, capUsage.remaining) : pendingRows.length;
   const usedTokenFingerprints = new Set(Object.values(ledger).map((entry) => entry?.paymentFingerprint).filter((value) => typeof value === "string"));
-  const paymentTokens = transport === "cashu" ? readPaymentTokens(opts, pendingRows.length, usedTokenFingerprints) : [];
+  const paymentTokens = !opts.dryRun && transport === "cashu" ? readPaymentTokens(opts, plannedSends, usedTokenFingerprints) : [];
   let paymentIndex = 0;
+  let capSendsRemaining = capUsage?.remaining ?? Number.POSITIVE_INFINITY;
   let sender = null;
   let smtp = null;
-  if (!opts.dryRun && pendingRows.length) {
+  if (!opts.dryRun && plannedSends > 0) {
     if (transport === "cashu") {
       sender = await nomailSession(opts.api, opts.nsec);
     } else {
@@ -448,47 +495,64 @@ export async function runBatch(opts) {
       skipCount += 1;
       continue;
     }
+    if (!opts.dryRun && transport === "cashu" && capSendsRemaining <= 0) {
+      results.push({ master: row.master, ok: false, detail: "not attempted: cashu daily send limit reached" });
+      notAttemptedCount += 1;
+      continue;
+    }
     try {
       const message = buildAdmissionEmail(row, opts.subject || "");
       if (opts.dryRun) {
         results.push({ master: row.master, ok: true, detail: "dry-run (not sent)" });
         dryRunCount += 1;
       } else {
+        if (transport === "cashu") paymentToken = paymentTokens[paymentIndex++];
+        ledger[key] = {
+          ok: false,
+          pending: true,
+          fingerprint: row.fingerprint,
+          transport,
+          ...(paymentToken ? { paymentFingerprint: sha256(paymentToken) } : {}),
+          attemptedAt: new Date().toISOString(),
+        };
+        writeLedger(opts.ledger, ledger);
+
         let response;
         if (transport === "cashu") {
-          paymentToken = paymentTokens[paymentIndex++];
           response = await sendCashuEmail(opts.api, sender.sessionCookie, message, paymentToken);
         } else {
           response = await sendSmtpEmail(smtp.transporter, message, smtp.config.from);
         }
         ledger[key] = {
           ok: true,
+          fingerprint: row.fingerprint,
           transport,
           ...(paymentToken ? { paymentFingerprint: sha256(paymentToken) } : {}),
           ...(response?.id ? { deliveryRef: String(response.id).slice(0, 200) } : {}),
-          fingerprint: row.fingerprint,
           sentAt: new Date().toISOString(),
         };
         writeLedger(opts.ledger, ledger);
         results.push({ master: row.master, ok: true, detail: "sent", ...(response?.id ? { ref: String(response.id).slice(0, 200) } : {}) });
         sentCount += 1;
+        if (transport === "cashu") capSendsRemaining -= 1;
         if (sentCount % 5 === 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, 1000));
       }
     } catch (error) {
       const detail = publicFailure(error);
       results.push({ master: row.master, ok: false, detail });
       failCount += 1;
-      if (error?.deliveryUnknown) {
-        ledger[key] = {
-          ok: false,
-          fingerprint: row.fingerprint,
-          transport,
-          ...(paymentToken ? { paymentFingerprint: sha256(paymentToken) } : {}),
-          deliveryUnknown: true,
-          attemptedAt: new Date().toISOString(),
-        };
-        writeLedger(opts.ledger, ledger);
-      }
+      ledger[key] = {
+        ok: false,
+        pending: false,
+        failed: true,
+        fingerprint: row.fingerprint,
+        transport,
+        detail,
+        ...(error?.deliveryUnknown && paymentToken ? { paymentFingerprint: sha256(paymentToken) } : {}),
+        ...(error?.deliveryUnknown ? { deliveryUnknown: true } : {}),
+        attemptedAt: new Date().toISOString(),
+      };
+      writeLedger(opts.ledger, ledger);
       if (error?.fatal) {
         writeResults(opts.results, results);
         const stopped = new Error(`The ${transport} email batch stopped early. Resolve the reported delivery/authentication/payment problem before resuming with the same ledger.`);
@@ -499,11 +563,15 @@ export async function runBatch(opts) {
   }
 
   writeResults(opts.results, results);
-  console.log(`\nDone: ${sentCount} sent via ${transport}, ${dryRunCount} prepared by dry-run, ${skipCount} skipped (already-sent), ${failCount} failed of ${rows.length}.`);
+  const satsSpent = transport === "cashu" ? sentCount * CASHU_EMAIL_COST_SATS : 0;
+  const capUsedToday = capUsage ? capUsage.used + sentCount : 0;
+  const capRemaining = capUsage ? Math.max(0, capUsage.cap - capUsedToday) : 0;
+  console.log(`\nDone: ${sentCount} sent via ${transport}, ${dryRunCount} prepared by dry-run, ${skipCount} skipped (already-sent), ${failCount} failed, ${notAttemptedCount} not attempted of ${rows.length}.`);
+  if (transport === "cashu") console.log(`Cost: ${satsSpent} sats; daily cap ${capUsedToday}/${CASHU_DAILY_SEND_CAP} used.`);
   if (opts.results) console.log(`Results CSV -> ${opts.results}`);
   if (opts.ledger) console.log(`Ledger      -> ${opts.ledger}`);
   if (sender?.pubkey) console.log(`Sender pubkey: ${sender.pubkey}`);
-  return { sentCount, dryRunCount, skipCount, failCount, results };
+  return { sentCount, dryRunCount, skipCount, failCount, notAttemptedCount, satsSpent, capUsedToday, capRemaining, results };
 }
 
 function usage() {
