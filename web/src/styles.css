@@ -15352,6 +15352,32 @@ body.demo-page .demo-workspace {
   font-size: 14px;
 }
 
+.simple-resident-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.simple-delivery-panel .simple-resident-table .simple-voter-input {
+  min-width: 84px;
+  margin-bottom: 0;
+  padding: 8px 10px;
+}
+
+.simple-delivery-panel .simple-resident-table td:nth-child(3) .simple-voter-input {
+  min-width: 190px;
+}
+
+.simple-delivery-panel .simple-resident-table .simple-voter-input:disabled {
+  color: var(--simple-text);
+  opacity: 0.85;
+}
+
+.simple-delivery-panel .simple-delivery-transport {
+  width: auto;
+  min-width: 220px;
+  margin-bottom: 0;
+}
+
 .simple-resident-table th,
 .simple-resident-table td {
   border: 1px solid var(--surface-table-shell, #08111b);

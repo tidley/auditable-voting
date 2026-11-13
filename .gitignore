@@ -18,6 +18,10 @@ Thumbs.db
 deploy.env
 .secrets/
 
+# Local email sender state and temporary browser tooling
+.email-sender-state/
+web/.playwright-browsers/
+
 # Python
 __pycache__/
 *.pyc

@@ -1,5 +1,5 @@
 /**
- * CSV helpers for the OTP delivery flow.
+ * CSV helpers for resident admission delivery and legacy out-of-band exports.
  *
  * The export side (name+code pairs) must escape quotes, commas and newlines
  * properly — the formula-injection neutralisation in residentRegister.ts is
@@ -17,6 +17,58 @@ export interface DeliveryResultRow {
   ok: boolean;
   detail: string;
   ref?: string;
+}
+
+export interface ResidentCsvRow {
+  mastersListNumber: string;
+  email: string;
+  phone?: string;
+  name?: string;
+}
+
+/**
+ * Build the editable roster export used before admission codes are generated.
+ */
+export function buildResidentCsv(rows: ResidentCsvRow[]): string {
+  const header = "masters_list_number,email,phone,name";
+  const lines = rows.map((row) => [
+    row.mastersListNumber,
+    row.email,
+    row.phone ?? "",
+    row.name ?? "",
+  ].map(escapeCsvField).join(","));
+  return [header, ...lines].join("\n");
+}
+
+export interface EmailDeliveryBundleRow {
+  mastersListNumber: string;
+  email: string;
+  phone?: string;
+  name?: string;
+  code: string;
+  expiresAt: string;
+  questionnaireTitle: string;
+  voteUrl: string;
+}
+
+/**
+ * Build the sensitive hand-off between the browser and the coordinator-side
+ * email sender. `code` is the exact admission code already registered by the
+ * organiser; the sender must never generate a replacement.
+ */
+export function buildEmailDeliveryBundleCsv(rows: EmailDeliveryBundleRow[]): string {
+  const header = "masters_list_number,email,phone,name,code,expires_at,questionnaire_title,vote_url";
+  const lines = rows.map((row) => [
+    row.mastersListNumber,
+    row.email,
+    row.phone ?? "",
+    row.name ?? "",
+    row.code,
+    row.expiresAt,
+    row.questionnaireTitle,
+    row.voteUrl,
+  ].map(escapeCsvField).join(","));
+  return [header, ...lines].join("\n");
 }
 
 /**

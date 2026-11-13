@@ -2790,7 +2790,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setPaperBallotCode("");
       setPaperBallotMasterlistNumber("");
       setActiveInvite(null);
-      setStatus("Paper ballot request sent. Your anonymous ballot credential is pending receipt.");
+      setStatus("Admission request sent. Your anonymous ballot credential is pending receipt.");
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not request paper ballot access.");
@@ -4497,14 +4497,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && !responseSubmittedForCurrentQuestionnaire
     && !allQuestionResponsesSubmitted;
   const paperBallotAccess = !snapshot?.credentialReady && !snapshot?.submission ? <div className='simple-paper-ballot-access'>
-          <p className='simple-voter-note'>Have a paper ballot? Enter the code printed for your master-list record. These details are used only to admit you and never form part of your ballot.</p>
+          <p className='simple-voter-note'>Have an emailed or printed admission code? Enter it with your master-list number. These details are used only to admit you and never form part of your ballot.</p>
           <label className='simple-voter-field'>
             <span>Master-list number</span>
             <input className='simple-voter-input simple-paper-masterlist-input' value={paperBallotMasterlistNumber} onChange={(event) => setPaperBallotMasterlistNumber(event.target.value)} autoComplete='off' spellCheck={false} />
           </label>
           <PaperBallotCodeInput value={paperBallotCode} onChange={setPaperBallotCode} />
           <UiButton icon='key' className='simple-voter-secondary' isDisabled={!snapshot?.loginVerified || Boolean(privateInviteBlock) || proofOfWorkInFlight || !PAPER_BALLOT_CODE_PATTERN.test(normalisePaperBallotCode(paperBallotCode)) || !paperBallotMasterlistNumber.trim()} onPress={() => void requestPaperBallot()}>
-            Use paper ballot code
+            Use admission code
           </UiButton>
         </div> : null;
   const ballotStatusSection = (

@@ -46,7 +46,7 @@ The practical target is small-organisation and controlled-pilot voting, not high
 - Organiser and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, rejection reasons, provisional live chart markers, and organiser-side automatic decryption of encrypted answer details when the local organiser key is available. Public decisions are the normal acceptance signal; private acceptance DMs are only a recovery path for older/private flows. Final summaries can point to a public Blossom CSV result pack mirrored to at least two servers; Observer verifies the advertised blob size and SHA-256 before using it as a relay readback fallback. The CSV opens directly in spreadsheet tools and includes response IDs, submittor pubkeys, accepted/rejected status, rejection reasons, answers, result-count metadata, nullifiers, token commitments, and blind-token signatures/proofs.
 - Observer-local `nsec` entry for decrypting encrypted response details when the organiser key is deliberately supplied.
 - Optional audit proxy that can issue credentials, verify submissions, publish decisions, close completed questionnaires, and publish result summaries.
-- Coordinator **resident admission** with one-time codes: upload a resident CSV, generate per-resident or batch codes (CSPRNG, salted-hash verification, rate limiting), and verify a 6-digit code. A **delivery** abstraction lets the coordinator pick a channel per election (manual, email-nomail, SMS), export name+code pairs for out-of-band distribution, and import a results CSV to see which residents were reached. Batch email sending runs on the coordinator machine, not in the browser; the manual channel is the recommended fallback.
+- Coordinator **resident email admission**: import or directly edit a resident roster, choose or default an expiry, and generate the same ten-character, single-use paper-admission codes for email delivery. One **Import** action accepts either roster contacts or redacted sender results; **Export** produces the resident CSV before generation and the exact-code email bundle afterwards. Codes are masked by default with deliberate per-resident reveal/copy controls, and identity fields lock after generation. A loopback-only coordinator companion (`npm --prefix web run email:sender`) serves the local app and adds **Send emails**, delivering one recipient-specific message through SMTP or cashu.email while keeping credentials in the companion process. The separate `scripts/otp-send-email.mjs` CLI remains as a dry-run/export fallback. The sender never substitutes a new OTP, carries no SMTP/cashu credentials in the browser bundle, and resumes with a redacted questionnaire-scoped ledger and results CSV. Only opaque admission hashes enter the issuer configuration; plaintext contact details/codes never enter public Nostr events or anonymous ballots. Reloading discards the plaintext batch, so export before leaving and do not generate replacements that would leave earlier admissions active. Email provider deliverability still needs deployment-specific manual verification; paper/manual distribution remains the fallback. See [the coordinator runbook](docs/otp-delivery.md).
 - Static deployment to GitHub Pages or nsite.
 
 The interface ships in a bright light theme by default and also offers a calm dark theme. The sun/moon toggle to the right of **How it works** switches between the two without overlapping the help link. The choice is remembered on the device and shared with the offline demo. First visits always start light: the system colour-scheme preference is deliberately not consulted.
@@ -99,6 +99,14 @@ Build the static site:
 npm --prefix web run build
 ```
 
+Run the local coordinator email sender (builds the app, serves it only on loopback and enables in-UI **Send emails**):
+
+```bash
+npm --prefix web run email:sender
+```
+
+Configure SMTP or cashu.email credentials in that terminal; see [the coordinator runbook](docs/otp-delivery.md).
+
 If rebuilding the WebAssembly blind-signature package directly, install the Rust Wasm target first:
 
 ```bash
@@ -115,6 +123,8 @@ npm run test:rust
 npm run verify:simple-blind-shares
 npx tsc --noEmit
 npm run build
+cd ..
+node --test scripts/test/otp-send-email.test.mjs scripts/test/email-sender.test.mjs
 ```
 
 Worker tests:

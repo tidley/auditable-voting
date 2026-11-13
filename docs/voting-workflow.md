@@ -80,7 +80,7 @@ both issuer and ballot worker, that operator has both roles' visibility.
 3. Choose the issuer: keep the organiser browser online, or configure the
    delegated Linux worker. Ensure its private configuration is delivered.
 4. Choose admission: general access with eligibility approval, private invites,
-   or paper codes. For timing mitigation, set the signed private-worker identity,
+   or paper/email credential codes. For timing mitigation, set the signed private-worker identity,
    DM relay allowlist, threshold and deadline, with queue/release delegation,
    before publishing. Do not add these to an already immutable definition.
 5. Publish the definition and open/select that questionnaire in Organiser so its
@@ -90,26 +90,37 @@ both issuer and ballot worker, that operator has both roles' visibility.
    sensitive bearer material. Stored admission records retain the combined
    election/number/code hash plus lifecycle metadata, not the plain values or
    a separate roster hash.
-6. Do not generate another paper batch for the same roster after reload: with
-   hash-only storage the app cannot find and revoke the earlier codes. Both
-   may remain usable. Duplicate checks cover the open print session only.
-7. Test private receipts and batch release in a separate rehearsal election
-   before using that configuration for real voters. Share the appropriate invite
-   only once the issuer is ready. Watch credential
-   delivery separately from aggregate private queue progress. A pending access
-   request may need eligibility approval; a valid paper request issues without
-   another manual approval.
-8. Allow the configured final batch release to finish, then close and publish
-   results using the normal organiser controls. Paper rounds do not use
-   automatic expected-count completion; the organiser controls closure.
-9. Ask an Observer to verify the result independently.
+6. For resident email, start the loopback coordinator companion with
+   `npm --prefix web run email:sender` and open its local URL. In **Resident
+   email admission**, one **Import** action loads an editable resident CSV;
+   **Add row**, **Remove**, **Set defaults** and one context-sensitive
+   **Export** complete the table. Set a future expiry, generate the same
+   paper-compatible codes, and use **Send emails** to deliver one message per
+   resident through SMTP or cashu.email. Credentials stay in the companion
+   process. Codes are masked until deliberately revealed. Export and the CLI
+   remain fallbacks. Email does not share the voter's code with Nostr, but it is
+   visible to the mail provider. See [the email runbook](otp-delivery.md).
+7. Do not generate another paper or email batch for the same roster after
+   reload: with hash-only storage the app cannot find and revoke the earlier
+   codes. Both may remain usable. Duplicate checks cover the open batch only.
+8. Test private receipts, email links and batch release in a separate rehearsal
+   election before using that configuration for real voters. A delivered message
+   is not proof of ballot receipt. Share the appropriate invite only once the
+   issuer is ready. Watch credential delivery separately from aggregate private
+   queue progress. A pending access request may need eligibility approval; a
+   valid paper/email credential request issues without another manual approval.
+9. Allow the configured final batch release to finish, then close and publish
+   results using the normal organiser controls. Paper/email-admission rounds do
+   not use automatic expected-count completion; the organiser controls closure.
+10. Ask an Observer to verify the result independently.
 
 ## 5. Voter tutorial
 
-1. Open the questionnaire invite. With a paper ballot, enter its code and your
-   master-list number in the paper-access fields on Vote. These inputs derive
-   the admission hash locally; they are not part of the anonymous ballot.
-2. Send the access request. Correct a mistyped paper entry while access is
+1. Open the questionnaire invite. With a printed or emailed admission code,
+   enter its code and your master-list number in the admission fields on Vote.
+   These inputs derive the admission hash locally; they are not part of the
+   anonymous ballot.
+2. Send the access request. Correct a mistyped admission entry while access is
    pending. Wait for the blind credential; sending the request is not admission.
    A valid code is bound to the admitted identity and cannot admit another
    identity. Keep this browser state or its encrypted backup for recovery.
@@ -208,13 +219,14 @@ Loss of issuer state, keys or voter recovery secrets is a different failure:
 stop and follow the election's recovery procedure rather than issuing an extra
 vote. A valid paper admission retry remains bound to the original voter.
 
-## 10. Planned, not shipped as a complete admission service
+## 10. Remaining admission limitations
 
 - Signed reusable admission grants scoped to eligibility group, issuer, voter
   and expiry remain future work. Every election still needs fresh credentials.
-- Resident import and OTP previews are not cross-device authentication. The
-  proposed automated email delivery work is not merged. Do not treat an OTP UI
-  success or a browser-local flag as protocol-level admission.
+- Emailed codes use the shipped paper admission protocol, not a browser-local
+  OTP flag. Actual mail delivery still depends on the coordinator's sender,
+  provider and recipient; test small controlled sends and retain paper/manual
+  fallback. Codes and contact details are sensitive exports, not relay inputs.
 - SMS provider integration is not implemented. Worker/Nostr connectivity is a
   separate concern from SMS or email delivery.
 
