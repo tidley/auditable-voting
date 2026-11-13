@@ -52,7 +52,7 @@ jobs:
       # Runs on EVERY PR/commit. Q3: cashu.email send-logic coverage in CI.
       - name: Run offline email send tests
         working-directory: .
-        run: node --test scripts/test/otp-send-email.test.mjs
+        run: node --test scripts/test/otp-send-email.test.mjs scripts/test/email-sender.test.mjs
 
   live-send:
     name: Real cashu.email send (self-contained, zero secrets)

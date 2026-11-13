@@ -275,10 +275,10 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel />);
     expect(await screen.findByLabelText("Master-list number")).toBeTruthy();
     expect(screen.getByLabelText("Paper code character 1 of 10")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Use paper ballot code" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use admission code" })).toBeTruthy();
     await user.type(screen.getByLabelText("Master-list number"), "ML-001");
     await user.type(screen.getByLabelText("Paper code character 1 of 10"), "ABCD1234EF");
-    await user.click(screen.getByRole("button", { name: "Use paper ballot code" }));
+    await user.click(screen.getByRole("button", { name: "Use admission code" }));
     await waitFor(() => expect(request).toHaveBeenCalledWith({ masterlistNumber: "ML-001", code: "ABCD1234EF" }));
     expect(screen.getByLabelText("Paper code character 1 of 10")).toBeTruthy();
   });

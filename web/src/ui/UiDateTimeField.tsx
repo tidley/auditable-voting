@@ -2,9 +2,9 @@ import { parseDateTime } from '@internationalized/date';
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button, Calendar, CalendarCell, CalendarGrid, DateInput, DatePicker, DateSegment, Dialog, Group, Heading, I18nProvider, Label, Popover } from 'react-aria-components';
 
-export default function UiDateTimeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+export default function UiDateTimeField({ label, value, onChange, isDisabled = false }: { label: string; value: string; onChange: (value: string) => void; isDisabled?: boolean }) {
   return <I18nProvider locale='en-GB'>
-    <DatePicker className='av-ui-field av-ui-date-picker' value={value ? parseDateTime(value) : null} onChange={date => onChange(date?.toString() ?? '')} granularity='minute' hourCycle={24}>
+    <DatePicker className='av-ui-field av-ui-date-picker' value={value ? parseDateTime(value) : null} onChange={date => onChange(date?.toString() ?? '')} granularity='minute' hourCycle={24} isDisabled={isDisabled}>
       <Label className='av-ui-label'>{label}</Label>
       <Group className='av-ui-input av-ui-date-group'>
         <DateInput className='av-ui-date-input' aria-label={label}>{segment => <DateSegment segment={segment} className='av-ui-date-segment' />}</DateInput>
