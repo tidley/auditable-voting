@@ -387,7 +387,10 @@ function readPaymentTokens(opts, requiredCount, usedTokenFingerprints = new Set(
     : opts.cashuToken ? [opts.cashuToken] : [])
     .filter((token) => !usedTokenFingerprints.has(sha256(token)));
   if (requiredCount > 0 && process.env.TEST_API_STUB !== "1" && tokens.length < requiredCount) {
-    throw new Error(`Live cashu.email sending needs one unused 100-sat payment token per pending recipient (${requiredCount} required, ${tokens.length} supplied). Provide --cashu-tokens-file with one token per line. No emails were sent.`);
+    throw Object.assign(new Error(`Live cashu.email sending needs one unused 100-sat payment token per pending recipient (${requiredCount} required, ${tokens.length} supplied). Provide --cashu-tokens-file with one token per line. No emails were sent.`), {
+      httpStatus: 400,
+      code: "payment_tokens_missing",
+    });
   }
   return tokens;
 }
@@ -447,9 +450,23 @@ function writeResults(path, results) {
 
 export async function runBatch(opts) {
   const transport = opts.transport || "cashu";
-  if (!TRANSPORTS.has(transport)) throw new Error(`Unsupported email transport: ${transport}.`);
+  if (!TRANSPORTS.has(transport)) {
+    throw Object.assign(new Error(`Unsupported email transport: ${transport}.`), {
+      httpStatus: 400,
+      code: "invalid_transport",
+    });
+  }
   const csvText = opts.csvText ?? readFileSync(opts.csv, "utf8");
-  const { rows, bundleScope } = parseAdmissionBundle(csvText);
+  let parsed;
+  try {
+    parsed = parseAdmissionBundle(csvText);
+  } catch (error) {
+    throw Object.assign(new Error(error instanceof Error ? error.message : "Invalid admission bundle."), {
+      httpStatus: 400,
+      code: "invalid_bundle",
+    });
+  }
+  const { rows, bundleScope } = parsed;
   const ledger = readLedger(opts.ledger);
   const results = [];
   let sentCount = 0;
@@ -462,10 +479,16 @@ export async function runBatch(opts) {
     const key = `${bundleScope}:${row.master}`;
     const existing = ledger[key];
     if (existing && existing.fingerprint && existing.fingerprint !== row.fingerprint) {
-      throw new Error(`The ledger belongs to different admission details for master-list number ${row.master}. Use a new ledger for a new bundle; do not overwrite an existing admission batch.`);
+      throw Object.assign(new Error(`The ledger belongs to different admission details for master-list number ${row.master}. Use a new ledger for a new bundle; do not overwrite an existing admission batch.`), {
+        httpStatus: 409,
+        code: "ledger_conflict",
+      });
     }
     if ((existing?.deliveryUnknown || existing?.pending) && !opts["retry-unknown"]) {
-      throw new Error(`A previous send did not record confirmed delivery for master-list number ${row.master}. Check delivery before retrying. If resending is intentional, add --retry-unknown; use a fresh payment token for cashu.email.`);
+      throw Object.assign(new Error(`A previous send did not record confirmed delivery for master-list number ${row.master}. Check delivery before retrying. If resending is intentional, add --retry-unknown; use a fresh payment token for cashu.email.`), {
+        httpStatus: 409,
+        code: "ledger_conflict",
+      });
     }
   }
 

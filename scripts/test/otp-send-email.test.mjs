@@ -529,5 +529,22 @@ test("a pending ledger entry from an interrupted process blocks automatic retry"
     ledger: paths.ledger,
     results: paths.results,
     "cashu-tokens-file": paths.tokens,
-  }), /did not record confirmed delivery/);
+  }), (error) => {
+    assert.equal(error.httpStatus, 409);
+    assert.equal(error.code, "ledger_conflict");
+    assert.match(error.message, /did not record confirmed delivery/);
+    return true;
+  });
+});
+
+test("runBatch classifies invalid bundles for the companion", async () => {
+  await assert.rejects(runBatch({
+    transport: "smtp",
+    csvText: "masters_list_number,email",
+  }), (error) => {
+    assert.equal(error.httpStatus, 400);
+    assert.equal(error.code, "invalid_bundle");
+    assert.match(error.message, /missing the required/);
+    return true;
+  });
 });

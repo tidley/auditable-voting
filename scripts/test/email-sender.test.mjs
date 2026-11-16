@@ -17,6 +17,7 @@ let server;
 let base;
 let stateDir;
 let lastDeliveryOptions;
+let deliveryError = null;
 const deliveryResults = { sentCount: 1, skipCount: 0, failCount: 0, results: [{ master: "101", ok: true, detail: "sent", ref: "smtp-1" }] };
 
 before(async () => {
@@ -31,6 +32,7 @@ before(async () => {
     env: { SMTP_HOST: "smtp.example.test", SMTP_PORT: "587", SMTP_FROM: "coordinator@example.test", NOMAIN_NSEC: "sender-secret" },
     runDelivery: async (options) => {
       lastDeliveryOptions = options;
+      if (deliveryError) throw deliveryError;
       return deliveryResults;
     },
   });
@@ -127,8 +129,39 @@ test("rejects unconfigured transports, malformed packages and unsupported conten
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ transport: "smtp", bundleCsv: "masters_list_number,email" }),
   });
-  assert.equal(response.status, 502);
-  assert.match((await response.json()).error, /missing the required/);
+  assert.equal(response.status, 400);
+  const invalid = await response.json();
+  assert.equal(invalid.code, "invalid_bundle");
+  assert.match(invalid.error, /missing the required/);
+});
+
+test("maps ledger conflicts to 409 and keeps transport failures at 502", async () => {
+  deliveryError = Object.assign(new Error("The ledger belongs to different admission details for master-list number 101."), {
+    httpStatus: 409,
+    code: "ledger_conflict",
+  });
+  try {
+    let response = await fetch(`${base}/__email/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ transport: "smtp", bundleCsv: BUNDLE }),
+    });
+    assert.equal(response.status, 409);
+    const conflict = await response.json();
+    assert.equal(conflict.code, "ledger_conflict");
+    assert.match(conflict.error, /different admission details/);
+
+    deliveryError = Object.assign(new Error("SMTP authentication failed."), { status: 535 });
+    response = await fetch(`${base}/__email/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ transport: "smtp", bundleCsv: BUNDLE }),
+    });
+    assert.equal(response.status, 502);
+    assert.match((await response.json()).error, /SMTP authentication failed/);
+  } finally {
+    deliveryError = null;
+  }
 });
 
 test("same-origin companion send reaches a real SMTP socket with recipient instructions", async () => {
