@@ -70,6 +70,17 @@ function draftFromResident(resident: ResidentEntry, id: string): DraftResident {
   };
 }
 
+export function emailVoterUrl(voterUrl: string): string {
+  try {
+    const url = new URL(voterUrl);
+    url.searchParams.delete("request_ballot");
+    url.searchParams.delete("auto_request");
+    return url.toString().replace(/\?$/, "");
+  } catch {
+    return voterUrl;
+  }
+}
+
 export default function DeliveryPanel(props: DeliveryPanelProps) {
   const [rows, setRows] = useState<DraftResident[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
@@ -270,7 +281,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       code: admission.code,
       expiresAt: admission.admission.expiresAt,
       questionnaireTitle: resolveLocalised(props.definition?.title ?? "", "en").trim() || "Auditable voting questionnaire",
-      voteUrl: props.voterUrl,
+      voteUrl: emailVoterUrl(props.voterUrl),
     })));
   }
 

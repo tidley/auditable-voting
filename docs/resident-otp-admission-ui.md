@@ -42,9 +42,11 @@ provider delivery; see [`docs/otp-delivery.md`](otp-delivery.md).
    formatted code and enables **Copy**; **Hide** masks it again. Masking reduces
    casual exposure, not what the coordinator is technically able to see.
 6. Export the sensitive bundle before reloading. Fields are
-   `masters_list_number,email,phone,name,code,expires_at,vote_url`. All CSV cells
-   are properly escaped. The voter URL has public questionnaire parameters only,
-   never code, email or name fields.
+   `masters_list_number,email,phone,name,code,expires_at,questionnaire_title,vote_url`.
+   All CSV cells are properly escaped. The voter URL has public questionnaire
+   parameters only, never code, email or name fields. Email links deliberately
+   omit ordinary auto-request parameters so recipients start from the admission
+   code form.
 7. With the local companion connected, select **SMTP mailbox** or
    **cashu.email** and click **Send emails**. The companion sends one message per
    resident, including the questionnaire title, public voter link, master-list

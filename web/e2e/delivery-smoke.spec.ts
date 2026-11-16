@@ -75,6 +75,8 @@ test("resident email admission: one import, editable table, masked codes and exa
   const expiryMs = Date.parse(lines[1].split(",")[5] ?? "");
   expect(Math.abs(expiryMs - (Date.now() + 24 * 60 * 60 * 1000))).toBeLessThan(5 * 60 * 1000);
   expect(lines[1]).toContain("role=voter&q=resident-email-harness");
+  expect(lines[1]).not.toContain("request_ballot");
+  expect(lines[1]).not.toContain("auto_request");
   expect(lines[1]).not.toContain("invite_code=");
 
   await page.reload();

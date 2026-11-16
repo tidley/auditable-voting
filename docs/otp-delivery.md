@@ -145,6 +145,65 @@ replacement batch merely because an export was lost: previously generated
 admissions can remain active. Follow the election's explicit revocation/recovery
 procedure or start a new questionnaire instead.
 
+## Local same-machine happy path
+
+This mode intentionally uses localhost links. Recipients must use a separate
+browser profile on the same machine; it is not a public deployment.
+
+1. Run a local SMTP capture inbox such as Mailpit:
+
+   ```bash
+   GOBIN=/tmp/av-bin go install github.com/axllent/mailpit@latest
+   /tmp/av-bin/mailpit
+   ```
+
+   Its SMTP endpoint defaults to `127.0.0.1:1025`; its inbox is
+   `http://127.0.0.1:8025`.
+
+2. Configure an ignored repository-root `.env`:
+
+   ```dotenv
+   SMTP_HOST=127.0.0.1
+   SMTP_PORT=1025
+   SMTP_SECURE=false
+   SMTP_FROM=vote@localhost
+   ```
+
+3. Start the companion:
+
+   ```bash
+   npm --prefix web run email:sender
+   ```
+
+4. Publish/open the questionnaire and reload the UI. Import a controlled test
+   resident, generate a code, select **SMTP mailbox**, and click **Send emails**.
+   The captured message appears in Mailpit.
+
+5. Open the message and voter link in a private browser profile. The email link
+   deliberately omits `request_ballot=1`; enter the number/code and request the
+   ballot from the admission-code form.
+
+For local Cashu testing, the opt-in fixture mints one testnut token without
+printing it:
+
+```bash
+LIVE_ALLOW=1 PATH=/path/to/nutshell/bin:$PATH \
+  node scripts/test/mint-testnut-ecash.mjs --out /tmp/testnut-token.txt
+```
+
+Point `CASHU_TOKENS_FILE` at that file and add an ephemeral sender key in
+`NOMAIN_NSEC`. Never commit these values.
+
+**Known provider issue (16 November 2026):** cashu.email rejected both the
+standard CBOR V4 `cashuB` token emitted by current Nutshell and an equivalent
+JSON encoding, reporting `cashu token decode failed ... malformed or unsupported
+version` before any send. The same testnut token was valid against the mint.
+SMTP delivered correctly, so SMTP remains the working local happy path. Follow
+[issue #44](https://github.com/tidley/auditable-voting/issues/44) and current
+provider releases before advertising cashu.email as operational.
+
+Delete `.env`, the token file and any sender key after testing.
+
 ## Recipient email
 
 The companion sends one recipient-specific text and HTML message. Its content is

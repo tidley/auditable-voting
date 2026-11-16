@@ -17,5 +17,5 @@ createRoot(root).render(React.createElement(DeliveryPanel, {
   electionId: definition.questionnaireId,
   definition,
   runtime: { addPaperBallotAdmission() {} } as never,
-  voterUrl: "https://tidley.github.io/auditable-voting/?role=voter&q=resident-email-harness&coordinator=npub1test",
+  voterUrl: "https://tidley.github.io/auditable-voting/?role=voter&q=resident-email-harness&coordinator=npub1test&request_ballot=1",
 }));

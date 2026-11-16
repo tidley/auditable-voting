@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import DeliveryPanel, { batchDefaultExpiry } from "./DeliveryPanel";
+import DeliveryPanel, { batchDefaultExpiry, emailVoterUrl } from "./DeliveryPanel";
 import type { QuestionnaireDefinition } from "../questionnaireProtocol";
 
 if (!globalThis.crypto?.subtle) {
@@ -16,6 +16,7 @@ vi.mock("../ui/UiDateTimeField", () => ({
 
 const ELECTION_ID = "election-abc";
 const VOTER_URL = `https://example.test/auditable-voting/?role=voter&q=${ELECTION_ID}&coordinator=npub1test`;
+const AUTO_REQUEST_INVITE_URL = `${VOTER_URL}&request_ballot=1&auto_request=1`;
 const DEFINITION = { questionnaireId: ELECTION_ID, title: "Resident vote", questions: [] } as unknown as QuestionnaireDefinition;
 const CSV_HEADER = "masters_list_number,email,phone,name";
 const VALID_CSV = [CSV_HEADER, "101,alice@example.org,,Alice Smith", "102,bob@example.org,,Bob Jones"].join("\n");
@@ -26,7 +27,7 @@ function makeProps() {
     electionId: ELECTION_ID,
     definition: DEFINITION,
     runtime: { addPaperBallotAdmission: vi.fn() },
-    voterUrl: VOTER_URL,
+    voterUrl: AUTO_REQUEST_INVITE_URL,
     onAdmissionsChanged: vi.fn(),
   };
 }
@@ -98,6 +99,8 @@ describe("Resident email admission", () => {
   });
 
   it("sets a 24-hour batch default without deleting imported residents", async () => {
+    expect(emailVoterUrl(AUTO_REQUEST_INVITE_URL)).toBe(VOTER_URL);
+    expect(emailVoterUrl(`${VOTER_URL}&request_ballot=1`)).not.toContain("request_ballot");
     const now = new Date("2026-01-05T10:15:00");
     expect(batchDefaultExpiry(now)).toBe("2026-01-06T10:15");
     const props = makeProps();
@@ -167,6 +170,8 @@ describe("Resident email admission", () => {
     expect(lines[1]).toContain('"Smith, Alice"');
     expect(lines[1]).toMatch(/101,alice@example.org,,"Smith, Alice",[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10},2099-01-01T/);
     expect(lines[1]).toContain(VOTER_URL);
+    expect(lines[1]).not.toContain("request_ballot");
+    expect(lines[1]).not.toContain("auto_request");
     expect(lines[1]).not.toContain("••••");
     expect(await screen.findByText(/Email bundle exported/)).toBeTruthy();
   });

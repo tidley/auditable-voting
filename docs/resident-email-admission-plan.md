@@ -95,6 +95,20 @@ Deliver one focused contribution that lets an organiser upload a resident contac
 - [x] Post a supersession cross-reference on PR39 and close it after this decision is recorded.
 - [x] Re-run focused/full verification at the final revision.
 
+### Local same-machine happy-path validation
+
+- [x] Generate a dedicated email voter URL without `request_ballot`/auto-request.
+- [x] Assert exported/email links retain the questionnaire identity and relay hints but never auto-request a general ballot.
+- [x] Install and run a loopback SMTP capture inbox outside the repository.
+- [x] Configure the local companion for both local SMTP and cashu.email in an ignored `.env`.
+- [x] Create an opt-in local fixture for an ephemeral sender key and testnut Cashu token.
+- [x] Exercise the SMTP path through the Send emails UI and inspect the captured message/link.
+- [x] Exercise the cashu.email path with testnut and record whether provider acceptance and inbox delivery succeed.
+- [ ] Verify localhost recipient-link flow, including no auto-request and admission-code entry in the actual published questionnaire.
+- [ ] Clean temporary credentials/tokens after the user's manual test.
+
+Local result: SMTP was accepted by Mailpit from the **Send emails** UI. The captured message had the expected subject, recipient, number, formatting, instructions, expiry and clickable link; the link contained no admission code or auto-request parameters. cashu.email rejected the standard current-Nutshell V4 token before sending (`token decode failed ... malformed or unsupported version`), even though the testnut token was valid against its mint. This is recorded as a provider limitation and in issue #44.
+
 ### Documentation and manual acceptance
 
 - [x] Align `README.md`, operator documentation, project explainer and presentation copy where relevant.
@@ -127,6 +141,14 @@ Base revision: `a3246c03` (upstream `main` at checkout), with the present uncomm
 - Worker suite: **108 passing, 3 ignored, 0 failed** (worker code unchanged).
 - Manual local UI check: companion health appeared through the development proxy, SMTP was selected, and **Send emails** became visible after admission generation.
 - Desktop/mobile table screenshots inspected; the single Import, compact sender control and readable locked fields rendered correctly.
+
+### Local same-machine evidence — 16 November 2026
+
+- A Mailpit SMTP capture inbox accepted a message sent through the actual **Send emails** UI.
+- Captured message checks: correct subject, recipient, greeting, master-list number, formatted code, readable UTC expiry, redemption steps, anonymous-ballot warning, clickable HTML link and plain-text fallback URL.
+- The email voter link contained no admission code and no `request_ballot`/`auto_request` parameters.
+- The opt-in testnut fixture successfully minted 100 test sats from `https://testnut.cashu.space`.
+- cashu.email rejected the valid standard V4 CBOR token before sending with `cashu token decode failed ... malformed or unsupported version`; an equivalent compact JSON V4 representation also failed. This is recorded in issue #44 and the runbook. SMTP remains the working local path.
 
 ### Acceptance still outstanding
 
