@@ -1,9 +1,18 @@
-# OTP Service — Security Hardening
+# OTP Service — Security Hardening (legacy helper)
+
+> **Historical scope:** this note documents the standalone `web/src/otpService.ts`
+> helper and its unit tests. That six-digit helper is no longer mounted by the
+> coordinator application. Do not describe this old local demo as cross-device
+> admission or use its in-memory rate limiter as a production security boundary.
+> Current resident admission reuses the existing paper-admission code path; see
+> [`resident-otp-admission-ui.md`](resident-otp-admission-ui.md) and
+> [`otp-delivery.md`](otp-delivery.md).
 
 ## Overview
 
 The OTP service (`web/src/otpService.ts`) provides one-time password generation,
-hashing, verification, and expiry checking for the resident OTP admission flow.
+hashing, verification, and expiry checking for the retired resident OTP preview
+flow.
 
 This document describes the security measures implemented in the service and
 the rationale for each.

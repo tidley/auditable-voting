@@ -1,69 +1,68 @@
-# Resident OTP admission — coordinator UI (demo)
+# Resident email admission — coordinator UI
 
 ## Overview
 
-The coordinator app exposes a **Resident admission** section in the
-Participants tab (`web/src/ResidentOtpAdmission.tsx`, mounted in
-`SimpleCoordinatorApp.tsx`). It wires two existing services into a minimal
-user-facing flow:
+**Voters → Resident email admission** replaces the former browser-local six-digit
+OTP demo. The component is `web/src/otpDelivery/DeliveryPanel.tsx`, mounted by
+`SimpleCoordinatorApp.tsx` for the selected questionnaire with its definition,
+issuer runtime and public voter URL.
 
-- `residentRegister.ts` — CSV parsing with validation and formula-injection
-  neutralisation
-- `otpService.ts` — secure one-time-code generation, salted hashing,
-  verification, expiry
-
-This is a **demo** flow: no email or SMS delivery is attempted. Codes are
-displayed to the organiser once, who hands them to residents out of band.
+It generates the same paper-compatible admission credentials used by the paper
+workflow, and exports a sensitive bundle for out-of-band delivery. Sending from
+the coordinator machine is added by the loopback companion follow-up; this page
+covers the roster, generation, masking and export surface.
 
 ## Flow
 
-1. **Upload** — the organiser uploads a CSV with the header
-   `masters_list_number,email,phone,name`. Parsing is all-or-nothing: any
-   invalid row rejects the file with a per-row error list.
-2. **Generate** — per resident or in one batch. Each code is generated with
-   `generateOtp()` (CSPRNG) and its salted SHA-256 hash (`hashOtp()`) is
-   retained for verification. The plaintext code is displayed in the
-   "Issued codes" panel with a copy button and the issue time, and is
-   never re-derivable from the stored hash. Re-generating replaces the
-   entry. Note: codes and hashes live in component state only — switching
-   coordinator tabs or uploading a new roster discards them; the section
-   holds them in browser memory for its mounted lifetime and sends nothing
-   to any server.
-3. **Verify** — the organiser selects a resident, enters the 6-digit code,
-   and submits. The form reports one of: success, incorrect code,
-   rate-limited (after `MAX_OTP_ATTEMPTS` failures), expired
-   (`ADMISSION_TTL_MS`, 24 hours — admission codes are distributed out of
-   band and may sit before the resident enters them), or that no code has
-   been issued yet.
+1. Select **Import** and choose one CSV with
+   `masters_list_number,email,phone,name`. `parseResidentCsv` rejects the whole
+   file if a row is invalid or a number is duplicated, and neutralises
+   spreadsheet-formula cells.
+2. Review or edit imported records in the table. **Add row** and **Remove**
+   cover records absent from the file. **Export** before generation downloads
+   the resident contact CSV; after generation it downloads the sensitive
+   exact-code bundle.
+3. Select **Set defaults** to apply a 24-hour future expiry, or use the date
+   picker to choose another local expiry. The browser converts it to an ISO UTC
+   timestamp.
+4. Generate admissions in one batch. `createPaperBallotAdmissionSheet()` creates
+   the same ten-character codes as the paper workflow. Every admission is added
+   to the coordinator runtime and triggers the existing worker-refresh callback.
+   Roster identity fields and the expiry lock after generation so a registered
+   admission cannot silently acquire a different number.
+5. Review masked codes. The individual **Reveal** action shows one resident's
+   formatted code and enables **Copy**; **Hide** masks it again. Masking reduces
+   casual exposure, not what the coordinator is technically able to see.
+6. Export the sensitive bundle before reloading. Fields are
+   `masters_list_number,email,phone,name,code,expires_at,questionnaire_title,vote_url`.
+   All CSV cells are properly escaped. The voter URL has public questionnaire
+   parameters only, never code, email or name fields. Links deliberately omit
+   ordinary auto-request parameters so recipients start from the admission-code
+   form.
 
-## Security properties
+## Privacy and retention
 
-- Codes are never sent anywhere; the salted `saltHex:hashHex` values used
-  for verification are held in browser memory only while the section is
-  mounted (no persistence, no network).
-- The plaintext code remains visible in the Issued codes panel until
-  replaced or the roster changes — it is a demo hand-off channel, not a
-  delivery channel. Clipboard copy failure is silent (browser denies or
-  lacks clipboard access); the code can still be read and transcribed
-  manually.
-- Verification goes through `verifyOtp()` (constant-time comparison,
-  per-hash rate limiting).
-- Expiry is checked with `isOtpExpired()` before verification, so expired
-  codes fail closed.
-- All CSV text fields pass through the register's formula-injection
-  neutralisation before display.
+- UI state carries the open plaintext batch only long enough to review/export.
+- Reloading discards the plaintext batch but does not revoke the issued opaque
+  admission hashes. Do not generate a replacement batch for the same roster.
+- The admission entry bound for issuance contains an opaque combined
+  election/number/code hash, expiry and lifecycle state, not contact details or
+  a plaintext roster mapping.
+- The browser does not handle sender credentials or payment tokens.
+- The exported bundle is sensitive: it contains contact details and plaintext
+  codes. Delete it after delivery and never commit it.
+- A clipboard-permission failure tells the coordinator to copy the revealed code
+  manually rather than leaving an unexplained unchanged button.
 
-## Testing
-
-`web/src/ResidentOtpAdmission.test.tsx` covers the upload, table rendering,
-error display, per-resident and batch generation, clipboard copy, and all
-verification outcomes (success / incorrect / rate-limited / expired).
-Coverage of the component exceeds 98% statements / 90% branches.
+## Verification
 
 ```bash
-cd web && npx vitest run src/ResidentOtpAdmission.test.tsx
+cd web
+npx vitest run src/otpDelivery/DeliveryPanel.test.tsx src/otpDelivery/csv.test.ts
+npx tsc --noEmit
+npm run build
 ```
 
-See `docs/otp-service-security.md` for the underlying service design and
-`docs/csv-injection-protection.md` for the CSV hardening. For the delivery
-channels, selector and results import, see `docs/otp-delivery.md`.
+Existing admission runtime and worker tests cover issuer-side registration and
+redemption. Run a controlled paper/export rehearsal before treating the flow as
+ready for a resident deployment.

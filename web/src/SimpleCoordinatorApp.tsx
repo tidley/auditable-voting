@@ -60,7 +60,6 @@ import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
-import ResidentOtpAdmission from "./ResidentOtpAdmission";
 import DeliveryPanel from "./otpDelivery/DeliveryPanel";
 import { UiButton, UiDataTable, UiIcon, UiSelect, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import { useLocaleSafe, useTSafe } from "./i18n/LanguageContext";
@@ -180,7 +179,6 @@ import {
 } from "./questionnaireProtocolConstants";
 import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
-import ResidentImportPreview from "./ResidentImportPreview";
 import PaperBallotCoordinatorPanel from "./PaperBallotCoordinatorPanel";
 import type { PaperBallotAdmissionEntry } from "./paperBallotAdmission";
 
@@ -9375,14 +9373,15 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	              </SimpleCollapsibleSection>
             </div>
             <details className='simple-organiser-disclosure simple-organiser-preview-tools'>
-              <summary>Resident tools (preview)</summary>
-              <ResidentImportPreview />
-            <div id='coordinator-resident-admission-section'>
-              <ResidentOtpAdmission />
-            </div>
-            <div id='coordinator-delivery-section'>
-              <DeliveryPanel electionId={optionAElectionId} />
-            </div>
+              <summary>Resident email admission</summary>
+              <DeliveryPanel
+                key={optionAElectionId}
+                electionId={optionAElectionId}
+                definition={readCachedQuestionnaireDefinition(optionAElectionId)}
+                runtime={optionACoordinatorRuntime}
+                voterUrl={publicQuestionnaireInviteUrl}
+                onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)}
+              />
             </details>
             </div>
           </section>

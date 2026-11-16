@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   escapeCsvField,
   buildNameCodeCsv,
+  buildResidentCsv,
   parseResultsCsv,
   type DeliveryResultRow,
 } from "./csv";
@@ -39,6 +40,21 @@ describe("buildNameCodeCsv", () => {
   it("escapes a name containing a double quote", () => {
     const csv = buildNameCodeCsv([{ name: 'O"Brien', code: "111111" }]);
     expect(csv).toContain('"O""Brien",111111');
+  });
+});
+
+describe("buildResidentCsv", () => {
+  it("exports the editable roster with escaping and no generated credentials", () => {
+    const csv = buildResidentCsv([
+      { mastersListNumber: "101", email: "alice@example.org", phone: "", name: "Smith, Alice" },
+      { mastersListNumber: "102", email: "bob@example.org", phone: "5550102", name: 'O"Brien' },
+    ]);
+    expect(csv.split("\n")).toEqual([
+      "masters_list_number,email,phone,name",
+      '101,alice@example.org,,"Smith, Alice"',
+      '102,bob@example.org,5550102,"O""Brien"',
+    ]);
+    expect(csv).not.toMatch(/code|expires|vote_url/);
   });
 });
 

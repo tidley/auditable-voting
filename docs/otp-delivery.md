@@ -1,90 +1,65 @@
-# OTP delivery — channels, selector and results import
+# Resident admission — roster, codes and export
 
 ## Overview
 
-The coordinator app hands one-time codes to residents through a small
-delivery abstraction (`web/src/otpDelivery/`). A **channel** is a pure module
-that reports whether it is available and, when it is, sends a code to a
-recipient. The app lets the coordinator pick a channel per election, generate
-codes, export them for out-of-band distribution, and import a results CSV to
-see which residents were reached.
+The coordinator app exposes **Voters → Resident email admission**. It imports or
+edits a resident roster, generates the same ten-character single-use codes used
+by the paper workflow, and exports a sensitive bundle for delivery.
 
-Batch sending does **not** happen in the browser tab. The manual channel shows
-codes in the app; the email channel is a thin browser descriptor that points
-the coordinator at a separate script that runs on the coordinator machine
-(`scripts/otp-send-email.mjs`, AV-DELIVERY-1b).
-
-## Channel comparison
-
-| Channel | Availability | How codes reach residents | Notes |
-|---|---|---|---|
-| `manual` | Always | Shown once in the app, copied or transcribed by the coordinator | Default fallback; no network, no cost, no deliverability risk |
-| `email-nomail` | Not in the browser | Coordinator-machine script sends via nomail.name / cashu.email | SameSite=Strict cookie blocks cross-origin browser auth; costs 100 sats/email; 100 emails/day/user cap |
-| `sms` | Not yet | Future Felix service | API not public; do not build against guesses |
-
-## Manual fallback is the recommendation
-
-For a real admission run, the **manual channel is the recommended fallback**.
-Automated email deliverability is unproven: the nomail service's sending
-domains may sit on disposable-email blocklists, so a resident's provider could
-silently drop the code. Manual distribution has no such risk — the coordinator
-hands the code to the resident directly. Use an automated channel only when
-you have verified deliverability for the specific electorate, and always keep
-the manual path available as a fallback.
+Codes and contact details stay in the browser. No relay event, public
+questionnaire event or anonymous ballot carries a resident's email address, name
+or plaintext code. Only the opaque admission hash enters the issuer
+configuration.
 
 ## Flow
 
-1. **Choose a channel** — the selector is stored per election in
-   `localStorage` (`otp-delivery-channel:<electionId>`), so each election
-   remembers its own choice. The manual channel is the default.
-2. **Upload residents** — a CSV with the header
-   `masters_list_number,email,phone,name`. Parsing is all-or-nothing and
-   reuses the resident register's validation and formula-injection
-   neutralisation.
-3. **Generate codes** — per resident or in one batch. Each code is generated
-   with `generateOtp()` (CSPRNG) and its salted SHA-256 hash is retained for
-   verification. Codes are shown once with a copy button.
-4. **Export name+code CSV** — for out-of-band distribution. The export side
-   escapes quotes, commas and newlines properly (the formula-injection
-   neutralisation is import-side only and does not protect a naive exporter
-   from corrupting names that contain commas or quotes).
-5. **Import results CSV** — the coordinator batch script writes a results CSV
-   with columns `mastersListNumber,ok,detail,ref`; importing it populates the
-   delivery status table.
+1. Open the published questionnaire's **Voters** tab.
+2. In **Resident email admission**, select **Import** and choose a CSV with the
+   header `masters_list_number,email,phone,name`:
 
-## Security notes
+   ```csv
+   masters_list_number,email,phone,name
+   101,alice@example.org,5550101,Alice Archer
+   102,bob@example.org,,Bob Baker
+   ```
 
-- The plaintext name+code CSV is **sensitive** — delete it after distribution.
-- Codes and hashes live in component state only; nothing is sent to any
-  server from the browser.
-- The email channel ships **no auth or send code** in the browser bundle —
-  that would be dead, security-sensitive code. It is a descriptor only.
-- Admission codes use a 24-hour TTL (`ADMISSION_TTL_MS`) because they are
-  distributed out of band and may sit before the resident enters them. The
-  10-minute interactive TTL is unchanged for in-app verification.
+   Parsing is all-or-nothing. Any invalid row or duplicate master-list number
+   rejects the file with a per-row error list.
 
-## Cost and limits (AV-DELIVERY-1b)
+3. Review the editable table. **Add row** and **Remove** cover records absent
+   from the file. **Export** before generation downloads the resident contact
+   CSV.
+4. Select **Set defaults** for a 24-hour expiry, or choose a local expiry with
+   the date picker. The browser converts it to UTC.
+5. Select **Generate admission codes**. Each code is registered as a paper
+   admission and the worker-refresh callback runs. Identity fields and the
+   expiry lock afterwards.
+6. Reveal and copy codes individually. Codes are masked by default.
+7. Select **Export** to download the exact-code bundle:
+   `masters_list_number,email,phone,name,code,expires_at,questionnaire_title,vote_url`.
+   The voter URL has public questionnaire parameters only. It omits
+   `request_ballot` and `auto_request` so recipients start at the admission-code
+   form.
 
-- Email sending costs 100 sats per email (Cashu token or Lightning quote).
-- The service caps sending at 100 emails/day/user.
-- The coordinator sending script `scripts/otp-send-email.mjs` is shipped in
-  this repo (see @ docs/otp-delivery.md Testing).
+## Reload and replacement
 
-## Testing
+Plaintext codes are not retained after reload. Issued admissions remain valid.
+Do not generate a replacement batch for the same roster: the app cannot find and
+revoke the earlier codes, so both batches could be usable. Export before leaving
+the page.
 
-The coordinator script has its own deterministic offline suite (no network,
-stubbed fetch mode):
+## CLI and provider delivery
+
+The old six-digit OTP helper and its delivery preview are retired. The
+coordinator-machine email companion and SMTP/cashu delivery are added by the
+follow-up companion PR. Until then, treat the exported bundle as the hand-off
+format.
+
+## Tests
 
 ```bash
-node --test scripts/test/otp-send-email.test.mjs
+cd web
+npx vitest run src/otpDelivery/DeliveryPanel.test.tsx src/otpDelivery/csv.test.ts
+npx tsc --noEmit
+npm run build
 ```
-
-```bash
-cd web && npx vitest run src/otpDelivery/
-```
-
-The suite covers channel descriptors, manual render+copy, selector
-persistence, results-import parsing, CSV export escaping, and the admission
-TTL. Network access is disabled globally in tests (a throwing `fetch` stub in
-`src/test/setup.ts`); any code path that reaches the network must inject its
-own fetch stub.
