@@ -68,4 +68,46 @@ if [[ -z "${SMTP_PASS}" ]]; then
   exit 1
 fi
 
+smtp_check() {
+  python3 - "$SMTP_HOST" "$SMTP_PORT" "$SMTP_SECURE" "$SMTP_USER" "$SMTP_PASS" "${STRATO_TEST_TO:-}" "$SMTP_FROM" <<'PY'
+import smtplib
+import ssl
+import sys
+from email.message import EmailMessage
+from email.utils import formatdate
+
+host, port, secure, user, password, test_to, sender = sys.argv[1:8]
+port = int(port)
+secure = secure.lower() in ("1", "true", "yes")
+try:
+    if secure:
+        client = smtplib.SMTP_SSL(host, port, timeout=20, context=ssl.create_default_context())
+    else:
+        client = smtplib.SMTP(host, port, timeout=20)
+        client.starttls(context=ssl.create_default_context())
+    client.login(user, password)
+    print("SMTP AUTH OK")
+    if test_to:
+        message = EmailMessage()
+        message["From"] = sender
+        message["To"] = test_to
+        message["Subject"] = "Auditable voting Strato delivery test"
+        message["Date"] = formatdate(localtime=False)
+        message.set_content(
+            "Harmless delivery test for auditable voting email. No action required."
+        )
+        client.send_message(message)
+        print(f"TEST MESSAGE SENT to {test_to}")
+    client.quit()
+except Exception as error:  # noqa: BLE001 - surface the provider's reason
+    print(f"SMTP CHECK FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+if [[ -n "${STRATO_CHECK_ONLY:-}" || -n "${STRATO_TEST_TO:-}" ]]; then
+  smtp_check
+  exit $?
+fi
+
 exec node "$root/scripts/email-sender.mjs"

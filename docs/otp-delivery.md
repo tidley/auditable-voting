@@ -83,6 +83,19 @@ directly or a mode-0600 file via `$STRATO_SMTP_PASS_FILE`, and refuses insecure
 file modes. `SOPS_AGE_KEY_FILE` defaults to
 `$HOME/.hermes/keys/fleet-age.key`.
 
+Two preflight modes avoid starting the companion:
+
+```bash
+# Verify SMTP AUTH only.
+STRATO_CHECK_ONLY=1 scripts/run-email-sender-strato.sh
+
+# Verify AUTH and send one plain delivery-test message.
+STRATO_TEST_TO=you@example.com scripts/run-email-sender-strato.sh
+```
+
+The test message is separate from the admission-email flow; it verifies the
+mailbox credentials and domain authentication before sending to residents.
+
 Before a live send, the domain must publish Strato's current mail records:
 
 - `MX 5 smtp.rzone.de` — the old `mx01/mx02.strato.de` targets are NXDOMAIN.
