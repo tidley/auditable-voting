@@ -599,7 +599,7 @@
             <div>
               <h3>Open Organiser and publish a questionnaire</h3>
               <p>Open <a class="demo-inline-button" href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Organiser</a>.</p>
-              <p>If the same people will answer several questionnaires, open <strong>Session</strong> and use <strong>Voters</strong> to add their voter identities first. Use <strong>Results &amp; Voters</strong> in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful. Every participant receives later sessions until removed. After the first questionnaire is published, use <strong>Add session</strong> under <strong>Questionnaire</strong> for follow-up questionnaires. It keeps the current setup, generates a fresh Questionnaire ID, shows one action, <strong>Publish to invited voters</strong>, and returns Organiser to <strong>Session</strong> after publishing. Voters still receive a fresh blind ballot credential for each questionnaire.</p>
+              <p>If the same people will answer several questionnaires, open <strong>Session</strong> and use <strong>Voters</strong> to add their voter identities first. Use <strong>Results &amp; Voters</strong> in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful. Every participant receives later sessions until removed. After the first questionnaire is published, use <strong>Start new round</strong> under <strong>Questionnaire</strong> for follow-up questionnaires. It keeps the current setup and generates a fresh Questionnaire ID. When invited voters exist, it shows <strong>Publish to invited voters</strong> and applies that roster; without a roster it shows <strong>Publish new round</strong> and creates an open round for general, private, paper or email admission. Either way it returns Organiser to <strong>Session</strong> after publishing. Voters still receive a fresh blind ballot credential for each questionnaire. Email and paper contacts and their admission codes are not carried between rounds, so reimport the list and generate fresh codes.</p>
               <p>Fill in <strong>Name</strong>, <strong>Description</strong>, and at least one <strong>Question prompt</strong>. When the readiness checklist is complete, click <strong>Go Live</strong>. When the draft is ready and at least one voter is invited, <strong>Publish + apply invited voters</strong> appears so the invited-voter roster can be green-lit immediately.</p>
             </div>
           </article>
@@ -779,7 +779,7 @@
         <h2>Try next</h2>
         <ol class="clean">
           <li>Open Organiser.</li>
-          <li>Invite voters if the same group will answer later questionnaires; use Add session under Questionnaire for follow-up questionnaires so the roster is published to invited voters with a fresh Questionnaire ID.</li>
+          <li>Invite voters if the same group will answer later questionnaires; use Start new round under Questionnaire for follow-up questionnaires, which publishes to invited voters when a roster exists or creates an open round for general, private, paper or email admission when it does not, always with a fresh Questionnaire ID and fresh admission codes.</li>
           <li>Publish a questionnaire.</li>
           <li>Share the General invite link.</li>
           <li>Open Voter from the invite.</li>

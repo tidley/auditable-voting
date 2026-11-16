@@ -991,6 +991,116 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.getByRole("option", { name: / \[Draft\]$/ })).toBeTruthy();
   });
 
+  it("offers Start new round without requiring an invited-voter roster", async () => {
+    const onAddSession = vi.fn();
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub='npub1organiser'
+        canAddSession
+        onAddSession={onAddSession}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Add session" })).toBeNull();
+    const startButton = await screen.findByRole("button", { name: "Start new round" });
+    expect(startButton.matches(":disabled")).toBe(false);
+    fireEvent.click(startButton);
+    expect(onAddSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes a new round when no invited-voter roster can be applied", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_round_one",
+        title: "Round two",
+        description: "Second round",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+
+    const { rerender } = render(
+      <QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />,
+    );
+    rerender(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        newRoundMode
+        draftQuestionnaireId='q_new_round_no_roster'
+        canApplyAdmissionsOnPublish={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Questionnaire ID") as HTMLInputElement).value).toBe("q_new_round_no_roster");
+    });
+    expect(screen.queryByRole("button", { name: "Publish to invited voters" })).toBeNull();
+    expect(screen.getByText(/No invited-voter roster will be carried into this round/)).toBeTruthy();
+    const publishButton = screen.getByRole("button", { name: "Publish new round" });
+    await waitFor(() => expect(publishButton.matches(":disabled")).toBe(false));
+    fireEvent.click(publishButton);
+    await waitFor(() => {
+      expect(questionnaireNostrMocks.publishQuestionnaireDefinition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          definition: expect.objectContaining({ questionnaireId: "q_new_round_no_roster" }),
+        }),
+      );
+    });
+  });
+
+  it("keeps Publish to invited voters when a roster is available", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_round_one",
+        title: "Round two",
+        description: "Second round",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        newRoundMode
+        draftQuestionnaireId='q_new_round_with_roster'
+        canApplyAdmissionsOnPublish
+      />,
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Questionnaire ID") as HTMLInputElement).value).toBe("q_new_round_with_roster");
+    });
+    expect(screen.queryByRole("button", { name: "Publish new round" })).toBeNull();
+    const publishButton = screen.getByRole("button", { name: "Publish to invited voters" });
+    await waitFor(() => expect(publishButton.matches(":disabled")).toBe(false));
+  });
+
   it("keeps locally cached drafts editable until they have a published signal", async () => {
     const coordinatorNpub = "npub1organiser";
     window.localStorage.setItem(
