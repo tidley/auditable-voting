@@ -106,9 +106,12 @@ export function emailVoterUrl(voterUrl: string): string {
 }
 
 export default function DeliveryPanel(props: DeliveryPanelProps) {
+  const hostedOrigin = typeof window !== "undefined"
+    && !["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);
   const [rows, setRows] = useState<DraftResident[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [issued, setIssued] = useState<IssuedEmailAdmission[]>([]);
+  const [deliveryBundle, setDeliveryBundle] = useState<{ csv: string; count: number; fileName: string } | null>(null);
   const [revealed, setRevealed] = useState<Set<number>>(() => new Set());
   const [expiresAt, setExpiresAt] = useState("");
   const [status, setStatus] = useState("");
@@ -170,8 +173,25 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
     try {
       const text = await file.text();
       const header = csvHeader(text);
-      if (header.includes("code") || header.includes("expires_at") || header.includes("vote_url")) {
-        setStatus("Import a resident contact CSV or delivery-results CSV, not an existing email bundle.");
+      if (header.includes("code") && header.includes("expires_at") && header.includes("vote_url")) {
+        if (issued.length) {
+          setStatus("This page already holds a generated batch. Export or send it first, then reload before loading an exported bundle.");
+        } else if (!["masters_list_number", "email", "code", "expires_at", "questionnaire_title", "vote_url"].every((name) => header.includes(name))) {
+          setStatus("This is not a complete exported admission bundle. Export the bundle from Resident email admission and try again.");
+        } else {
+          const count = text.split(/\r?\n/).filter((line) => line.trim()).length - 1;
+          if (count < 1) {
+            setStatus("The exported bundle contains no recipients.");
+          } else {
+            setDeliveryBundle({ csv: text, count, fileName: file.name });
+            setRows([]);
+            setIssued([]);
+            setRevealed(new Set());
+            setCsvErrors([]);
+            setDelivery({});
+            setStatus(`Exported delivery bundle loaded: ${count} recipient${count === 1 ? "" : "s"}. These codes are already registered; sending will not create new codes.`);
+          }
+        }
       } else if (header[0] === "masterslistnumber" && header.includes("ok") && header.includes("detail")) {
         const results = parseResultsCsv(text);
         if (!results.length) {
@@ -189,6 +209,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
             setCsvErrors(result.errors);
             setStatus("");
           } else {
+            setDeliveryBundle(null);
             setRows(result.residents.map((resident) => draftFromResident(resident, newRowId())));
             setRevealed(new Set());
             setCsvErrors([]);
@@ -284,6 +305,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   }
 
   function buildIssuedBundle() {
+    if (deliveryBundle) return deliveryBundle.csv;
     if (!issued.length || !props.voterUrl) return "";
     return buildEmailDeliveryBundleCsv(issued.map(({ resident, admission }) => ({
       mastersListNumber: String(resident.mastersListNumber),
@@ -339,7 +361,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
         return;
       }
 
-      setStatus(`Sending ${issued.length} email${issued.length === 1 ? "" : "s"} through ${transport === "smtp" ? "SMTP" : "cashu.email"}…`);
+      setStatus(`Sending ${deliveryBundle?.count ?? issued.length} email${(deliveryBundle?.count ?? issued.length) === 1 ? "" : "s"} through ${transport === "smtp" ? "SMTP" : "cashu.email"}…`);
       const postBatch = () => fetch("/__email/send", {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
@@ -394,6 +416,11 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
 
   function exportCsv() {
     const safeElectionId = props.electionId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100);
+    if (deliveryBundle) {
+      download(deliveryBundle.csv, `resident-admission-emails-${safeElectionId}.csv`);
+      setStatus("Delivery bundle exported again. It contains contact details and plaintext codes; keep it private.");
+      return;
+    }
     if (issued.length) {
       const csv = buildIssuedBundle();
       if (!csv) {
@@ -419,6 +446,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
     setStatus("Resident CSV exported.");
   }
 
+  const hasBundle = Boolean(deliveryBundle);
   const hasRows = rows.some((row) => [row.mastersListNumber, row.name, row.email, row.phone].some((value) => value.trim()));
 
   return <section className="simple-voter-section simple-delivery-panel" aria-label="Resident email admission">
@@ -429,12 +457,16 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
     </details>
 
     <div className="simple-voter-action-row simple-voter-action-row-inline" aria-label="Resident table actions">
-      <button type="button" className="simple-voter-secondary" disabled={Boolean(issued.length)} onClick={applyDefaults}>Set defaults</button>
+      <button type="button" className="simple-voter-secondary" disabled={Boolean(issued.length) || hasBundle} onClick={applyDefaults}>Set defaults</button>
       <button type="button" className="simple-voter-secondary" onClick={() => importRef.current?.click()}>Import</button>
-      <button type="button" className="simple-voter-secondary" disabled={!hasRows} onClick={exportCsv}>Export</button>
-      <button type="button" className="simple-voter-secondary" disabled={Boolean(issued.length)} onClick={addRow}>Add row</button>
-      <input ref={importRef} type="file" accept=".csv,text/csv" hidden aria-label="Import resident or delivery results CSV" onChange={(event) => void handleImport(event)} />
+      <button type="button" className="simple-voter-secondary" disabled={!(hasRows || hasBundle)} onClick={exportCsv}>Export</button>
+      <button type="button" className="simple-voter-secondary" disabled={Boolean(issued.length) || hasBundle} onClick={addRow}>Add row</button>
+      <input ref={importRef} type="file" accept=".csv,text/csv" hidden aria-label="Import resident, delivery results, or exported delivery bundle CSV" onChange={(event) => void handleImport(event)} />
     </div>
+
+    {hasBundle ? <div className="simple-voter-note" role="status" aria-label="Loaded delivery bundle">
+      Loaded <strong>{deliveryBundle?.count}</strong> recipient{deliveryBundle?.count === 1 ? "" : "s"} from <code>{deliveryBundle?.fileName}</code>. The codes were already generated and registered; sending will not create replacement codes. Export the bundle again before reloading.
+    </div> : null}
 
     {rows.length ? <div className="simple-resident-table-wrap">
       <table className="simple-resident-table" aria-label="Residents">
@@ -467,15 +499,19 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
         </tr>;
       })}</tbody>
       </table>
-    </div> : <p className="simple-voter-note">No residents yet. Import a CSV or add a row.</p>}
+    </div> : !hasBundle ? <p className="simple-voter-note">No residents yet. Import a CSV or add a row.</p> : null}
 
     {csvErrors.length ? <div className="simple-voter-note" role="alert" aria-label="Resident CSV errors">
       <ul>{csvErrors.map((error) => <li key={error}>{error}</li>)}</ul>
     </div> : null}
 
-    {issued.length ? <div className="simple-voter-action-row simple-voter-action-row-inline" aria-label="Local email sender">
+    {issued.length || hasBundle ? <div className="simple-voter-action-row simple-voter-action-row-inline" aria-label="Local email sender">
       {senderCheck === "checking" ? <p className="simple-voter-note">Checking local email sender…</p> : null}
-      {senderCheck === "unavailable" ? <p className="simple-voter-note">Local sender not connected. Run <code>npm --prefix web run email:sender</code> and use its local URL to send directly. Export remains available.</p> : null}
+      {senderCheck === "unavailable" ? <p className="simple-voter-note">
+        {hostedOrigin
+          ? <>This hosted page cannot reach your local email companion. Export the bundle, open the local coordinator URL, then import the bundle here to send. Or send the exported CSV with <code>scripts/otp-send-email.mjs</code>.</>
+          : <>Local sender not connected. Run <code>npm --prefix web run email:dev</code> and use its local URL to send directly. Export remains available.</>}
+      </p> : null}
       {senderCheck === "available" && senderHealth?.transports.length ? <>
         <label htmlFor="email-sender-transport">Email sender</label>
         <select
@@ -496,11 +532,13 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       {senderCheck === "available" && !senderHealth?.transports.length ? <p className="simple-voter-note">Local sender is running but has no SMTP or cashu.email credentials configured.</p> : null}
     </div> : null}
 
-    <UiDateTimeField label="Code expiry" value={expiresAt} onChange={setExpiresAt} isDisabled={Boolean(issued.length)} />
-    <p className="simple-voter-note">Local time; included in UTC in each email.</p>
-    <div className="simple-voter-action-row simple-voter-action-row-inline">
-      {!issued.length ? <button type="button" className="simple-voter-secondary" disabled={!expiresAt || !hasRows} onClick={() => void generate()}>Generate admission codes</button> : null}
-    </div>
+    {!hasBundle ? <>
+      <UiDateTimeField label="Code expiry" value={expiresAt} onChange={setExpiresAt} isDisabled={Boolean(issued.length)} />
+      <p className="simple-voter-note">Local time; included in UTC in each email.</p>
+      <div className="simple-voter-action-row simple-voter-action-row-inline">
+        {!issued.length ? <button type="button" className="simple-voter-secondary" disabled={!expiresAt || !hasRows} onClick={() => void generate()}>Generate admission codes</button> : null}
+      </div>
+    </> : null}
     {status ? <p className="simple-voter-note" role="status">{status}</p> : null}
   </section>;
 }

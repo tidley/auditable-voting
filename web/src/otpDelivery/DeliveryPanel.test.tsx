@@ -33,7 +33,7 @@ function makeProps() {
 }
 
 async function importCsv(csv: string, name = "import.csv") {
-  await userEvent.upload(screen.getByLabelText("Import resident or delivery results CSV"), new File([csv], name, { type: "text/csv" }));
+  await userEvent.upload(screen.getByLabelText("Import resident, delivery results, or exported delivery bundle CSV"), new File([csv], name, { type: "text/csv" }));
 }
 
 async function generateAdmissions() {
@@ -189,13 +189,44 @@ describe("Resident email admission", () => {
     expect(within(table).getByText("Failed: Rejected")).toBeTruthy();
   });
 
-  it("rejects bundle import and does not generate without a published questionnaire or future expiry", async () => {
+  it("loads an exported delivery bundle without registering new admissions and sends it", async () => {
+    const bundle = [
+      "masters_list_number,email,phone,name,code,expires_at,questionnaire_title,vote_url",
+      `101,a@example.org,,Alice,ABCDE12345,2099-01-01T00:00:00.000Z,Resident vote,${VOTER_URL}`,
+    ].join("\n");
+    let submittedBody: { transport?: string; bundleCsv?: string } = {};
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+      }
+      submittedBody = JSON.parse(String(init?.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sent: 1,
+          skipped: 0,
+          failed: 0,
+          results: [{ master: "101", ok: true, detail: "sent", ref: "smtp-1" }],
+        }),
+      };
+    }));
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(bundle, "exported-bundle.csv");
+    expect(await screen.findByText(/Exported delivery bundle loaded: 1 recipient/)).toBeTruthy();
+    expect(props.runtime.addPaperBallotAdmission).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Generate admission codes" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText("Email delivery: 1 sent, 0 already sent, 0 failed.")).toBeTruthy();
+    expect(submittedBody.transport).toBe("smtp");
+    expect(submittedBody.bundleCsv).toBe(bundle);
+  });
+
+  it("does not generate without a published questionnaire or future expiry", async () => {
     const props = makeProps();
     render(<DeliveryPanel {...props} runtime={props.runtime as never} definition={null} />);
     await importCsv(VALID_CSV);
-    await importCsv([CSV_HEADER + ",code,expires_at,vote_url", `101,a@example.org,,A,ABCD1234EF,2099-01-01T00:00:00.000Z,${VOTER_URL}`].join("\n"), "bundle.csv");
-    expect(await screen.findByText(/not an existing email bundle/)).toBeTruthy();
-
     fireEvent.change(screen.getByLabelText("Code expiry"), { target: { value: "2000-01-01T12:30" } });
     await userEvent.click(screen.getByRole("button", { name: "Generate admission codes" }));
     expect(await screen.findByText("Open and publish the questionnaire before generating resident email admissions.")).toBeTruthy();

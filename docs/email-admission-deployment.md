@@ -229,6 +229,22 @@ The companion writes a redacted results CSV and a questionnaire-scoped ledger.
 The ledger prevents duplicate sends. Use a **new master-list number** for a
 separate test, or deliberately clear the sender state.
 
+## Sending a bundle exported from a hosted page
+
+The hosted static app cannot reach `127.0.0.1`. If codes were generated there,
+do not reload that page before exporting.
+
+1. Select **Export** to download the admission bundle.
+2. Open the local coordinator origin.
+3. Select **Import** and choose the exported bundle. The UI loads the exact
+   registered codes and enables **Send emails** without registering replacement
+   codes.
+4. Send. If the local page already holds a generated batch, reload before
+   importing the bundle.
+
+The bundle import is delivery-only. It does not call the admission issuer and
+does not create new credentials.
+
 ## Recipient flow
 
 1. Open the email and the voter link in a private window or a separate device.

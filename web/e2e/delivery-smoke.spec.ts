@@ -17,7 +17,7 @@ async function setExpiry(page: Page) {
 }
 
 async function importCsv(page: Page, csv = VALID_CSV, name = "residents.csv") {
-  await page.getByLabel("Import resident or delivery results CSV", { exact: true }).setInputFiles({
+  await page.getByLabel("Import resident, delivery results, or exported delivery bundle CSV", { exact: true }).setInputFiles({
     name,
     mimeType: "text/csv",
     buffer: Buffer.from(csv, "utf8"),
@@ -140,4 +140,46 @@ test("connecting the local sender enables Send emails and updates Delivery", asy
   expect(submittedBody.bundleCsv).toContain("questionnaire_title");
   expect(submittedBody.bundleCsv).toContain("alice@example.test");
   expect(submittedBody.bundleCsv).toMatch(/[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10}/);
+});
+
+test("loads an exported delivery bundle on the local origin and sends it", async ({ page }) => {
+  await page.route("**/__email/health", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }),
+    });
+  });
+  let submitted: { transport?: string; bundleCsv?: string } = {};
+  await page.route("**/__email/send", async (route) => {
+    submitted = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        sent: 1,
+        skipped: 0,
+        failed: 0,
+        results: [{ master: "401", ok: true, detail: "sent", ref: "mail-401" }],
+      }),
+    });
+  });
+
+  const bundle = [
+    "masters_list_number,email,phone,name,code,expires_at,questionnaire_title,vote_url",
+    "401,alice@example.test,,Alice,ABCDE12345,2099-01-01T00:00:00.000Z,Resident email admission harness,https://tidley.github.io/auditable-voting/?role=voter&q=resident-email-harness&coordinator=npub1test",
+  ].join("\n");
+  await page.goto("/e2e/resident-email-harness.html");
+  await page.getByLabel("Import resident, delivery results, or exported delivery bundle CSV", { exact: true }).setInputFiles({
+    name: "exported-bundle.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(bundle, "utf8"),
+  });
+  const section = page.getByRole("region", { name: "Resident email admission" });
+  await expect(section.getByText(/Exported delivery bundle loaded: 1 recipient/)).toBeVisible();
+  await expect(section.getByRole("button", { name: "Generate admission codes" })).toHaveCount(0);
+  await section.getByRole("button", { name: "Send emails", exact: true }).click();
+  await expect(section.getByText("Email delivery: 1 sent, 0 already sent, 0 failed.")).toBeVisible();
+  expect(submitted.transport).toBe("smtp");
+  expect(submitted.bundleCsv).toBe(bundle);
 });

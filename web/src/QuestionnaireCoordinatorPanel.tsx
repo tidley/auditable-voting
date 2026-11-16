@@ -637,7 +637,6 @@ type StoredQuestionnaireDraft = {
 const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
-  "wss://nos.lol",
   "wss://relay.nostr.info",
   "wss://relay.damus.io",
   "wss://relay.primal.net",
@@ -645,7 +644,6 @@ const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
 const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
-  "wss://nos.lol",
   "wss://relay.primal.net",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
@@ -658,15 +656,15 @@ const WORKER_DM_DISCOURAGED_RELAYS = new Set([
 ]);
 const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
-  [`wss://nip17.${"tomdwyer.uk"}`, "wss://nos.lol"],
+  [`wss://nip17.${"tomdwyer.uk"}`, "wss://relay.nostr.net"],
   [`wss://offchain.${"pub"}`, "wss://relay.nostr.net"],
   ["wss://relay.nostr.band", "wss://relay.nostr.info"],
   ["wss://nostr.mom", "wss://relay.nostr.net"],
-  ["wss://nostr.wine", "wss://nos.lol"],
+  ["wss://nostr.wine", "wss://relay.primal.net"],
   ["wss://eden.nostr.land", "wss://relay.nostr.net"],
   ["wss://purplepag.es", "wss://relay.nostr.info"],
   ["wss://relay.layer.systems", "wss://relay.nostr.net"],
-  ["wss://nostr.bond", "wss://nos.lol"],
+  ["wss://nostr.bond", "wss://relay.nostr.net"],
   ["wss://auth.nostr1.com", "wss://relay.nostr.info"],
   ["wss://inbox.nostr.wine", "wss://relay.nostr.info"],
   ["wss://nostr-pub.wellorder.net", "wss://relay.nostr.net"],
