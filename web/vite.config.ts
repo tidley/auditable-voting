@@ -58,6 +58,7 @@ export default defineConfig(({ mode }) => ({
             }
             response.end?.(JSON.stringify({
               error: `The local email sender is unreachable (${(error as NodeJS.ErrnoException).code ?? "proxy error"}). Start it with "npm --prefix web run email:dev".`,
+              code: "proxy_unreachable",
             }));
           });
         },

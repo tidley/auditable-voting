@@ -152,14 +152,17 @@ time.
 ### Troubleshooting delivery
 
 - **`502 Bad Gateway` on Send emails** — the Vite dev proxy could not reach the
-  companion. Start both with `npm --prefix web run email:dev` (sender first), or
-  restart the companion and retry. The UI re-checks `/__email/health` before
-  posting and retries a proxy-level 502 once; the ledger skips recipients that
-  were already sent, so retrying the same bundle does not double-send. A single
-  502 can also occur immediately after a companion restart while the old proxy
-  socket is still in flight; reload the page and retry. The ledger is read at the
-  start of each batch, so a row still marked **Not sent** has no ledger entry and
-  a retry is safe.
+  companion, or the companion reported a transport failure. Start both with
+  `npm --prefix web run email:dev` (sender first), or restart the companion and
+  retry. The companion returns `400` for an invalid bundle, `409` for a ledger
+  conflict and `502` for a transport/upstream failure; the UI shows the returned
+  error instead of retrying an application error. The UI re-checks
+  `/__email/health` before posting and retries a proxy-level 502 once; the ledger
+  skips recipients that were already sent, so retrying the same bundle does not
+  double-send. A single 502 can also occur immediately after a companion restart
+  while the old proxy socket is still in flight; reload the page and retry. The
+  ledger is read at the start of each batch, so a row still marked **Not sent**
+  has no ledger entry and a retry is safe.
 - **“Local sender not connected”** — start the companion and use the local URL it
   prints. The public GitHub Pages origin cannot call a separate local process.
 - **“no SMTP or cashu.email credentials configured”** — stop the companion, set

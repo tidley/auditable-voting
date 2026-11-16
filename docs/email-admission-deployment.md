@@ -302,7 +302,8 @@ companion running.
 
 ### `502 Bad Gateway` on Send emails
 
-The Vite proxy could not reach the companion. Check:
+The Vite proxy could not reach the companion, or the companion reported a
+transport failure. Check:
 
 ```bash
 curl http://127.0.0.1:4319/__email/health
@@ -312,6 +313,16 @@ curl http://127.0.0.1:5174/__email/health
 Start with `npm --prefix web run email:dev`, or restart the companion and retry.
 A single transient 502 can occur just after a companion restart. The ledger is
 read per batch, so a row still marked **Not sent** can be retried safely.
+
+The companion distinguishes these cases:
+
+- `400` — invalid bundle, missing recipient field or bad admission code;
+- `409` — ledger conflict, or a previous send is pending/unknown;
+- `502` — SMTP/cashu transport or proxy failure.
+
+The UI displays the returned error. If the message mentions a ledger conflict,
+do not clear the ledger blindly: confirm the recipient and resend intent first,
+or use a fresh master-list number for a new test.
 
 ### The email was sent but did not arrive
 

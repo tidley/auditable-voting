@@ -218,9 +218,18 @@ export function createEmailSenderServer(options = {}) {
           sendJson(res, 400, { error: "The admission bundle is missing." }, responseOrigin);
           return;
         }
-        const parsed = parseAdmissionBundle(body.bundleCsv);
+        let parsed;
+        try {
+          parsed = parseAdmissionBundle(body.bundleCsv);
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Invalid admission bundle.",
+            code: "invalid_bundle",
+          }, responseOrigin);
+          return;
+        }
         if (parsed.rows.length > MAX_RECIPIENTS) {
-          sendJson(res, 413, { error: `A batch can contain at most ${MAX_RECIPIENTS} recipients.` }, responseOrigin);
+          sendJson(res, 413, { error: `A batch can contain at most ${MAX_RECIPIENTS} recipients.`, code: "bundle_too_large" }, responseOrigin);
           return;
         }
         mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -248,8 +257,14 @@ export function createEmailSenderServer(options = {}) {
           results: result.results,
         }, responseOrigin);
       } catch (error) {
-        sendJson(res, Number.isInteger(error?.status) ? error.status : 502, {
+        const httpStatus = Number.isInteger(error?.httpStatus)
+          ? error.httpStatus
+          : Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
+            ? error.status
+            : 502;
+        sendJson(res, httpStatus, {
           error: error instanceof Error ? error.message : "The email batch failed.",
+          ...(typeof error?.code === "string" ? { code: error.code } : {}),
           ...(Array.isArray(error?.results) ? { results: error.results } : {}),
         }, responseOrigin);
       } finally {

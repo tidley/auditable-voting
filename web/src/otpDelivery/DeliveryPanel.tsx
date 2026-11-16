@@ -345,19 +345,9 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ transport, bundleCsv }),
       });
-      const retryableStatus = (status: number) => status === 502 || status === 503 || status === 504;
-      let response = await postBatch();
-      if (retryableStatus(response.status)) {
-        // A proxy-level 502/503/504 means the request never reached the send
-        // handler, but a response can also be lost after the handler ran. The
-        // sender's ledger fingerprints every recipient, so one retry is safe:
-        // anything already delivered comes back as "already sent".
-        setStatus("The local sender did not answer through the dev proxy; retrying once — already-sent recipients are skipped…");
-        await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_DELAY_MS));
-        response = await postBatch();
-      }
-      const payload = await response.json().catch(() => ({})) as {
+      const readPayload = async (response: Response) => await response.json().catch(() => ({})) as {
         error?: string;
+        code?: string;
         sent?: number;
         skipped?: number;
         failed?: number;
@@ -367,12 +357,28 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
         capRemaining?: number;
         results?: Array<{ master: string; ok: boolean; detail: string; ref?: string }>;
       };
+      const retryableStatus = (status: number) => status === 502 || status === 503 || status === 504;
+      let response = await postBatch();
+      let payload = await readPayload(response);
+      const proxyFailure = retryableStatus(response.status)
+        && (payload.code === "proxy_unreachable" || !payload.error);
+      if (proxyFailure) {
+        // A proxy-level 502/503/504 means the request never reached the send
+        // handler, but a response can also be lost after the handler ran. The
+        // sender's ledger fingerprints every recipient, so one retry is safe:
+        // anything already delivered comes back as "already sent".
+        setStatus("The local sender did not answer through the dev proxy; retrying once — already-sent recipients are skipped…");
+        await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_DELAY_MS));
+        response = await postBatch();
+        payload = await readPayload(response);
+      }
       applyDeliveryResults(payload.results ?? []);
       if (!response.ok) {
+        if (payload.error) throw new Error(payload.error);
         if (retryableStatus(response.status)) {
           throw new Error(`the dev proxy could not reach the local email sender (HTTP ${response.status}) after one retry. Start the companion with "npm --prefix web run email:dev" and retry; the ledger skips recipients already sent.`);
         }
-        throw new Error(payload.error || "The local sender rejected the batch.");
+        throw new Error("The local sender rejected the batch.");
       }
       const notAttempted = payload.notAttempted ?? 0;
       const capSuffix = transport === "cashu" && typeof payload.satsSpent === "number"

@@ -301,7 +301,7 @@ describe("Resident email admission", () => {
       }
       if (String(input) === "/__email/send") {
         sendCalls += 1;
-        if (sendCalls === 1) return { ok: false, status: 502, json: async () => ({}) };
+        if (sendCalls === 1) return { ok: false, status: 502, json: async () => ({ error: "The local email sender is unreachable.", code: "proxy_unreachable" }) };
         return {
           ok: true,
           status: 200,
@@ -326,6 +326,31 @@ describe("Resident email admission", () => {
     await userEvent.click(screen.getByRole("button", { name: "Send emails" }));
     expect(await screen.findByText("Email delivery: 0 sent, 2 already sent, 0 failed.")).toBeTruthy();
     expect(sendCalls).toBe(2);
+  });
+
+  it("shows the sender application error on 502 without retrying", async () => {
+    let sendCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+      }
+      sendCalls += 1;
+      return {
+        ok: false,
+        status: 502,
+        json: async () => ({
+          error: "The ledger belongs to different admission details for master-list number 101.",
+          code: "ledger_conflict",
+        }),
+      };
+    }));
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    await userEvent.click(await screen.findByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText(/Email sending failed: The ledger belongs to different admission details/)).toBeTruthy();
+    expect(sendCalls).toBe(1);
   });
 
   it("re-checks the sender before sending and never posts when it has gone away", async () => {
