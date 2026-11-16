@@ -8,6 +8,8 @@ const VALID_CSV = [
   "403,carol@example.test,,Carol Cruz",
 ].join("\n");
 
+test.use({ permissions: ["clipboard-read", "clipboard-write"] });
+
 async function setExpiry(page: Page) {
   for (const [segment, value] of [["day", "01"], ["month", "01"], ["year", "2099"], ["hour", "12"], ["minute", "30"]]) {
     await page.getByRole("spinbutton", { name: new RegExp(`^${segment},`) }).pressSequentially(value);
