@@ -65,19 +65,23 @@ SMTP_USER=vote@orangesync.tech
 SMTP_FROM=vote@orangesync.tech
 ```
 
-The mailbox password should not live in `.env` when it can be avoided. Start the
-companion with the Strato launcher instead:
+The mailbox password should not live in `.env`. Store it in the Hermes trust
+root and start the companion with the launcher:
 
 ```bash
-install -m 600 /dev/null "$HOME/.hermes/trust-root/strato-smtp.pass"
-# write the mailbox password into that file, or render it from the trust root
+cd ~/hermes-trust-root
+make secret-put NAME=strato-smtp   # field: password
+
+cd /home/c08rad0r/repos/auditable-voting-email
 scripts/run-email-sender-strato.sh
 ```
 
-The launcher accepts `SMTP_PASS` directly, or reads
-`$STRATO_SMTP_PASS_FILE` (default
-`$HOME/.hermes/trust-root/strato-smtp.pass`) and refuses a file whose mode is
-not `600` or `400`.
+The launcher reads `$STRATO_SMTP_SOPS_FILE` (default
+`$HOME/.hermes/trust-root/sops/strato-smtp.enc.yaml`, field `password`) and
+keeps the value only in the companion process. It also accepts `SMTP_PASS`
+directly or a mode-0600 file via `$STRATO_SMTP_PASS_FILE`, and refuses insecure
+file modes. `SOPS_AGE_KEY_FILE` defaults to
+`$HOME/.hermes/keys/fleet-age.key`.
 
 Before a live send, the domain must publish Strato's current mail records:
 
