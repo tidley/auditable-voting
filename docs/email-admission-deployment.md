@@ -64,7 +64,7 @@ Use a real mailbox.
 ```bash
 git clone https://github.com/tidley/auditable-voting.git
 cd auditable-voting
-git checkout feat/resident-email-admission
+# Use main once the resident-email PRs are merged, or the PR branch under review.
 npm --prefix web install
 ```
 
@@ -255,7 +255,7 @@ important consequence:
 - If the coordinator runs at `http://127.0.0.1:5174` or `http://127.0.0.1:4319`,
   the email link is localhost and only works on that machine.
 - For remote residents, the coordinator must be served from a public origin, or
-  the deployment needs an explicit public voter base URL. The current PR43 flow
+  the deployment needs an explicit public voter base URL. The current flow
   follows the coordinator origin; there is no separate public-base-URL field yet.
 - The public static app (for example `https://vote.orangesync.tech`) can be the
   voter target, but the coordinator must generate a matching public link.
