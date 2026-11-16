@@ -55,7 +55,11 @@ available transport; no password or sender key is sent to the browser.
 
 ### Strato relay for orangesync.tech
 
-For `@orangesync.tech` delivery, use Strato's submission server:
+For `@orangesync.tech` delivery, use Strato's submission server. The full
+credential-storage, rotation and troubleshooting guide is in
+[Strato email credential setup](strato-email-setup.md).
+
+Settings:
 
 ```dotenv
 SMTP_HOST=smtp.strato.de
