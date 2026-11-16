@@ -13,6 +13,15 @@ A catch-all address receives mail but does **not** provide SMTP AUTH
 credentials. The username must be a real mailbox, for example
 `vote@orangesync.tech`.
 
+> **Current pilot mailbox:** `chandran@orangesync.tech` is a real Strato mailbox
+> and the current catch-all for `orangesync.tech`. Set `SMTP_USER` and
+> `SMTP_FROM` to that address until a dedicated `vote@orangesync.tech` mailbox is
+> created.
+
+Verified with the current pilot mailbox: SMTP AUTH succeeds, and delivered mail
+shows `spf=pass`, `dkim=pass` for both `strato-dkim-0002` and
+`strato-dkim-0003`, `dmarc=pass` and `arc=pass`.
+
 ## Prerequisites
 
 - A real Strato mailbox, or an existing mailbox that may send as the chosen
