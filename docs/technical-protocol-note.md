@@ -7,7 +7,9 @@ tutorials](./voting-workflow.md), including paper admission, browser/worker
 issuance, private batching and retry sequences. This note also describes
 multi-organiser and Rust/Wasm round variants; its diagrams must not be read as
 one mandatory sequence for every questionnaire. Reusable signed admission
-grants and automated OTP admission are not a completed shipped service.
+grants are not a completed shipped service. Resident email delivery is a
+coordinator-machine hand-off over the paper credential path, not browser-local
+OTP authentication.
 
 This document is written as a technical explainer for readers who want to understand:
 

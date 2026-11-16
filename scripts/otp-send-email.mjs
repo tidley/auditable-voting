@@ -1,297 +1,637 @@
 #!/usr/bin/env node
 /**
- * otp-send-email.mjs — coordinator-machine OTP delivery via nomail.name / cashu.email.
+ * Deliver browser-generated resident admission emails from the coordinator's
+ * computer through SMTP or cashu.email.
  *
- * The browser CANNOT send via nomail (SameSite=Strict + HttpOnly session cookie
- * is un-settable from a cross-origin browser context), so real sending happens
- * here on the coordinator machine with a Node Nostr keypair.
+ * The browser creates and registers each admission code. This process only
+ * delivers those exact codes. It never generates an OTP, sends from the
+ * browser, publishes contact details to Nostr, or writes codes/email addresses
+ * to its ledger, results or console output.
  *
- * Reads a roster CSV (masters_list_number,email,phone,name), generates one 6-digit
- * OTP per resident, sends it by email through the nomail/cashu.email /api/send
- * endpoint, and writes a results CSV (mastersListNumber,ok,detail).
- *
- * RESUME SAFETY: every send is recorded in a JSON ledger keyed by roster id;
- * re-running with the same --ledger path skips rows already marked sent (the
- * service caps sending at 100 emails/day per user).
- *
- * Nostr signing uses nostr-tools (resolved from web/node_modules), NOT hand-rolled
- * crypto.
- *
- * Usage:
- *   node scripts/otp-send-email.mjs --nsec <nsec|hex> --csv roster.csv \
- *       [--subject "Your voting OTP"] [--api https://nomail.name] \
- *       [--ledger ledger.json] [--results results.csv] [--dry-run] [--help]
+ * Run --dry-run without credentials first. Live sending requires SMTP_* settings
+ * or a cashu.email sender key and one payment token per pending recipient.
  */
 import { createRequire } from "node:module";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { randomInt } from "node:crypto";
-import { resolve, dirname } from "node:path";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// Resolve nostr-tools from the web app's node_modules (single source of truth).
 const require = createRequire(resolve(__dirname, "../web/package.json"));
 const { finalizeEvent, getPublicKey } = require("nostr-tools/pure");
+const API_DEFAULT = "https://cashu.email";
+const CODE_PATTERN = /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10}$/;
+const TRANSPORTS = new Set(["cashu", "smtp"]);
+export const CASHU_EMAIL_COST_SATS = 100;
+export const CASHU_DAILY_SEND_CAP = 100;
 
-const API_DEFAULT = "https://nomail.name";
-
-// ---------------------------------------------------------------------------
-// nsec -> Uint8Array (required by finalizeEvent)
-// ---------------------------------------------------------------------------
 function parseNsec(raw) {
-  // Strip whitespace and optional "nsec1" prefix for hex parsing
-  const s = raw.trim();
-  // Bech32 nsec1... pattern
-  if (s.startsWith("nsec1")) {
+  const value = raw.trim();
+  if (value.startsWith("nsec1")) {
     try {
-      const { data } = require("nostr-tools").nip19.decode(s);
+      const { data } = require("nostr-tools").nip19.decode(value);
       if (data instanceof Uint8Array) return data;
       throw new Error("unexpected nsec decode shape");
-    } catch (e) {
-      throw new Error(`invalid nsec1 key: ${e.message}`);
+    } catch (error) {
+      throw new Error(`invalid nsec key: ${error instanceof Error ? error.message : "decode failed"}`);
     }
   }
-  // 64-hex string
-  if (/^[0-9a-fA-F]{64}$/.test(s)) {
-    return new Uint8Array(s.match(/.{2}/g).map((b) => parseInt(b, 16)));
+  if (/^[0-9a-fA-F]{64}$/.test(value)) {
+    return new Uint8Array(value.match(/.{2}/g).map((byte) => parseInt(byte, 16)));
   }
   throw new Error("nsec must be nsec1... bech32 or 64-char hex");
 }
 
-// ---------------------------------------------------------------------------
-// CLI parsing
-// ---------------------------------------------------------------------------
 function parseArgs(argv) {
   const opts = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith("--")) continue;
-    const key = a.slice(2);
-    if (["nsec", "csv", "subject", "api", "ledger", "results", "cashu-token"].includes(key)) {
-      opts[key] = argv[++i];
-    } else if (key === "dry-run") {
-      opts.dryRun = true;
-    } else if (key === "help") {
-      opts.help = true;
+  const values = new Set(["nsec", "csv", "subject", "api", "ledger", "results", "cashu-token", "cashu-tokens-file", "transport"]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument.startsWith("--")) throw new Error(`Unexpected argument: ${argument}`);
+    const key = argument.slice(2);
+    if (values.has(key)) {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`Missing value for --${key}`);
+      opts[key] = value;
+      index += 1;
+    } else if (["dry-run", "help", "retry-unknown"].includes(key)) {
+      if (key === "dry-run") opts.dryRun = true;
+      else opts[key] = true;
+    } else {
+      throw new Error(`Unknown option: --${key}`);
     }
   }
   return opts;
 }
 
-// ---------------------------------------------------------------------------
-// CSV parsing (quoted-field aware: names may contain commas/quotes)
-// ---------------------------------------------------------------------------
-function parseCsvLine(line) {
+export function parseCsvLine(line) {
   const cells = [];
-  let cur = "";
-  let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQ) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++; }
-        else inQ = false;
-      } else cur += ch;
-    } else if (ch === '"') {
-      inQ = true;
-    } else if (ch === ",") {
-      cells.push(cur); cur = "";
-    } else cur += ch;
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quoted) {
+      if (character === '"') {
+        if (line[index + 1] === '"') {
+          current += '"';
+          index += 1;
+        } else quoted = false;
+      } else current += character;
+    } else if (character === '"') {
+      quoted = true;
+    } else if (character === ",") {
+      cells.push(current);
+      current = "";
+    } else current += character;
   }
-  cells.push(cur);
+  if (quoted) throw new Error("Malformed quoted CSV field.");
+  cells.push(current);
   return cells;
 }
 
-function parseCsv(text) {
-  return text.split(/\r?\n/)
-    .filter((l) => l.trim().length > 0)
-    .map((l) => parseCsvLine(l));
+export function parseCsv(text) {
+  return text.split(/\r?\n/).filter((line) => line.trim()).map(parseCsvLine);
 }
 
-function generateOtp(length = 6) {
-  let otp = "";
-  for (let i = 0; i < length; i++) otp += String(randomInt(0, 10));
-  return otp;
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
-function jsonEscape(s) {
-  return '"' + String(s).replace(/"/g, '""') + '"';
+function normaliseCode(code) {
+  return code.trim().replace(/[\s-]/g, "").toUpperCase();
 }
 
-// ---------------------------------------------------------------------------
-// nomail/cashu.email auth (Nostr challenge-response) + HTTP helpers
-// ---------------------------------------------------------------------------
-async function postJson(api, path, body) {
-  const res = await fetch(api + path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+export function formatAdmissionCode(code) {
+  const normalised = normaliseCode(code);
+  return `${normalised.slice(0, 5)}-${normalised.slice(5)}`;
+}
+
+export function parseAdmissionBundle(csvText, now = Date.now()) {
+  const lines = parseCsv(csvText);
+  const header = (lines.shift() || []).map((cell) => cell.trim().toLowerCase());
+  const required = ["masters_list_number", "email", "name", "code", "expires_at", "questionnaire_title", "vote_url"];
+  const indexes = Object.fromEntries(required.map((name) => [name, header.indexOf(name)]));
+  for (const [name, index] of Object.entries(indexes)) {
+    if (index < 0) throw new Error(`The admission bundle is missing the required ${name} column.`);
+  }
+  if (!lines.length) throw new Error("The admission bundle contains no residents.");
+
+  const seenMasters = new Set();
+  const scopes = new Set();
+  const rows = lines.map((cells, offset) => {
+    const location = `Bundle row ${offset + 2}`;
+    const get = (name) => (cells[indexes[name]] || "").trim();
+    const master = get("masters_list_number");
+    const email = get("email");
+    const name = get("name");
+    const code = normaliseCode(get("code"));
+    const expiresAt = get("expires_at");
+    const questionnaireTitle = get("questionnaire_title");
+    const voteUrl = get("vote_url");
+    if ([master, email, name, code, expiresAt, questionnaireTitle, voteUrl].some((value) => /[\0\r\n]/.test(value))) {
+      throw new Error(`${location}: fields cannot contain newlines or NUL characters.`);
+    }
+    if (!/^[1-9][0-9]*$/.test(master)) throw new Error(`${location}: invalid master-list number.`);
+    if (seenMasters.has(master)) throw new Error(`${location}: duplicate master-list number ${master}.`);
+    seenMasters.add(master);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`${location}: invalid email address for master-list number ${master}.`);
+    if (!questionnaireTitle) throw new Error(`${location}: questionnaire_title is required.`);
+    if (!CODE_PATTERN.test(code)) throw new Error(`${location}: invalid admission code for master-list number ${master}.`);
+    const expiryMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiryMs) || expiryMs <= now || new Date(expiryMs).toISOString() !== expiresAt) {
+      throw new Error(`${location}: expires_at must be an unexpired ISO UTC timestamp for master-list number ${master}.`);
+    }
+    let url;
+    try {
+      url = new URL(voteUrl);
+    } catch {
+      throw new Error(`${location}: invalid vote_url for master-list number ${master}.`);
+    }
+    if (!["http:", "https:"].includes(url.protocol) || !url.searchParams.get("q") || url.searchParams.has("invite_code") || url.searchParams.has("code") || /(?:invite_code|code)=/i.test(url.hash)) {
+      throw new Error(`${location}: vote_url must be a public questionnaire link without an admission code.`);
+    }
+    if (voteUrl.toUpperCase().includes(code)) throw new Error(`${location}: vote_url cannot contain the admission code.`);
+    scopes.add(voteUrl);
+    return {
+      master,
+      email,
+      name,
+      code,
+      expiresAt,
+      questionnaireTitle,
+      voteUrl,
+      fingerprint: sha256(JSON.stringify([master, email, name, code, expiresAt, questionnaireTitle, voteUrl])),
+    };
   });
-  const text = await res.text();
-  if (!res.ok) {
-    const reason = res.headers.get("x-reason") || "";
-    const hint = res.headers.get("x-hint") || "";
-    const detail = reason ? `${reason}${hint ? " — " + hint : ""}` : text.slice(0, 300);
-    throw new Error(`${path} ${res.status}: ${detail}`);
-  }
-  return text ? JSON.parse(text) : {};
+  if (scopes.size !== 1) throw new Error("All bundle rows must use the same questionnaire vote_url.");
+  return { rows, bundleScope: sha256(rows[0].voteUrl) };
 }
 
-async function getJson(api, path) {
-  const res = await fetch(api + path);
-  const text = await res.text();
-  if (!res.ok) {
-    const reason = res.headers.get("x-reason") || "";
-    const hint = res.headers.get("x-hint") || "";
-    throw new Error(`${path} ${res.status}: ${reason ? reason + (hint ? " — " + hint : "") : text.slice(0, 300)}`);
-  }
-  return text ? JSON.parse(text) : {};
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-/**
- * Authenticate and return a session cookie value.
- * nomail uses a challenge-response flow: POST /api/auth/challenge returns a
- * nonce; we sign a kind-1 event containing it and POST /api/auth/verify. The
- * verify response sets __Host-session (HttpOnly, SameSite=Strict) which we
- * return to the caller for use as a Cookie header on authenticated calls.
- */
+function readableExpiry(expiresAt) {
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(new Date(expiresAt));
+}
+
+export function buildAdmissionEmail(row, subjectOverride = "") {
+  if (/[\r\n]/.test(subjectOverride)) throw new Error("The email subject cannot contain line breaks.");
+  const name = row.name || "Resident";
+  const formattedCode = formatAdmissionCode(row.code);
+  const expiry = readableExpiry(row.expiresAt);
+  const subject = subjectOverride || `Voting access code for ${row.questionnaireTitle}`;
+  const text = [
+    `Hello ${name},`,
+    "",
+    `You are invited to take part in "${row.questionnaireTitle}".`,
+    "",
+    "1. Open this link on your device:",
+    row.voteUrl,
+    "",
+    "2. Select \"Use admission code\".",
+    "3. Enter:",
+    `   Master-list number: ${row.master}`,
+    `   Admission code: ${formattedCode}`,
+    "4. Request your ballot and wait until it is received before answering.",
+    "",
+    `This code expires at ${expiry} UTC.`,
+    "It is single-use and only grants access. It is not included in your anonymous ballot.",
+    "Do not forward this email.",
+    "",
+    "If the code has expired or does not work, contact the organiser using the contact details you were given separately.",
+  ].join("\n");
+  const html = [
+    "<!doctype html><html><body style=\"margin:0;padding:24px;background:#f6f2e9;color:#1f2b2f;font-family:Arial,sans-serif\">",
+    "<div style=\"max-width:620px;margin:0 auto;padding:24px;background:#ffffff;border:1px solid #d8d2c5;border-radius:12px;line-height:1.55\">",
+    `<p>Hello ${escapeHtml(name)},</p>`,
+    `<p>You are invited to take part in <strong>${escapeHtml(row.questionnaireTitle)}</strong>.</p>`,
+    `<ol><li><p>Open this link on your device:</p><p><a href="${escapeHtml(row.voteUrl)}">Open the voter page</a></p><p style="font-size:12px;overflow-wrap:anywhere">${escapeHtml(row.voteUrl)}</p></li>`,
+    "<li><p>Select <strong>Use admission code</strong>.</p></li>",
+    `<li><p>Enter these details:</p><p><strong>Master-list number:</strong> ${escapeHtml(row.master)}<br><strong>Admission code:</strong> <code style="font-size:18px;letter-spacing:0.12em">${escapeHtml(formattedCode)}</code></p></li>`,
+    "<li><p>Request your ballot and wait until it is received before answering.</p></li></ol>",
+    `<p>This code expires at <strong>${escapeHtml(expiry)} UTC</strong>.</p>`,
+    "<p>It is single-use and only grants access. It is not included in your anonymous ballot.</p>",
+    "<p><strong>Do not forward this email.</strong></p>",
+    "<p>If the code has expired or does not work, contact the organiser using the contact details you were given separately.</p>",
+    "</div></body></html>",
+  ].join("");
+  return { to: row.email, subject, text, html };
+}
+
+function serviceError(operation, status, response) {
+  const reason = response?.headers?.get("x-reason") ?? "";
+  const hint = response?.headers?.get("x-hint") ?? "";
+  const providerMessage = sanitiseProviderMessage(reason, hint);
+  return Object.assign(new Error(`${operation} failed with HTTP ${status}.`), {
+    status,
+    fatal: [401, 402, 403, 407, 408, 409, 410, 412, 413, 429].includes(status),
+    ...(providerMessage ? { providerMessage } : {}),
+  });
+}
+
+export function sanitiseProviderMessage(reason, hint = "") {
+  const combined = [reason, hint]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join(" — ")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\bnsec1[0-9a-z]+\b/gi, "[redacted key]")
+    .replace(/\bcashu[0-9a-z]+\b/gi, "[redacted token]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted recipient]")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!combined) return "";
+  return `Email service: ${combined.slice(0, 160)}`;
+}
+
+async function responseError(res, operation) {
+  return serviceError(operation, res.status, res);
+}
+
+async function postJson(api, path, body) {
+  let res;
+  try {
+    res = await fetch(api + path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw Object.assign(new Error(`${path} could not be reached.`), { fatal: true, cause: error });
+  }
+  const text = res.ok ? await res.text() : "";
+  if (!res.ok) throw await responseError(res, path);
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw Object.assign(new Error(`${path} returned malformed JSON.`), { fatal: true });
+  }
+  return { data, setCookie: res.headers.getSetCookie?.()?.[0] || res.headers.get("set-cookie") || "" };
+}
+
 async function nomailSession(api, nsecRaw) {
   const skBytes = parseNsec(nsecRaw);
-  // In stub/test mode (TEST_API_STUB=1) skip all network: the deterministic
-  // test harness only needs pubkey derivation, never a real challenge/send.
   if (process.env.TEST_API_STUB === "1") return { pubkey: getPublicKey(skBytes), sessionCookie: "" };
-  const { nonce } = await postJson(api, "/api/auth/challenge", {});
-  const unsigned = {
+  const challenge = await postJson(api, "/api/auth/challenge", {});
+  const nonce = challenge.data.nonce;
+  const signed = finalizeEvent({
     kind: 1,
     created_at: Math.floor(Date.now() / 1000),
     tags: [["challenge", nonce]],
     content: nonce,
-  };
-  const signed = finalizeEvent(unsigned, skBytes);
-  const ver = await postJson(api, "/api/auth/verify", { event: signed });
-  // Capture the session cookie from the Set-Cookie response header.
-  // The verify endpoint sets __Host-session=...; Path=/; Secure; HttpOnly; SameSite=Strict
-  // Node's fetch doesn't expose cookies across origins automatically, so we
-  // read the raw Set-Cookie header and split the value portion.
-  const rawCookie = ver.res.headers.getSetCookie?.()?.[0] || ver.res.headers.get("set-cookie") || "";
-  const sessionCookie = rawCookie.split(";")[0]; // first segment = key=value
+  }, skBytes);
+  const verify = await postJson(api, "/api/auth/verify", { event: signed });
+  const sessionCookie = verify.setCookie.split(";")[0];
+  if (!sessionCookie) throw Object.assign(new Error("The email service returned no session cookie."), { fatal: true });
   return { pubkey: getPublicKey(skBytes), sessionCookie };
 }
 
-async function sendEmail(api, sessionCookie, to, subject, text, cashuToken) {
-  const body = { to, subject, text, cashuToken };
-  const headers = { "content-type": "application/json" };
-  if (sessionCookie) headers.cookie = sessionCookie;
-  const res = await fetch(api + "/api/send", { method: "POST", headers, body: JSON.stringify(body) });
-  const respText = await res.text();
-  if (!res.ok) {
-    const reason = res.headers.get("x-reason") || "";
-    const hint = res.headers.get("x-hint") || "";
-    throw new Error(`send ${res.status}: ${reason ? reason + (hint ? " — " + hint : "") : respText.slice(0, 300)}`);
+async function sendCashuEmail(api, sessionCookie, message, cashuToken) {
+  if (process.env.TEST_API_STUB === "1") return { id: "offline-stub" };
+  let res;
+  try {
+    res = await fetch(api + "/api/send", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(sessionCookie ? { cookie: sessionCookie } : {}) },
+      body: JSON.stringify({ ...message, cashuToken }),
+    });
+  } catch (error) {
+    throw Object.assign(new Error("The mail request did not receive a response; delivery is unknown."), { deliveryUnknown: true, fatal: true, cause: error });
   }
-  return respText ? JSON.parse(respText) : {};
+  const text = res.ok ? await res.text() : "";
+  if (!res.ok) throw await responseError(res, "send");
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw Object.assign(new Error("The mail service accepted a response that could not be parsed; delivery is unknown."), { deliveryUnknown: true, fatal: true });
+  }
+  if (data?.ok === false) throw new Error("The email service reported that the message was not sent.");
+  return data;
 }
 
-// ---------------------------------------------------------------------------
-// Batch orchestration (resumable)
-// ---------------------------------------------------------------------------
-async function runBatch(opts) {
-  const csvText = readFileSync(opts.csv, "utf8");
-  const lines = parseCsv(csvText);
-  const header = lines.shift() || [];
-  const hIndex = {};
-  header.forEach((h, i) => { hIndex[h.trim().toLowerCase()] = i; });
-  const ciMaster = hIndex["masters_list_number"] ?? 0;
-  const ciEmail = hIndex["email"] ?? 1;
-  const rows = lines
-    .map((c) => ({ master: (c[ciMaster] || "").trim(), email: (c[ciEmail] || "").trim() }))
-    .filter((r) => r.master && r.email);
-  if (rows.length === 0) throw new Error("No roster rows parsed from CSV.");
+export function smtpConfigFromEnv(env = process.env) {
+  const host = (env.SMTP_HOST ?? "").trim();
+  const from = (env.SMTP_FROM ?? "").trim();
+  const port = Number(env.SMTP_PORT ?? "587");
+  if (!host || !from) throw new Error("SMTP_HOST and SMTP_FROM are required for SMTP delivery.");
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("SMTP_PORT must be a valid TCP port.");
+  if (/[\r\n]/.test(from)) throw new Error("SMTP_FROM cannot contain line breaks.");
+  const user = (env.SMTP_USER ?? "").trim();
+  const pass = env.SMTP_PASS ?? "";
+  if (Boolean(user) !== Boolean(pass)) throw new Error("SMTP_USER and SMTP_PASS must be provided together.");
+  const secure = env.SMTP_SECURE === undefined ? port === 465 : /^(1|true|yes)$/i.test(env.SMTP_SECURE);
+  return { host, port, secure, from, ...(user ? { auth: { user, pass } } : {}) };
+}
 
-  let ledger = {};
-  if (opts.ledger && existsSync(opts.ledger)) {
-    ledger = JSON.parse(readFileSync(opts.ledger, "utf8"));
-  }
-  const results = [];
-  let okCount = 0, failCount = 0, skipCount = 0;
+export async function createSmtpTransport(config) {
+  const nodemailer = require("nodemailer");
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    ...(config.auth ? { auth: config.auth } : {}),
+  });
+  await transporter.verify();
+  return transporter;
+}
 
-  // Authenticate once up front, capture session cookie for batch sends.
-  let senderInfo = null;
+function smtpDeliveryError(error) {
+  const responseCode = Number(error?.responseCode);
+  const authFailure = [530, 534, 535, 538].includes(responseCode);
+  const recipientFailure = [550, 551, 552, 553, 554].includes(responseCode);
+  const safeMessage = authFailure
+    ? "SMTP authentication failed."
+    : recipientFailure
+      ? "SMTP rejected the message or recipient."
+      : responseCode >= 400
+        ? "SMTP delivery failed."
+        : "SMTP connection failed; delivery is unknown.";
+  return Object.assign(new Error(safeMessage), {
+    status: Number.isInteger(responseCode) ? responseCode : undefined,
+    fatal: !recipientFailure,
+    deliveryUnknown: !authFailure && !recipientFailure && !Number.isInteger(responseCode),
+  });
+}
+
+async function sendSmtpEmail(transporter, message, from) {
   try {
-    senderInfo = await nomailSession(opts.api, opts.nsec);
-  } catch (e) {
-    console.error(`WARN: initial auth failed (${e.message}) — will retry per send.`);
+    const info = await transporter.sendMail({ from, ...message });
+    if (!info?.accepted?.length && info?.rejected?.length) {
+      throw Object.assign(new Error("SMTP rejected the message or recipient."), { responseCode: 550 });
+    }
+    return { id: info?.messageId ?? "" };
+  } catch (error) {
+    throw smtpDeliveryError(error);
   }
-  const senderCookie = senderInfo?.sessionCookie || "";
-  const senderPubkey = senderInfo?.pubkey || "";
+}
+
+function readPaymentTokens(opts, requiredCount, usedTokenFingerprints = new Set()) {
+  if (opts["cashu-tokens-file"] && opts.cashuToken) {
+    throw new Error("Use either --cashu-token/CASHU_TOKEN or --cashu-tokens-file/CASHU_TOKENS_FILE, not both.");
+  }
+  const path = opts["cashu-tokens-file"] || process.env.CASHU_TOKENS_FILE;
+  const tokens = (path
+    ? readFileSync(path, "utf8").split(/\r?\n/).map((token) => token.trim()).filter(Boolean)
+    : opts.cashuToken ? [opts.cashuToken] : [])
+    .filter((token) => !usedTokenFingerprints.has(sha256(token)));
+  if (requiredCount > 0 && process.env.TEST_API_STUB !== "1" && tokens.length < requiredCount) {
+    throw new Error(`Live cashu.email sending needs one unused 100-sat payment token per pending recipient (${requiredCount} required, ${tokens.length} supplied). Provide --cashu-tokens-file with one token per line. No emails were sent.`);
+  }
+  return tokens;
+}
+
+export function readLedger(path) {
+  if (!path || !existsSync(path)) return {};
+  const value = JSON.parse(readFileSync(path, "utf8"));
+  if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("The send ledger must be a JSON object.");
+  return value;
+}
+
+export function writeLedger(path, ledger) {
+  if (!path) return;
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(ledger, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, path);
+}
+
+function sameUtcDay(leftMs, rightMs) {
+  const left = new Date(leftMs);
+  const right = new Date(rightMs);
+  return left.getUTCFullYear() === right.getUTCFullYear()
+    && left.getUTCMonth() === right.getUTCMonth()
+    && left.getUTCDate() === right.getUTCDate();
+}
+
+export function cashuCapUsage(ledger, now = Date.now()) {
+  let used = 0;
+  for (const entry of Object.values(ledger)) {
+    if (!entry || entry.ok !== true || entry.transport !== "cashu" || typeof entry.sentAt !== "string") continue;
+    const sentAt = Date.parse(entry.sentAt);
+    if (Number.isFinite(sentAt) && sameUtcDay(sentAt, now)) used += 1;
+  }
+  return {
+    used,
+    remaining: Math.max(0, CASHU_DAILY_SEND_CAP - used),
+    cap: CASHU_DAILY_SEND_CAP,
+  };
+}
+
+function publicFailure(error) {
+  if (error?.deliveryUnknown) return "delivery-unknown; do not retry until delivery is checked";
+  if (error?.message && /^SMTP /.test(error.message)) return error.message;
+  if (error?.providerMessage) return error.providerMessage;
+  if (Number.isInteger(error?.status)) return `send failed (HTTP ${error.status})`;
+  return "send failed before a delivery response";
+}
+
+function writeResults(path, results) {
+  if (!path) return;
+  const escape = (value) => `"${String(value).replace(/"/g, '""')}"`;
+  const csv = ["mastersListNumber,ok,detail,ref"]
+    .concat(results.map((result) => `${escape(result.master)},${result.ok ? "true" : "false"},${escape(result.detail)},${escape(result.ref ?? "")}`))
+    .join("\n");
+  writeFileSync(path, `${csv}\n`, "utf8");
+}
+
+export async function runBatch(opts) {
+  const transport = opts.transport || "cashu";
+  if (!TRANSPORTS.has(transport)) throw new Error(`Unsupported email transport: ${transport}.`);
+  const csvText = opts.csvText ?? readFileSync(opts.csv, "utf8");
+  const { rows, bundleScope } = parseAdmissionBundle(csvText);
+  const ledger = readLedger(opts.ledger);
+  const results = [];
+  let sentCount = 0;
+  let dryRunCount = 0;
+  let skipCount = 0;
+  let failCount = 0;
+  let notAttemptedCount = 0;
 
   for (const row of rows) {
-    if (ledger[row.master] && ledger[row.master].ok) {
-      results.push({ master: row.master, ok: true, detail: "already-sent (skipped)" });
-      skipCount++;
-      continue;
+    const key = `${bundleScope}:${row.master}`;
+    const existing = ledger[key];
+    if (existing && existing.fingerprint && existing.fingerprint !== row.fingerprint) {
+      throw new Error(`The ledger belongs to different admission details for master-list number ${row.master}. Use a new ledger for a new bundle; do not overwrite an existing admission batch.`);
     }
-    const otp = generateOtp();
-    const subject = opts.subject || "Your auditable-voting OTP";
-    const text = `Your auditable-voting admission code is: ${otp}\n\nIt expires in 24 hours.`;
-    try {
-      if (opts.dryRun) {
-        results.push({ master: row.master, ok: true, detail: `dry-run otp=${otp}` });
-      } else {
-        await sendEmail(opts.api, senderCookie, row.email, subject, text, opts.cashuToken);
-        results.push({ master: row.master, ok: true, detail: `sent otp=${otp}` });
-      }
-      ledger[row.master] = { ok: true, otp, email: row.email, sentAt: new Date().toISOString() };
-      okCount++;
-    } catch (e) {
-      results.push({ master: row.master, ok: false, detail: e.message });
-      failCount++;
+    if ((existing?.deliveryUnknown || existing?.pending) && !opts["retry-unknown"]) {
+      throw new Error(`A previous send did not record confirmed delivery for master-list number ${row.master}. Check delivery before retrying. If resending is intentional, add --retry-unknown; use a fresh payment token for cashu.email.`);
     }
-    if (opts.ledger) writeFileSync(opts.ledger, JSON.stringify(ledger, null, 2));
-    if (okCount % 5 === 0) await new Promise((r) => setTimeout(r, 1000));
   }
 
-  const csvOut = ["mastersListNumber,ok,detail"]
-    .concat(results.map((r) => `${r.master},${r.ok ? "true" : "false"},${jsonEscape(r.detail)}`))
-    .join("\n");
-  const resultsPath = opts.results || "otp-results.csv";
-  writeFileSync(resultsPath, csvOut + "\n", "utf8");
-  console.log(`\nDone: ${okCount} sent, ${skipCount} skipped (already-sent), ${failCount} failed of ${rows.length}.`);
-  console.log(`Results CSV -> ${resultsPath}`);
+  const capUsage = transport === "cashu" ? cashuCapUsage(ledger) : null;
+  const pendingRows = opts.dryRun ? rows : rows.filter((row) => !ledger[`${bundleScope}:${row.master}`]?.ok);
+  const plannedSends = capUsage ? Math.min(pendingRows.length, capUsage.remaining) : pendingRows.length;
+  const usedTokenFingerprints = new Set(Object.values(ledger).map((entry) => entry?.paymentFingerprint).filter((value) => typeof value === "string"));
+  const paymentTokens = !opts.dryRun && transport === "cashu" ? readPaymentTokens(opts, plannedSends, usedTokenFingerprints) : [];
+  let paymentIndex = 0;
+  let capSendsRemaining = capUsage?.remaining ?? Number.POSITIVE_INFINITY;
+  let sender = null;
+  let smtp = null;
+  if (!opts.dryRun && plannedSends > 0) {
+    if (transport === "cashu") {
+      sender = await nomailSession(opts.api, opts.nsec);
+    } else {
+      const config = smtpConfigFromEnv(opts.smtpEnv ?? process.env);
+      smtp = { config, transporter: opts.smtpTransport ?? await createSmtpTransport(config) };
+    }
+  }
+
+  for (const row of rows) {
+    const key = `${bundleScope}:${row.master}`;
+    let paymentToken = "";
+    if (!opts.dryRun && ledger[key]?.ok) {
+      results.push({ master: row.master, ok: true, detail: "already-sent (skipped)" });
+      skipCount += 1;
+      continue;
+    }
+    if (!opts.dryRun && transport === "cashu" && capSendsRemaining <= 0) {
+      results.push({ master: row.master, ok: false, detail: "not attempted: cashu daily send limit reached" });
+      notAttemptedCount += 1;
+      continue;
+    }
+    try {
+      const message = buildAdmissionEmail(row, opts.subject || "");
+      if (opts.dryRun) {
+        results.push({ master: row.master, ok: true, detail: "dry-run (not sent)" });
+        dryRunCount += 1;
+      } else {
+        if (transport === "cashu") paymentToken = paymentTokens[paymentIndex++];
+        ledger[key] = {
+          ok: false,
+          pending: true,
+          fingerprint: row.fingerprint,
+          transport,
+          ...(paymentToken ? { paymentFingerprint: sha256(paymentToken) } : {}),
+          attemptedAt: new Date().toISOString(),
+        };
+        writeLedger(opts.ledger, ledger);
+
+        let response;
+        if (transport === "cashu") {
+          response = await sendCashuEmail(opts.api, sender.sessionCookie, message, paymentToken);
+        } else {
+          response = await sendSmtpEmail(smtp.transporter, message, smtp.config.from);
+        }
+        ledger[key] = {
+          ok: true,
+          fingerprint: row.fingerprint,
+          transport,
+          ...(paymentToken ? { paymentFingerprint: sha256(paymentToken) } : {}),
+          ...(response?.id ? { deliveryRef: String(response.id).slice(0, 200) } : {}),
+          sentAt: new Date().toISOString(),
+        };
+        writeLedger(opts.ledger, ledger);
+        results.push({ master: row.master, ok: true, detail: "sent", ...(response?.id ? { ref: String(response.id).slice(0, 200) } : {}) });
+        sentCount += 1;
+        if (transport === "cashu") capSendsRemaining -= 1;
+        if (sentCount % 5 === 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, 1000));
+      }
+    } catch (error) {
+      const detail = publicFailure(error);
+      results.push({ master: row.master, ok: false, detail });
+      failCount += 1;
+      ledger[key] = {
+        ok: false,
+        pending: false,
+        failed: true,
+        fingerprint: row.fingerprint,
+        transport,
+        detail,
+        ...(error?.deliveryUnknown && paymentToken ? { paymentFingerprint: sha256(paymentToken) } : {}),
+        ...(error?.deliveryUnknown ? { deliveryUnknown: true } : {}),
+        attemptedAt: new Date().toISOString(),
+      };
+      writeLedger(opts.ledger, ledger);
+      if (error?.fatal) {
+        writeResults(opts.results, results);
+        const stopped = new Error(`The ${transport} email batch stopped early. Resolve the reported delivery/authentication/payment problem before resuming with the same ledger.`);
+        stopped.results = results;
+        throw stopped;
+      }
+    }
+  }
+
+  writeResults(opts.results, results);
+  const satsSpent = transport === "cashu" ? sentCount * CASHU_EMAIL_COST_SATS : 0;
+  const capUsedToday = capUsage ? capUsage.used + sentCount : 0;
+  const capRemaining = capUsage ? Math.max(0, capUsage.cap - capUsedToday) : 0;
+  console.log(`\nDone: ${sentCount} sent via ${transport}, ${dryRunCount} prepared by dry-run, ${skipCount} skipped (already-sent), ${failCount} failed, ${notAttemptedCount} not attempted of ${rows.length}.`);
+  if (transport === "cashu") console.log(`Cost: ${satsSpent} sats; daily cap ${capUsedToday}/${CASHU_DAILY_SEND_CAP} used.`);
+  if (opts.results) console.log(`Results CSV -> ${opts.results}`);
   if (opts.ledger) console.log(`Ledger      -> ${opts.ledger}`);
-  if (senderPubkey) console.log(`Sender pubkey: ${senderPubkey}`);
+  if (sender?.pubkey) console.log(`Sender pubkey: ${sender.pubkey}`);
+  return { sentCount, dryRunCount, skipCount, failCount, notAttemptedCount, satsSpent, capUsedToday, capRemaining, results };
 }
 
 function usage() {
-  return `Usage: node scripts/otp-send-email.mjs --nsec <nsec|hex> --csv <roster.csv> [options]
+  return `Usage: node scripts/otp-send-email.mjs --transport <cashu|smtp> --csv <admission-bundle.csv> [options]
+
+The CSV must contain
+masters_list_number,email,phone,name,code,expires_at,questionnaire_title,vote_url.
+Use the bundle downloaded from Resident email admission. Codes are delivered
+exactly as generated and registered by the voting application.
 
 Options:
-  --nsec <key>     Sender Nostr secret key (bech32 nsec1... or 64-hex); env NOMAIN_NSEC
-  --csv <path>     Roster CSV with header masters_list_number,email,phone,name
-  --subject <text> Email subject line (default: "Your auditable-voting OTP")
-  --api <url>      nomail/cashu.email base (default: ${API_DEFAULT})
-  --ledger <path>  Resume ledger JSON (skips already-sent rows on re-run)
-  --results <path> Results CSV output (default: otp-results.csv)
-  --cashu-token <token>  Ecash cashuB token to pay 100-sat postage (spent on send)
-  --dry-run        Generate OTPs but do not send
-  --help           Show this help
+  --transport <name>   cashu (default) or smtp
+  --nsec <key>         cashu sender Nostr secret key; prefer NOMAIN_NSEC in the environment
+  --csv <path>         Admission bundle CSV (required)
+  --subject <text>     Override the generated questionnaire-specific subject
+  --api <url>          cashu.email base (default: ${API_DEFAULT})
+  --ledger <path>      Resume ledger (recommended; contains no codes or addresses)
+  --results <path>     Results CSV (default: admission-results.csv)
+  --cashu-token <token> One 100-sat token for a one-recipient Cashu send
+  --cashu-tokens-file <path> One unused 100-sat Cashu token per line
+  --dry-run            Validate without authentication or sending
+  --retry-unknown      Deliberately retry sends whose previous delivery is unknown
+  --help               Show this help
 
-Resumable: re-run with the SAME --ledger; already-sent residents are skipped.`;
+SMTP environment:
+  SMTP_HOST, SMTP_PORT (587), SMTP_SECURE, SMTP_USER, SMTP_PASS, SMTP_FROM.
+  Use an app password and keep it out of shell history/source control. One
+  message is sent per recipient; address lists are never placed in Bcc.
+
+cashu.email environment:
+  NOMAIN_NSEC or --nsec supplies the sender key; CASHU_TOKEN supplies one token,
+  and CASHU_TOKENS_FILE supplies one token per line for a batch.
+
+Resume with the same bundle, transport and ledger. Never reuse a ledger for a
+different questionnaire or changed admission details.`;
 }
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  if (opts.help) { console.log(usage()); return; }
-  if (!opts.csv || (!opts.nsec && !process.env.NOMAIN_NSEC)) {
-    console.error(usage());
-    process.exit(1);
+  if (opts.help) {
+    console.log(usage());
+    return;
   }
+  if (!opts.csv) throw new Error(usage());
+  opts.transport = opts.transport || "cashu";
+  if (!TRANSPORTS.has(opts.transport)) throw new Error(`--transport must be cashu or smtp, got "${opts.transport}".`);
   opts.nsec = opts.nsec || process.env.NOMAIN_NSEC;
+  opts.cashuToken = opts["cashu-token"] || process.env.CASHU_TOKEN;
   opts.api = opts.api || API_DEFAULT;
+  opts.results = opts.results || "admission-results.csv";
+  if (!opts.dryRun && opts.transport === "cashu" && !opts.nsec) {
+    throw new Error("A cashu sender key is required. Set NOMAIN_NSEC or use --dry-run.");
+  }
+  if (!opts.dryRun && opts.transport === "smtp") smtpConfigFromEnv(process.env);
   await runBatch(opts);
 }
 
-main().catch((e) => {
-  console.error("FATAL:", e.message);
-  process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(`FATAL: ${error instanceof Error ? error.message : "Email batch failed."}`);
+    process.exit(1);
+  });
+}

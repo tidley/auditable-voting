@@ -78,19 +78,20 @@
     <li><a href="./dashboard.html?role=coordinator">Open Organiser</a>. For rehearsals use test identities; for real operation retain encrypted backups.</li>
     <li>Create questions, opening/closing times, groups, required questions and conditional follow-ups. English is the base; French/Tamil are optional. Paper output is English.</li>
     <li>Choose browser issuance or the delegated Linux worker. Keep the issuer online and deliver the worker's private configuration before use.</li>
-    <li>Choose general/private invites or paper codes. For private batching, set the signed worker identity, DM relay allowlist, threshold and deadline with queue/release delegation before publishing. Do not add these to an immutable published definition.</li>
+    <li>Choose general/private invites or paper/email credential codes. For private batching, set the signed worker identity, DM relay allowlist, threshold and deadline with queue/release delegation before publishing. Do not add these to an immutable published definition.</li>
     <li>Publish and open/select the questionnaire in Organiser so its issuer runtime is available. Under <strong>Session → Results &amp; Voters</strong> (Voters), find <strong>Paper ballot access</strong>. Enter master-list numbers and a future expiry; generate and print the Crockford codes. Treat printouts as sensitive bearer material.</li>
-    <li>Only the combined election/number/code hash and lifecycle metadata persist. No separate roster mapping is stored. <strong>Do not regenerate for the same roster after reload:</strong> earlier codes cannot automatically be found/revoked and both may remain usable. Duplicate checks cover only the open print session.</li>
-    <li>Test receipts and batch release in a separate rehearsal election before using the configuration for real voters. Share invites only once the issuer is ready. Separate credential delivery from aggregate queue progress. General requests may need approval; valid paper requests issue without another manual approval.</li>
-    <li>Allow final batch release to finish, then close and publish results through the organiser controls. Paper rounds use organiser-controlled closure, not automatic expected-count completion.</li>
+    <li>For email, start the loopback companion with <code>npm --prefix web run email:sender</code> and open its local URL. In <strong>Resident email admission</strong>, <strong>Import</strong> loads an editable roster; <strong>Add row</strong>, <strong>Set defaults</strong> and one context-sensitive <strong>Export</strong> complete the table. Set a future expiry, generate the same credentials, then choose SMTP or cashu.email and click <strong>Send emails</strong>. The companion sends one recipient-specific message and keeps credentials out of the browser. Export remains the fallback. Rehearse with controlled inboxes; the provider can see recipient addresses/messages. See <code>docs/otp-delivery.md</code> in the source repository.</li>
+    <li>Only the combined election/number/code hash and lifecycle metadata persist. No separate roster mapping is stored. <strong>Do not regenerate for the same roster after reload:</strong> earlier codes cannot automatically be found/revoked and both may remain usable. Duplicate checks cover only the open paper or email batch.</li>
+    <li>Test receipts, emailed links and batch release in a separate rehearsal election before using the configuration for real voters. Share invites only once the issuer is ready. Separate credential delivery from aggregate queue progress. General requests may need approval; valid admission-code requests issue without another manual approval.</li>
+    <li>Allow final batch release to finish, then close and publish results through the organiser controls. Paper/email-admission rounds use organiser-controlled closure, not automatic expected-count completion.</li>
     <li>Have an independent Observer verify the result.</li>
   </ol>
 </section>
 <section id="voter">
   <h2>5. Voter tutorial</h2>
   <ol>
-    <li>Open your questionnaire invite. For paper access, enter the printed code and master-list number on Vote. They derive the admission hash locally and never enter the anonymous response.</li>
-    <li>Send the request and wait for credentials. Correct a mistyped paper request while pending. An admitted code binds to that voter identity, not another identity. Retain browser state or an encrypted backup.</li>
+    <li>Open your questionnaire invite. For printed or emailed access, enter the admission code and master-list number on Vote. They derive the admission hash locally and never enter the anonymous response.</li>
+    <li>Send the request and wait for credentials. Correct a mistyped admission request while pending. An admitted code binds to that voter identity, not another identity. Retain browser state or an encrypted backup.</li>
     <li>Select a language if needed. Answer applicable questions only; required visible questions must be complete. Follow printed answer/leave-blank instructions.</li>
     <li>Submit. With private batching, wait for the authenticated <strong>Queued privately</strong> receipt. Read any rejection reason; sending a DM alone does not mean acceptance.</li>
     <li>Keep submission details. Wait for batch release before expecting a public row. Do not create another identity merely because release is delayed.</li>
@@ -111,7 +112,7 @@
   <h2>7. Protocol sequences</h2>
   <h3>Admission and credential issuance</h3>
   <pre aria-label="Admission message sequence">Organiser → issuer: private configuration with combined admission hashes
-Organiser → voter: paper code + number + expiry + instructions
+Organiser/coordinator sender → voter: printed/emailed code + number + expiry + instructions
 Voter → voter: derive admission hash; blind fresh credential request
 Voter → issuer: encrypted request, admission hash and request identity
 Issuer: check election window, scope, expiry and admission state
@@ -141,10 +142,10 @@ Worker: persist completion; retry failed entries only</pre>
   <p>Retries may send the same event more than once; stable event IDs support relay deduplication. Lost issuer state, keys or voter recovery secrets require the election's recovery procedure, not an extra vote.</p>
 </section>
 <section id="planned">
-  <h2>8. Planned, not shipped as a complete admission service</h2>
+  <h2>8. Remaining admission limitations</h2>
   <ul>
     <li>Signed reusable admission grants scoped to group, issuer, voter and expiry are future work. Elections still need fresh credentials.</li>
-    <li>Resident imports and OTP previews are not cross-device authentication. Proposed automated email delivery is not merged; an OTP UI flag is not protocol admission.</li>
+    <li>Emailed codes use the paper admission protocol, not a browser-local OTP flag. Actual mail delivery depends on the coordinator sender, provider and recipient. Test with controlled inboxes and retain paper/manual fallback.</li>
     <li>SMS integration is not implemented. Worker/Nostr connectivity is separate from SMS/email delivery.</li>
   </ul>
 </section>

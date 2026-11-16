@@ -20,7 +20,7 @@ const AUTO_REQUEST_INVITE_URL = `${VOTER_URL}&request_ballot=1&auto_request=1`;
 const DEFINITION = { questionnaireId: ELECTION_ID, title: "Resident vote", questions: [] } as unknown as QuestionnaireDefinition;
 const CSV_HEADER = "masters_list_number,email,phone,name";
 const VALID_CSV = [CSV_HEADER, "101,alice@example.org,,Alice Smith", "102,bob@example.org,,Bob Jones"].join("\n");
-const createObjectURL = vi.fn((_blob: Blob) => "blob:admission-bundle");
+const createObjectURL = vi.fn((_blob: Blob) => "blob:admission-email-bundle");
 
 function makeProps() {
   return {
@@ -33,7 +33,7 @@ function makeProps() {
 }
 
 async function importCsv(csv: string, name = "import.csv") {
-  await userEvent.upload(screen.getByLabelText("Import resident CSV"), new File([csv], name, { type: "text/csv" }));
+  await userEvent.upload(screen.getByLabelText("Import resident or delivery results CSV"), new File([csv], name, { type: "text/csv" }));
 }
 
 async function generateAdmissions() {
@@ -49,16 +49,18 @@ function latestCsv() {
 beforeEach(() => {
   Object.defineProperty(URL, "createObjectURL", { value: createObjectURL, configurable: true });
   Object.defineProperty(URL, "revokeObjectURL", { value: vi.fn(), configurable: true });
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({}) })));
 });
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   window.localStorage.clear();
 });
 
-describe("Resident email admission (export only)", () => {
+describe("Resident email admission", () => {
   it("uses one Import control and preserves valid rows when a later CSV is rejected", async () => {
     const props = makeProps();
     render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
@@ -66,7 +68,6 @@ describe("Resident email admission (export only)", () => {
     expect(screen.getByRole("button", { name: "Import" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Set defaults" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Send emails" })).toBeNull();
 
     await importCsv(VALID_CSV);
     expect(await screen.findByText("2 residents imported.")).toBeTruthy();
@@ -172,7 +173,20 @@ describe("Resident email admission (export only)", () => {
     expect(lines[1]).not.toContain("request_ballot");
     expect(lines[1]).not.toContain("auto_request");
     expect(lines[1]).not.toContain("••••");
-    expect(await screen.findByText(/Admission bundle exported/)).toBeTruthy();
+    expect(await screen.findByText(/Email bundle exported/)).toBeTruthy();
+  });
+
+  it("updates the integrated Delivery column when importing results through the same control", async () => {
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await importCsv("mastersListNumber,ok,detail,ref\n101,true,sent,abc123\n102,false,Rejected,\n", "results.csv");
+
+    expect(await screen.findByText("2 delivery status rows imported.")).toBeTruthy();
+    const table = screen.getByRole("table", { name: "Residents" });
+    expect(within(table).getByDisplayValue("101")).toBeTruthy();
+    expect(within(table).getByText("Sent")).toBeTruthy();
+    expect(within(table).getByText("Failed: Rejected")).toBeTruthy();
   });
 
   it("rejects bundle import and does not generate without a published questionnaire or future expiry", async () => {
@@ -194,5 +208,88 @@ describe("Resident email admission (export only)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Generate admission codes" }));
     expect(await screen.findByText("Code expiry must be in the future.")).toBeTruthy();
     expect(props.runtime.addPaperBallotAdmission).not.toHaveBeenCalled();
+  });
+
+  it("sends the exact generated bundle through a discovered local sender and updates Delivery", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+      }
+      if (String(input) === "/__email/send") {
+        const body = JSON.parse(String(init?.body));
+        expect(body.transport).toBe("smtp");
+        expect(body.bundleCsv).toContain("questionnaire_title");
+        expect(body.bundleCsv).toContain("Resident vote");
+        expect(body.bundleCsv).toContain("alice@example.org");
+        expect(body.bundleCsv).toMatch(/[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10}/);
+        return {
+          ok: true,
+          json: async () => ({
+            sent: 2,
+            skipped: 0,
+            failed: 0,
+            results: [
+              { master: "101", ok: true, detail: "sent", ref: "smtp-1" },
+              { master: "102", ok: true, detail: "sent", ref: "smtp-2" },
+            ],
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    expect(await screen.findByLabelText("Email sender")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText("Email delivery: 2 sent, 0 already sent, 0 failed.")).toBeTruthy();
+    const table = screen.getByRole("table", { name: "Residents" });
+    expect(within(table).getAllByText("Sent")).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/__email/send")).toHaveLength(1);
+  });
+
+  it("keeps export-only fallback when the local sender is unreachable", async () => {
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    expect(await screen.findByText(/Local sender not connected/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Send emails" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();
+  });
+
+  it("shows cashu cost, daily-cap and not-attempted status from the local sender", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["cashu"], maxRecipients: 1000 }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          sent: 1,
+          skipped: 0,
+          failed: 1,
+          notAttempted: 1,
+          satsSpent: 100,
+          capUsedToday: 100,
+          capRemaining: 0,
+          results: [
+            { master: "101", ok: true, detail: "sent", ref: "cashu-1" },
+            { master: "102", ok: false, detail: "send failed (HTTP 402)" },
+            { master: "103", ok: false, detail: "not attempted: cashu daily send limit reached" },
+          ],
+        }),
+      };
+    }));
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv([CSV_HEADER, "101,alice@example.org,,Alice Smith", "102,bob@example.org,,Bob Jones", "103,carol@example.org,,Carol Cruz"].join("\n"));
+    await generateAdmissions();
+    expect(await screen.findByLabelText("Email sender")).toHaveProperty("value", "cashu");
+    await userEvent.click(screen.getByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText("Email delivery: 1 sent, 0 already sent, 1 failed, 1 not attempted. 100 sats; daily cap 100/100 used, 0 remaining.")).toBeTruthy();
+    expect(screen.getByText("Not sent: cashu daily send limit reached")).toBeTruthy();
   });
 });

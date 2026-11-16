@@ -28,6 +28,16 @@ export default defineConfig(({ mode }) => ({
     }
     : undefined,
   plugins: [react(), wasm()],
+  server: {
+    // Optional local email companion. Vite reports a normal proxy failure when
+    // it is not running, allowing the UI to keep its export-only fallback.
+    proxy: {
+      "/__email": {
+        target: process.env.EMAIL_SENDER_API || "http://127.0.0.1:4319",
+        changeOrigin: true,
+      },
+    },
+  },
   test: {
     // Playwright owns browser specs under web/e2e; Vitest must only discover
     // unit and component tests under src.
