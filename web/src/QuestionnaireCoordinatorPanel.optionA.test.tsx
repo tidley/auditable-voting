@@ -1895,7 +1895,6 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const controlRelays = [
       "wss://vm-1734.lnvps.cloud/",
       "wss://relay.nostr.net",
-      "wss://nos.lol",
       "wss://relay.nostr.info",
       "wss://relay.damus.io",
       "wss://relay.primal.net",

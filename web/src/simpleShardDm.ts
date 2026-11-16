@@ -38,9 +38,6 @@ export const SIMPLE_DM_RELAYS = [
   'wss://vm-1734.lnvps.cloud/',
   'wss://relay.nostr.net',
   'wss://nip17.com',
-  'wss://relay.0xchat.com',
-  'wss://nos.lol',
-  'wss://nostr.mom',
   'wss://relay.primal.net',
 ];
 

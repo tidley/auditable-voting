@@ -330,6 +330,16 @@ The HTML alternative makes the voter link clickable, shows a plain fallback URL,
 formats the code in a monospaced block and escapes all names/title text. The
 admission code is never placed in the URL.
 
+## Sending an exported bundle from a hosted page
+
+The GitHub Pages build cannot reach the loopback companion. If codes were
+generated there, **Export** the bundle before reloading, then open the local
+coordinator origin and **Import** that bundle. The table enters delivery-only
+mode: the codes are already registered, so sending does not create replacement
+codes. Do not generate another batch for the same roster.
+
+The bundle import is only for delivery. It does not register admissions.
+
 ## CLI fallback
 
 The local UI uses the same delivery code as `scripts/otp-send-email.mjs`. Use the

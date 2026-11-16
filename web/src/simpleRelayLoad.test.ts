@@ -208,18 +208,21 @@ describe("simple relay load without browser", () => {
 
     const secondaryTicketRelays = new Set<string>();
     const anchorsSeen = new Set<string>();
+    const mailboxAnchors = new Set([
+      "wss://vm-1734.lnvps.cloud/",
+      "wss://relay.nostr.net",
+      "wss://relay.primal.net",
+    ]);
     for (const ticketEventId of ticketEventIds) {
       const relays = relaysForEvent(SIMPLE_MAILBOX_TICKET_KIND, ticketEventId);
       expect(relays).toHaveLength(5);
-      const anchors = relays.filter(
-        (relay) => relay === "wss://relay.nostr.net" || relay === "wss://nos.lol",
-      );
+      const anchors = relays.filter((relay) => mailboxAnchors.has(relay));
       expect(anchors.length).toBeGreaterThanOrEqual(1);
       for (const anchor of anchors) {
         anchorsSeen.add(anchor);
       }
       for (const relay of relays) {
-        if (relay !== "wss://relay.nostr.net" && relay !== "wss://nos.lol") {
+        if (!mailboxAnchors.has(relay)) {
           secondaryTicketRelays.add(relay);
         }
       }
