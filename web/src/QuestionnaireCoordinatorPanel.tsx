@@ -3933,7 +3933,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   async function publishDefinition(options?: { applyAdmissions?: boolean }) {
     let definitionToPublish = builtDefinition;
     if (publishedDefinition) {
-      setStatus("Published questionnaires are read-only. Add a session to make changes.");
+      setStatus("Published questionnaires are read-only. Start a new round to make changes.");
       return;
     }
     if (!coordinatorNsec.trim() || !definitionToPublish) {
@@ -5088,8 +5088,9 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   }, [props.setupFocusSignal, props.setupFocusTarget, titleReady]);
 
   const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
+  const showEmptyRosterRoundNotice = showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish;
   const hasBuildSideActions = Boolean(
-    (showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish)
+    showEmptyRosterRoundNotice
       || !coordinatorNsec.trim()
       || (publishValidation && !publishValidation.valid)
       || statusNotice,
@@ -5115,14 +5116,25 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight simple-session-control-actions'>
         {view === "build" ? (
           showNewRoundPublishOnly ? (
-            <UiButton
-              icon='uploadLine'
-              className='simple-voter-primary'
-              isDisabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
-              onPress={() => void publishDefinition({ applyAdmissions: true })}
-            >
-              Publish to invited voters
-            </UiButton>
+            props.canApplyAdmissionsOnPublish ? (
+              <UiButton
+                icon='uploadLine'
+                className='simple-voter-primary'
+                isDisabled={!canPublishDraft}
+                onPress={() => void publishDefinition({ applyAdmissions: true })}
+              >
+                Publish to invited voters
+              </UiButton>
+            ) : (
+              <UiButton
+                icon='uploadLine'
+                className='simple-voter-primary'
+                isDisabled={!canPublishDraft}
+                onPress={() => void publishDefinition()}
+              >
+                Publish new round
+              </UiButton>
+            )
           ) : !publishedDefinition ? (
             <>
               {showPrimaryPublishActionInToolbar ? (
@@ -5197,7 +5209,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
             isDisabled={props.canAddSession === false}
             onPress={props.onAddSession}
           >
-            Add session
+            Start new round
           </UiButton>
         ) : null}
         <UiButton icon='refresh' className='simple-voter-secondary' onPress={() => void refresh()}>
@@ -6061,8 +6073,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
 	          {hasBuildSideActions ? (
 	            <aside className='simple-questionnaire-build-aside'>
 	              <section className='simple-questionnaire-build-side-card simple-questionnaire-build-actions'>
-	                {showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish ? (
-	                  <p className='simple-voter-note'>Add at least one invited voter before publishing this round.</p>
+	                {showEmptyRosterRoundNotice ? (
+	                  <p className='simple-voter-note'>No invited-voter roster will be carried into this round. Use general, private, paper or email admission as appropriate.</p>
 	                ) : null}
 	                {!coordinatorNsec.trim() ? (
 	                  <p className='simple-voter-note'>Organiser key is not loaded yet.</p>

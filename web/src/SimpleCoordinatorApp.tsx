@@ -177,7 +177,7 @@ import {
   QUESTIONNAIRE_PROTOCOL_VERSION_V2,
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
 } from "./questionnaireProtocolConstants";
-import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
+import { canStartQuestionnaireRound } from "./coordinatorNewRound";
 import { useTransientCopiedLabel } from "./useTransientCopiedLabel";
 import PaperBallotCoordinatorPanel from "./PaperBallotCoordinatorPanel";
 import type { PaperBallotAdmissionEntry } from "./paperBallotAdmission";
@@ -1921,11 +1921,17 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
     [admittedVoterEntries],
   );
   const canApplyAdmissionsOnPublish = admittedVoterNpubs.length > 0;
-  const canStartNewRound = canStartInvitedQuestionnaireRound({
-    questionnaireId: questionnaireRosterAnnouncement.questionnaireId,
-    state: questionnaireRosterAnnouncement.state,
-    admittedVoterCount: admittedVoterNpubs.length,
-  });
+  const canStartNewRound = useMemo(() => {
+    const questionnaireId = questionnaireRosterAnnouncement.questionnaireId.trim();
+    const summaryState = questionnaireId
+      ? loadElectionSummary(questionnaireId)?.state ?? null
+      : null;
+    return canStartQuestionnaireRound({
+      questionnaireId,
+      state: questionnaireRosterAnnouncement.state,
+      summaryState,
+    });
+  }, [questionnaireRosterAnnouncement.questionnaireId, questionnaireRosterAnnouncement.state]);
   const admittedVoterNpubKey = useMemo(
     () => admittedVoterNpubs.join("|"),
     [admittedVoterNpubs],
@@ -7606,8 +7612,8 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 
   function startNewRound() {
     if (!canStartNewRound) {
-      setAdmittedVoterStatus("Add at least one invited voter before adding a session.");
-      selectTab("participants");
+      setAdmittedVoterStatus("Publish or open the questionnaire before starting a new round.");
+      selectTab("configure");
       return;
     }
     let nextQuestionnaireId = "";
@@ -7627,10 +7633,12 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
   }
 
   async function handlePublishedQuestionnaire(questionnaireId: string) {
-    await applyAdmissionRosterToCurrentQuestionnaire({
-      questionnaireId,
-      suppressUnchangedStatus: true,
-    });
+    if (admittedVoterNpubs.length > 0) {
+      await applyAdmissionRosterToCurrentQuestionnaire({
+        questionnaireId,
+        suppressUnchangedStatus: true,
+      });
+    }
     if (newRoundMode) {
       setNewRoundMode(false);
       setDraftQuestionnaireId("");
