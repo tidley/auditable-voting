@@ -207,3 +207,11 @@ test("same-origin companion send reaches a real SMTP socket with recipient instr
     await new Promise((resolve) => smtpServer.close(resolve));
   }
 });
+
+test("keep-alive outlives a dev proxy's idle socket", () => {
+  // A pooled proxy socket that the sender has already half-closed turns the
+  // next POST into an instant 502 before the handler runs. The companion must
+  // hold upstream sockets open longer than the proxy's idle window.
+  assert.ok(server.keepAliveTimeout >= 60_000, `keepAliveTimeout=${server.keepAliveTimeout}`);
+  assert.ok(server.headersTimeout > server.keepAliveTimeout, `headersTimeout=${server.headersTimeout}`);
+});

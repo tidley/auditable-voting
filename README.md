@@ -107,6 +107,12 @@ npm --prefix web run email:sender
 
 Configure SMTP or cashu.email credentials in that terminal; see [the coordinator runbook](docs/otp-delivery.md).
 
+If you want the Vite dev server and the sender together, use the ordering-safe launcher — it starts the sender, waits for `/__email/health`, then starts Vite:
+
+```bash
+npm --prefix web run email:dev
+```
+
 If rebuilding the WebAssembly blind-signature package directly, install the Rust Wasm target first:
 
 ```bash

@@ -36,7 +36,8 @@
     "test:live-ui-rust-worker": "tsx scripts/live-ui-rust-worker-smoke.ts",
     "test:scoped-ballot-load": "tsx scripts/scoped-ballot-load-sim.ts",
     "test:e2e": "npx playwright test",
-    "email:sender": "npm run build && node --env-file-if-exists=../.env ../scripts/email-sender.mjs"
+    "email:sender": "npm run build && node --env-file-if-exists=../.env ../scripts/email-sender.mjs",
+    "email:dev": "node ../scripts/dev-with-email.mjs"
   },
   "dependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.5",

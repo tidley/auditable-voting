@@ -19,6 +19,13 @@ const DEFAULT_PORT = 4319;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RECIPIENTS = 1_000;
 const SERVICE_NAME = "auditable-voting-email-sender";
+// The Vite dev proxy pools an upstream socket for /__email. Node's default
+// server keep-alive timeout is 5s, so the proxy can pick a socket the sender has
+// already half-closed and turn the next POST into a 3-5ms 502 before the request
+// reaches the handler. Keeping upstream sockets alive longer than the proxy's
+// idle window removes that race for the long-lived companion.
+const KEEP_ALIVE_TIMEOUT_MS = 75_000;
+const HEADERS_TIMEOUT_MS = KEEP_ALIVE_TIMEOUT_MS + 5_000;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -258,6 +265,9 @@ export function createEmailSenderServer(options = {}) {
 
     serveStatic(req, res, distDir, pathname);
   });
+
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+  server.headersTimeout = HEADERS_TIMEOUT_MS;
 
   return { server, distDir, stateDir };
 }

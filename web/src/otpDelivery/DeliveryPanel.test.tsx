@@ -292,4 +292,62 @@ describe("Resident email admission", () => {
     expect(await screen.findByText("Email delivery: 1 sent, 0 already sent, 1 failed, 1 not attempted. 100 sats; daily cap 100/100 used, 0 remaining.")).toBeTruthy();
     expect(screen.getByText("Not sent: cashu daily send limit reached")).toBeTruthy();
   });
+
+  it("retries once through a proxy 502 and reports ledger skips", async () => {
+    let sendCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+      }
+      if (String(input) === "/__email/send") {
+        sendCalls += 1;
+        if (sendCalls === 1) return { ok: false, status: 502, json: async () => ({}) };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sent: 0,
+            skipped: 2,
+            failed: 0,
+            results: [
+              { master: "101", ok: true, detail: "already sent", ref: "smtp-1" },
+              { master: "102", ok: true, detail: "already sent", ref: "smtp-2" },
+            ],
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch ${String(input)}`);
+    }));
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    expect(await screen.findByLabelText("Email sender")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText("Email delivery: 0 sent, 2 already sent, 0 failed.")).toBeTruthy();
+    expect(sendCalls).toBe(2);
+  });
+
+  it("re-checks the sender before sending and never posts when it has gone away", async () => {
+    let healthCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        healthCalls += 1;
+        if (healthCalls === 1) {
+          return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+        }
+        throw new Error("connect ECONNREFUSED 127.0.0.1:4319");
+      }
+      throw new Error(`Unexpected fetch ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    expect(await screen.findByLabelText("Email sender")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText(/Local email sender is not reachable/)).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/__email/send")).toHaveLength(0);
+  });
 });

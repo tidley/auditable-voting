@@ -49,6 +49,30 @@ interface SenderHealth {
   maxRecipients: number;
 }
 
+const HEALTH_TIMEOUT_MS = 4_000;
+const SEND_RETRY_DELAY_MS = 250;
+
+function timeoutSignal(ms: number): AbortSignal | undefined {
+  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(ms)
+    : undefined;
+}
+
+async function probeSenderHealth(signal?: AbortSignal): Promise<SenderHealth> {
+  const response = await fetch("/__email/health", {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error("Local sender unavailable.");
+  const health = await response.json() as Partial<SenderHealth>;
+  if (health.service !== "auditable-voting-email-sender" || !Array.isArray(health.transports) || typeof health.maxRecipients !== "number") {
+    throw new Error("Local sender unavailable.");
+  }
+  const transports = health.transports.filter((value): value is SenderTransport => value === "smtp" || value === "cashu");
+  return { service: health.service, transports, maxRecipients: health.maxRecipients };
+}
+
 export function batchDefaultExpiry(now = new Date()): string {
   const expiry = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -101,23 +125,11 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    void fetch("/__email/health", {
-      cache: "no-store",
-      headers: { accept: "application/json" },
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Local sender unavailable.");
-        return await response.json() as Partial<SenderHealth>;
-      })
+    void probeSenderHealth(controller.signal)
       .then((health) => {
         if (!active) return;
-        if (health.service !== "auditable-voting-email-sender" || !Array.isArray(health.transports) || typeof health.maxRecipients !== "number") {
-          throw new Error("Local sender unavailable.");
-        }
-        const transports = health.transports.filter((value): value is SenderTransport => value === "smtp" || value === "cashu");
-        setSenderHealth({ service: health.service, transports, maxRecipients: health.maxRecipients });
-        setTransport((current) => transports.includes(current) ? current : transports[0] ?? "smtp");
+        setSenderHealth(health);
+        setTransport((current) => health.transports.includes(current) ? current : health.transports[0] ?? "smtp");
         setSenderCheck("available");
       })
       .catch(() => {
@@ -299,20 +311,51 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   }
 
   async function sendEmails() {
-    if (sending || !senderHealth || !senderHealth.transports.includes(transport)) return;
+    if (sending) return;
     const bundleCsv = buildIssuedBundle();
     if (!bundleCsv) {
       setStatus("Publish and open the questionnaire before sending email.");
       return;
     }
     setSending(true);
-    setStatus(`Sending ${issued.length} email${issued.length === 1 ? "" : "s"} through ${transport === "smtp" ? "SMTP" : "cashu.email"}…`);
+    setStatus("Checking the local email sender…");
     try {
-      const response = await fetch("/__email/send", {
+      // The mount-time check can be minutes stale: the companion may have
+      // restarted (or the dev proxy may have lost its socket) since then.
+      // Re-probe immediately before the POST so an unavailable sender produces
+      // an actionable message instead of an opaque 502.
+      let health: SenderHealth;
+      try {
+        health = await probeSenderHealth(timeoutSignal(HEALTH_TIMEOUT_MS));
+        setSenderHealth(health);
+        setSenderCheck("available");
+      } catch {
+        setSenderCheck("unavailable");
+        setStatus('Local email sender is not reachable. Start it with "npm --prefix web run email:dev" (it starts the sender before Vite) and retry; recipients already sent are skipped.');
+        return;
+      }
+      if (!health.transports.includes(transport)) {
+        setStatus(`The local sender has no ${transport === "smtp" ? "SMTP" : "cashu.email"} credentials configured.`);
+        return;
+      }
+
+      setStatus(`Sending ${issued.length} email${issued.length === 1 ? "" : "s"} through ${transport === "smtp" ? "SMTP" : "cashu.email"}…`);
+      const postBatch = () => fetch("/__email/send", {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ transport, bundleCsv }),
       });
+      const retryableStatus = (status: number) => status === 502 || status === 503 || status === 504;
+      let response = await postBatch();
+      if (retryableStatus(response.status)) {
+        // A proxy-level 502/503/504 means the request never reached the send
+        // handler, but a response can also be lost after the handler ran. The
+        // sender's ledger fingerprints every recipient, so one retry is safe:
+        // anything already delivered comes back as "already sent".
+        setStatus("The local sender did not answer through the dev proxy; retrying once — already-sent recipients are skipped…");
+        await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_DELAY_MS));
+        response = await postBatch();
+      }
       const payload = await response.json().catch(() => ({})) as {
         error?: string;
         sent?: number;
@@ -325,7 +368,12 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
         results?: Array<{ master: string; ok: boolean; detail: string; ref?: string }>;
       };
       applyDeliveryResults(payload.results ?? []);
-      if (!response.ok) throw new Error(payload.error || "The local sender rejected the batch.");
+      if (!response.ok) {
+        if (retryableStatus(response.status)) {
+          throw new Error(`the dev proxy could not reach the local email sender (HTTP ${response.status}) after one retry. Start the companion with "npm --prefix web run email:dev" and retry; the ledger skips recipients already sent.`);
+        }
+        throw new Error(payload.error || "The local sender rejected the batch.");
+      }
       const notAttempted = payload.notAttempted ?? 0;
       const capSuffix = transport === "cashu" && typeof payload.satsSpent === "number"
         ? ` ${payload.satsSpent} sats; daily cap ${payload.capUsedToday ?? 0}/100 used, ${payload.capRemaining ?? 0} remaining.`
