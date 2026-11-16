@@ -23,6 +23,10 @@ is uploaded to Nostr. Real email delivery and provider-specific deliverability
 still need a controlled-inbox test; printed/manual distribution remains the
 fallback.
 
+For a standalone operator guide covering deployment, SMTP credentials, DNS, the
+public voter-link limitation, Guardian/worker issuance and troubleshooting, see
+[email admission deployment and use](email-admission-deployment.md).
+
 ## Start the local sender
 
 Install/build first, or let the npm script build automatically. Copy
