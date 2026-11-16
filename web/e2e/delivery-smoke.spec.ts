@@ -10,8 +10,14 @@ const VALID_CSV = [
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
+async function setExpiry(page: Page) {
+  for (const [segment, value] of [["day", "01"], ["month", "01"], ["year", "2099"], ["hour", "12"], ["minute", "30"]]) {
+    await page.getByRole("spinbutton", { name: new RegExp(`^${segment},`) }).pressSequentially(value);
+  }
+}
+
 async function importCsv(page: Page, csv = VALID_CSV, name = "residents.csv") {
-  await page.getByLabel("Import resident CSV", { exact: true }).setInputFiles({
+  await page.getByLabel("Import resident or delivery results CSV", { exact: true }).setInputFiles({
     name,
     mimeType: "text/csv",
     buffer: Buffer.from(csv, "utf8"),
@@ -19,15 +25,14 @@ async function importCsv(page: Page, csv = VALID_CSV, name = "residents.csv") {
 }
 
 // Production component + real code generation and CSV export; admission runtime
-// is stubbed. This is deliberately NOT a relay redemption or delivery claim.
-test("resident admission: one import, editable table, masked codes and exact bundle export", async ({ page }) => {
+// is stubbed. This is deliberately NOT a relay redemption or real-email claim.
+test("resident email admission: one import, editable table, masked codes and exact bundle export", async ({ page }) => {
   await page.goto("/e2e/resident-email-harness.html");
   const section = page.getByRole("region", { name: "Resident email admission" });
   await expect(section.locator("input[type='file']")).toHaveCount(1);
   await expect(section.getByRole("button", { name: "Import", exact: true })).toHaveCount(1);
   await expect(section.getByRole("button", { name: "Export", exact: true })).toHaveCount(1);
   await expect(section.getByRole("button", { name: "Set defaults", exact: true })).toHaveCount(1);
-  await expect(section.getByRole("button", { name: "Send emails", exact: true })).toHaveCount(0);
 
   await importCsv(page);
   await expect(section.getByText("3 residents imported.")).toBeVisible();
@@ -84,4 +89,55 @@ test("resident admission: one import, editable table, masked codes and exact bun
     "401,duplicate@example.test,,Duplicate",
   ].join("\n"));
   await expect(section.getByRole("alert")).toContainText("duplicate masters_list_number");
+});
+
+test("resident email admission imports delivery results into the same table", async ({ page }) => {
+  await page.goto("/e2e/resident-email-harness.html");
+  const section = page.getByRole("region", { name: "Resident email admission" });
+  await importCsv(page);
+  await importCsv(page, "mastersListNumber,ok,detail,ref\n401,true,sent,mail-1\n402,false,send failed (HTTP 400),\n", "results.csv");
+  const table = section.getByRole("table", { name: "Residents" });
+  await expect(table).toContainText("Sent");
+  await expect(table).toContainText("Failed: send failed (HTTP 400)");
+  await expect(table).not.toContainText("alice@example.testFailed");
+  expect(await table.innerText()).not.toContain("mail-1");
+  await expect(section.getByText("2 delivery status rows imported.")).toBeVisible();
+});
+
+test("connecting the local sender enables Send emails and updates Delivery", async ({ page }) => {
+  let submittedBody: { transport?: string; bundleCsv?: string } = {};
+  await page.route("**/__email/health", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }),
+    });
+  });
+  await page.route("**/__email/send", async (route) => {
+    submittedBody = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        sent: 3,
+        skipped: 0,
+        failed: 0,
+        results: [401, 402, 403].map((master) => ({ master: String(master), ok: true, detail: "sent", ref: `mail-${master}` })),
+      }),
+    });
+  });
+  await page.goto("/e2e/resident-email-harness.html");
+  const section = page.getByRole("region", { name: "Resident email admission" });
+  await importCsv(page);
+  await section.getByRole("button", { name: "Set defaults" }).click();
+  await section.getByRole("button", { name: "Generate admission codes" }).click();
+  await expect(section.getByLabel("Code for resident 401", { exact: true })).toBeVisible();
+  await expect(section.getByLabel("Email sender", { exact: true })).toHaveValue("smtp");
+  await section.getByRole("button", { name: "Send emails", exact: true }).click();
+  await expect(section.getByText("Email delivery: 3 sent, 0 already sent, 0 failed.")).toBeVisible();
+  await expect(section.getByRole("table", { name: "Residents" })).toContainText("Sent");
+  expect(submittedBody.transport).toBe("smtp");
+  expect(submittedBody.bundleCsv).toContain("questionnaire_title");
+  expect(submittedBody.bundleCsv).toContain("alice@example.test");
+  expect(submittedBody.bundleCsv).toMatch(/[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10}/);
 });

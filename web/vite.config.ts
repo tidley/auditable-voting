@@ -28,6 +28,42 @@ export default defineConfig(({ mode }) => ({
     }
     : undefined,
   plugins: [react(), wasm()],
+  server: {
+    // Optional local email companion. Vite reports a normal proxy failure when
+    // it is not running, allowing the UI to keep its export-only fallback.
+    proxy: {
+      "/__email": {
+        target: process.env.EMAIL_SENDER_API || "http://127.0.0.1:4319",
+        changeOrigin: true,
+        // Open a fresh loopback connection per request. The companion is a
+        // local dev helper, so connection pooling saves nothing, while a
+        // pooled socket that went stale (sender restart, or the sender's own
+        // keep-alive idle timeout) turns the next POST into an instant 502
+        // before the request reaches the handler.
+        agent: false,
+        proxyTimeout: 120_000,
+        timeout: 120_000,
+        configure(proxy) {
+          proxy.on("error", (error, _req, res) => {
+            // http-proxy passes a ServerResponse or a raw socket depending on
+            // where the failure happened; only the former can carry a body.
+            const response = res as unknown as {
+              headersSent?: boolean;
+              writeHead?: (status: number, headers: Record<string, string>) => void;
+              end?: (body: string) => void;
+            };
+            if (typeof response?.writeHead !== "function") return;
+            if (!response.headersSent) {
+              response.writeHead(502, { "content-type": "application/json; charset=utf-8" });
+            }
+            response.end?.(JSON.stringify({
+              error: `The local email sender is unreachable (${(error as NodeJS.ErrnoException).code ?? "proxy error"}). Start it with "npm --prefix web run email:dev".`,
+            }));
+          });
+        },
+      },
+    },
+  },
   test: {
     // Playwright owns browser specs under web/e2e; Vitest must only discover
     // unit and component tests under src.

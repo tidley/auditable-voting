@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import type { QuestionnaireDefinition } from "../questionnaireProtocol";
 import type { QuestionnaireOptionACoordinatorRuntime } from "../questionnaireOptionARuntime";
 import {
@@ -14,6 +14,8 @@ import {
   buildEmailDeliveryBundleCsv,
   buildResidentCsv,
   escapeCsvField,
+  parseResultsCsv,
+  type DeliveryResultRow,
 } from "./csv";
 import UiDateTimeField from "../ui/UiDateTimeField";
 import { resolveLocalised } from "../i18n/resolveLocale";
@@ -37,6 +39,38 @@ interface DeliveryPanelProps {
   runtime: QuestionnaireOptionACoordinatorRuntime | null;
   voterUrl: string;
   onAdmissionsChanged?: () => void;
+}
+
+type SenderTransport = "smtp" | "cashu";
+
+interface SenderHealth {
+  service: string;
+  transports: SenderTransport[];
+  maxRecipients: number;
+}
+
+const HEALTH_TIMEOUT_MS = 4_000;
+const SEND_RETRY_DELAY_MS = 250;
+
+function timeoutSignal(ms: number): AbortSignal | undefined {
+  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(ms)
+    : undefined;
+}
+
+async function probeSenderHealth(signal?: AbortSignal): Promise<SenderHealth> {
+  const response = await fetch("/__email/health", {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error("Local sender unavailable.");
+  const health = await response.json() as Partial<SenderHealth>;
+  if (health.service !== "auditable-voting-email-sender" || !Array.isArray(health.transports) || typeof health.maxRecipients !== "number") {
+    throw new Error("Local sender unavailable.");
+  }
+  const transports = health.transports.filter((value): value is SenderTransport => value === "smtp" || value === "cashu");
+  return { service: health.service, transports, maxRecipients: health.maxRecipients };
 }
 
 export function batchDefaultExpiry(now = new Date()): string {
@@ -78,10 +112,34 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const [revealed, setRevealed] = useState<Set<number>>(() => new Set());
   const [expiresAt, setExpiresAt] = useState("");
   const [status, setStatus] = useState("");
+  const [delivery, setDelivery] = useState<Record<string, DeliveryResultRow>>({});
+  const [senderHealth, setSenderHealth] = useState<SenderHealth | null>(null);
+  const [senderCheck, setSenderCheck] = useState<"checking" | "available" | "unavailable">("checking");
+  const [transport, setTransport] = useState<SenderTransport>("smtp");
+  const [sending, setSending] = useState(false);
   const generating = useRef(false);
   const importRef = useRef<HTMLInputElement>(null);
   const nextRowId = useRef(0);
   const { isCopied, showCopied } = useTransientCopiedLabel();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    void probeSenderHealth(controller.signal)
+      .then((health) => {
+        if (!active) return;
+        setSenderHealth(health);
+        setTransport((current) => health.transports.includes(current) ? current : health.transports[0] ?? "smtp");
+        setSenderCheck("available");
+      })
+      .catch(() => {
+        if (active) setSenderCheck("unavailable");
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
 
   function newRowId() {
     nextRowId.current += 1;
@@ -113,10 +171,18 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       const text = await file.text();
       const header = csvHeader(text);
       if (header.includes("code") || header.includes("expires_at") || header.includes("vote_url")) {
-        setStatus("Import a resident contact CSV, not an existing email bundle.");
+        setStatus("Import a resident contact CSV or delivery-results CSV, not an existing email bundle.");
+      } else if (header[0] === "masterslistnumber" && header.includes("ok") && header.includes("detail")) {
+        const results = parseResultsCsv(text);
+        if (!results.length) {
+          setStatus("The delivery-results CSV contains no rows.");
+        } else {
+          setDelivery(Object.fromEntries(results.map((result) => [result.mastersListNumber, result])));
+          setStatus(`${results.length} delivery status row${results.length === 1 ? "" : "s"} imported.`);
+        }
       } else if (header.includes("masters_list_number")) {
         if (issued.length) {
-          setStatus("Codes have already been generated. The roster cannot be replaced.");
+          setStatus("Codes have already been generated. Delivery results can be imported, but the roster cannot be replaced.");
         } else {
           const result = parseResidentCsv(text);
           if (result.errors.length) {
@@ -130,7 +196,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
           }
         }
       } else {
-        setStatus("This CSV type is not recognised. Use a resident roster file.");
+        setStatus("This CSV type is not recognised. Use a resident roster or delivery-results file.");
       }
     } catch {
       setStatus("The CSV could not be read.");
@@ -191,7 +257,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       props.onAdmissionsChanged?.();
       setIssued(sheet.map((admission, index) => ({ admission, resident: validation.residents[index] })));
       setCsvErrors([]);
-      setStatus(`${sheet.length} admission code${sheet.length === 1 ? "" : "s"} saved. Export the bundle now; plaintext codes are not retained after reload.`);
+      setStatus(`${sheet.length} admission code${sheet.length === 1 ? "" : "s"} saved. Send email or export the bundle now; plaintext codes are not retained after reload.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not generate admission codes.");
     } finally {
@@ -231,16 +297,105 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
     })));
   }
 
+  function applyDeliveryResults(results: Array<{ master: string; ok: boolean; detail: string; ref?: string }>) {
+    if (!results.length) return;
+    setDelivery((current) => ({
+      ...current,
+      ...Object.fromEntries(results.map((result) => [result.master, {
+        mastersListNumber: result.master,
+        ok: result.ok,
+        detail: result.detail,
+        ref: result.ref,
+      }])),
+    }));
+  }
+
+  async function sendEmails() {
+    if (sending) return;
+    const bundleCsv = buildIssuedBundle();
+    if (!bundleCsv) {
+      setStatus("Publish and open the questionnaire before sending email.");
+      return;
+    }
+    setSending(true);
+    setStatus("Checking the local email sender…");
+    try {
+      // The mount-time check can be minutes stale: the companion may have
+      // restarted (or the dev proxy may have lost its socket) since then.
+      // Re-probe immediately before the POST so an unavailable sender produces
+      // an actionable message instead of an opaque 502.
+      let health: SenderHealth;
+      try {
+        health = await probeSenderHealth(timeoutSignal(HEALTH_TIMEOUT_MS));
+        setSenderHealth(health);
+        setSenderCheck("available");
+      } catch {
+        setSenderCheck("unavailable");
+        setStatus('Local email sender is not reachable. Start it with "npm --prefix web run email:dev" (it starts the sender before Vite) and retry; recipients already sent are skipped.');
+        return;
+      }
+      if (!health.transports.includes(transport)) {
+        setStatus(`The local sender has no ${transport === "smtp" ? "SMTP" : "cashu.email"} credentials configured.`);
+        return;
+      }
+
+      setStatus(`Sending ${issued.length} email${issued.length === 1 ? "" : "s"} through ${transport === "smtp" ? "SMTP" : "cashu.email"}…`);
+      const postBatch = () => fetch("/__email/send", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ transport, bundleCsv }),
+      });
+      const retryableStatus = (status: number) => status === 502 || status === 503 || status === 504;
+      let response = await postBatch();
+      if (retryableStatus(response.status)) {
+        // A proxy-level 502/503/504 means the request never reached the send
+        // handler, but a response can also be lost after the handler ran. The
+        // sender's ledger fingerprints every recipient, so one retry is safe:
+        // anything already delivered comes back as "already sent".
+        setStatus("The local sender did not answer through the dev proxy; retrying once — already-sent recipients are skipped…");
+        await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_DELAY_MS));
+        response = await postBatch();
+      }
+      const payload = await response.json().catch(() => ({})) as {
+        error?: string;
+        sent?: number;
+        skipped?: number;
+        failed?: number;
+        notAttempted?: number;
+        satsSpent?: number;
+        capUsedToday?: number;
+        capRemaining?: number;
+        results?: Array<{ master: string; ok: boolean; detail: string; ref?: string }>;
+      };
+      applyDeliveryResults(payload.results ?? []);
+      if (!response.ok) {
+        if (retryableStatus(response.status)) {
+          throw new Error(`the dev proxy could not reach the local email sender (HTTP ${response.status}) after one retry. Start the companion with "npm --prefix web run email:dev" and retry; the ledger skips recipients already sent.`);
+        }
+        throw new Error(payload.error || "The local sender rejected the batch.");
+      }
+      const notAttempted = payload.notAttempted ?? 0;
+      const capSuffix = transport === "cashu" && typeof payload.satsSpent === "number"
+        ? ` ${payload.satsSpent} sats; daily cap ${payload.capUsedToday ?? 0}/100 used, ${payload.capRemaining ?? 0} remaining.`
+        : "";
+      setStatus(`Email delivery: ${payload.sent ?? 0} sent, ${payload.skipped ?? 0} already sent, ${payload.failed ?? 0} failed${notAttempted ? `, ${notAttempted} not attempted` : ""}.${capSuffix}`);
+    } catch (error) {
+      setStatus(`Email sending failed: ${error instanceof Error ? error.message : "local sender unavailable"}`);
+    } finally {
+      setSending(false);
+    }
+  }
+
   function exportCsv() {
     const safeElectionId = props.electionId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100);
     if (issued.length) {
       const csv = buildIssuedBundle();
       if (!csv) {
-        setStatus("Reopen the published questionnaire before exporting the admission bundle.");
+        setStatus("Reopen the published questionnaire before exporting the email bundle.");
         return;
       }
       download(csv, `resident-admission-emails-${safeElectionId}.csv`);
-      setStatus("Admission bundle exported. It contains contact details and plaintext codes; keep it private.");
+      setStatus("Email bundle exported. It contains contact details and plaintext codes; keep it private.");
       return;
     }
     const validation = validateRows();
@@ -261,7 +416,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const hasRows = rows.some((row) => [row.mastersListNumber, row.name, row.email, row.phone].some((value) => value.trim()));
 
   return <section className="simple-voter-section simple-delivery-panel" aria-label="Resident email admission">
-    <p className="simple-voter-note">Generate paper-compatible admission codes and export them for delivery.</p>
+    <p className="simple-voter-note">Generate paper-compatible codes and email them from the coordinator's computer.</p>
     <details className="simple-organiser-disclosure">
       <summary>Storage and privacy</summary>
       <p className="simple-voter-note">Contact details and codes stay in this browser until export and never enter public voting events. Reload discards plaintext codes but not issued admissions. Exported files are sensitive; delete them after use.</p>
@@ -272,13 +427,13 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       <button type="button" className="simple-voter-secondary" onClick={() => importRef.current?.click()}>Import</button>
       <button type="button" className="simple-voter-secondary" disabled={!hasRows} onClick={exportCsv}>Export</button>
       <button type="button" className="simple-voter-secondary" disabled={Boolean(issued.length)} onClick={addRow}>Add row</button>
-      <input ref={importRef} type="file" accept=".csv,text/csv" hidden aria-label="Import resident CSV" onChange={(event) => void handleImport(event)} />
+      <input ref={importRef} type="file" accept=".csv,text/csv" hidden aria-label="Import resident or delivery results CSV" onChange={(event) => void handleImport(event)} />
     </div>
 
     {rows.length ? <div className="simple-resident-table-wrap">
       <table className="simple-resident-table" aria-label="Residents">
       <thead><tr>
-        <th scope="col">Number</th><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Phone</th><th scope="col">Code</th><th scope="col"><span aria-hidden="true">Remove</span></th>
+        <th scope="col">Number</th><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Phone</th><th scope="col">Code</th><th scope="col">Delivery</th><th scope="col"><span aria-hidden="true">Remove</span></th>
       </tr></thead>
       <tbody>{rows.map((resident) => {
         const master = resident.mastersListNumber.trim();
@@ -286,6 +441,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
         const isRevealed = entry ? revealed.has(entry.resident.mastersListNumber) : false;
         const copyKey = `email-admission-${master}`;
         const copied = isCopied(copyKey);
+        const deliveryRow = delivery[master];
         return <tr key={resident.id}>
           <td><input className="simple-voter-input" aria-label={`Master-list number for row ${resident.id}`} value={resident.mastersListNumber} disabled={Boolean(issued.length)} onChange={(event) => updateRow(resident.id, "mastersListNumber", event.target.value)} /></td>
           <td><input className="simple-voter-input" aria-label={`Name for row ${resident.id}`} value={resident.name} disabled={Boolean(issued.length)} onChange={(event) => updateRow(resident.id, "name", event.target.value)} /></td>
@@ -300,6 +456,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
               else setStatus("Clipboard access was unavailable. Keep the code revealed and copy it manually.");
             })()}>{copied ? "Copied" : "Copy"}</button> : null}
           </div> : <span className="simple-voter-note">Not generated</span>}</td>
+          <td>{deliveryRow ? <span title={deliveryRow.detail}>{deliveryRow.ok ? "Sent" : deliveryRow.detail.startsWith("not attempted") ? `Not sent: ${deliveryRow.detail.slice("not attempted: ".length)}` : `Failed: ${deliveryRow.detail}`}</span> : <span>Not sent</span>}</td>
           <td><button type="button" className="simple-voter-secondary" aria-label={`Remove resident row ${resident.id}`} disabled={Boolean(issued.length)} onClick={() => removeRow(resident.id)}>Remove</button></td>
         </tr>;
       })}</tbody>
@@ -310,8 +467,31 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       <ul>{csvErrors.map((error) => <li key={error}>{error}</li>)}</ul>
     </div> : null}
 
+    {issued.length ? <div className="simple-voter-action-row simple-voter-action-row-inline" aria-label="Local email sender">
+      {senderCheck === "checking" ? <p className="simple-voter-note">Checking local email sender…</p> : null}
+      {senderCheck === "unavailable" ? <p className="simple-voter-note">Local sender not connected. Run <code>npm --prefix web run email:sender</code> and use its local URL to send directly. Export remains available.</p> : null}
+      {senderCheck === "available" && senderHealth?.transports.length ? <>
+        <label htmlFor="email-sender-transport">Email sender</label>
+        <select
+          id="email-sender-transport"
+          className="simple-voter-input simple-delivery-transport"
+          aria-label="Email sender"
+          value={transport}
+          disabled={sending}
+          onChange={(event) => setTransport(event.target.value as SenderTransport)}
+        >
+          {senderHealth.transports.includes("smtp") ? <option value="smtp">SMTP mailbox</option> : null}
+          {senderHealth.transports.includes("cashu") ? <option value="cashu">cashu.email</option> : null}
+        </select>
+        <button type="button" className="simple-voter-secondary" disabled={sending} onClick={() => void sendEmails()}>
+          {sending ? "Sending…" : "Send emails"}
+        </button>
+      </> : null}
+      {senderCheck === "available" && !senderHealth?.transports.length ? <p className="simple-voter-note">Local sender is running but has no SMTP or cashu.email credentials configured.</p> : null}
+    </div> : null}
+
     <UiDateTimeField label="Code expiry" value={expiresAt} onChange={setExpiresAt} isDisabled={Boolean(issued.length)} />
-    <p className="simple-voter-note">Local time; included in UTC in each exported bundle.</p>
+    <p className="simple-voter-note">Local time; included in UTC in each email.</p>
     <div className="simple-voter-action-row simple-voter-action-row-inline">
       {!issued.length ? <button type="button" className="simple-voter-secondary" disabled={!expiresAt || !hasRows} onClick={() => void generate()}>Generate admission codes</button> : null}
     </div>
