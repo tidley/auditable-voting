@@ -14,7 +14,6 @@ export const DEFAULT_NOSTR_DM_RELAYS = [
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
   "wss://nos.lol",
-  "wss://relay.primal.net",
 ];
 
 export const NOSTR_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
