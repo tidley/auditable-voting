@@ -646,6 +646,7 @@ const DEFAULT_WORKER_DM_RELAYS = normalizeRelaysRust([
   "wss://vm-1734.lnvps.cloud/",
   "wss://relay.nostr.net",
   "wss://nos.lol",
+  "wss://relay.primal.net",
 ]);
 const WORKER_DM_REJECTING_RELAYS = new Set([
   "wss://relay.nostr.info",
