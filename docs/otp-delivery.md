@@ -49,6 +49,49 @@ The companion binds only to loopback by default and prints a URL such as
 `http://127.0.0.1:4319/dashboard.html?role=coordinator`. The UI detects the
 available transport; no password or sender key is sent to the browser.
 
+### Strato relay for orangesync.tech
+
+For `@orangesync.tech` delivery, use Strato's submission server:
+
+```dotenv
+SMTP_HOST=smtp.strato.de
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=vote@orangesync.tech
+SMTP_FROM=vote@orangesync.tech
+```
+
+The mailbox password should not live in `.env` when it can be avoided. Start the
+companion with the Strato launcher instead:
+
+```bash
+install -m 600 /dev/null "$HOME/.hermes/trust-root/strato-smtp.pass"
+# write the mailbox password into that file, or render it from the trust root
+scripts/run-email-sender-strato.sh
+```
+
+The launcher accepts `SMTP_PASS` directly, or reads
+`$STRATO_SMTP_PASS_FILE` (default
+`$HOME/.hermes/trust-root/strato-smtp.pass`) and refuses a file whose mode is
+not `600` or `400`.
+
+Before a live send, the domain must publish Strato's current mail records:
+
+- `MX 5 smtp.rzone.de` — the old `mx01/mx02.strato.de` targets are NXDOMAIN.
+- `TXT v=spf1 include:_spf.strato.com ~all`
+- `CNAME strato-dkim-0002._domainkey` → `strato-dkim-0002._domainkey.rzone.de`
+- `CNAME strato-dkim-0003._domainkey` → `strato-dkim-0003._domainkey.rzone.de`
+- `TXT _dmarc v=DMARC1; p=none; pct=100`
+
+These are managed by `~/tik-work/ansible/roles/cloudflare_email_dns` and
+`playbooks/56-email-dns.yml`. A catch-all address does not provide SMTP login
+credentials; a real mailbox is still required.
+
+Strato does not publish sending limits. A new mailbox is limited more strictly,
+so warm it up with a controlled pilot and watch for throttling. Verify
+`spf=pass`, `dkim=pass` with `d=orangesync.tech`, and `dmarc=pass` in the
+received headers before sending to residents.
+
 Use that local URL as the coordinator origin from the start of the election.
 Browser keys, the questionnaire draft and local participant state are scoped to
 the origin. The hosted GitHub Pages app does not share storage with
@@ -56,6 +99,20 @@ the origin. The hosted GitHub Pages app does not share storage with
 **Restore** it in the local app. During development, the Vite dev server proxies
 `/__email` to the companion, so an existing localhost dev session can keep its
 state while sending.
+
+Start both processes in the right order with the bundled launcher. It starts the
+companion, waits for `/__email/health`, then starts Vite on
+`127.0.0.1:5174` (extra arguments are forwarded to Vite):
+
+```bash
+npm --prefix web run email:dev
+```
+
+Starting Vite first is the common cause of a send-time `502 Bad Gateway`: the UI
+can load before the companion is listening, or the proxy can hold a socket to a
+sender that has since restarted. `email:dev` removes the ordering race; the
+dev proxy also opens a fresh loopback connection per request and the companion
+keeps upstream sockets alive longer than the proxy's idle window.
 
 For cashu.email, set `NOMAIN_NSEC` and provide one unused 100-sat token per
 pending recipient via `CASHU_TOKENS_FILE` (one per line) or one
@@ -69,6 +126,11 @@ time.
 
 ### Troubleshooting delivery
 
+- **`502 Bad Gateway` on Send emails** — the Vite dev proxy could not reach the
+  companion. Start both with `npm --prefix web run email:dev` (sender first), or
+  restart the companion and retry. The UI re-checks `/__email/health` before
+  posting and retries a proxy-level 502 once; the ledger skips recipients that
+  were already sent, so retrying the same bundle does not double-send.
 - **“Local sender not connected”** — start the companion and use the local URL it
   prints. The public GitHub Pages origin cannot call a separate local process.
 - **“no SMTP or cashu.email credentials configured”** — stop the companion, set
