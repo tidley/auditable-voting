@@ -19,6 +19,8 @@ import {
 } from "./csv";
 import UiDateTimeField from "../ui/UiDateTimeField";
 import { resolveLocalised } from "../i18n/resolveLocale";
+import type { SignerService } from "../services/signerService";
+import { emailSenderEndpoints, extractBundleElectionId, nip98Authorization } from "./relayAuth";
 
 interface IssuedEmailAdmission {
   resident: ResidentEntry;
@@ -38,6 +40,7 @@ interface DeliveryPanelProps {
   definition: QuestionnaireDefinition | null;
   runtime: QuestionnaireOptionACoordinatorRuntime | null;
   voterUrl: string;
+  signer?: SignerService | null;
   onAdmissionsChanged?: () => void;
 }
 
@@ -51,6 +54,15 @@ interface SenderHealth {
 
 const HEALTH_TIMEOUT_MS = 4_000;
 const SEND_RETRY_DELAY_MS = 250;
+const RELAY_URL_STORAGE_KEY = "app:auditable-voting:email-relay-url";
+
+function readStoredRelayUrl(): string {
+  try {
+    return window.localStorage.getItem(RELAY_URL_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 function timeoutSignal(ms: number): AbortSignal | undefined {
   return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
@@ -58,16 +70,17 @@ function timeoutSignal(ms: number): AbortSignal | undefined {
     : undefined;
 }
 
-async function probeSenderHealth(signal?: AbortSignal): Promise<SenderHealth> {
-  const response = await fetch("/__email/health", {
+async function probeSenderHealth(endpoints: ReturnType<typeof emailSenderEndpoints>, signal?: AbortSignal): Promise<SenderHealth> {
+  const response = await fetch(endpoints.health, {
     cache: "no-store",
     headers: { accept: "application/json" },
     signal,
   });
-  if (!response.ok) throw new Error("Local sender unavailable.");
+  if (!response.ok) throw new Error("Email sender unavailable.");
   const health = await response.json() as Partial<SenderHealth>;
-  if (health.service !== "auditable-voting-email-sender" || !Array.isArray(health.transports) || typeof health.maxRecipients !== "number") {
-    throw new Error("Local sender unavailable.");
+  const expectedService = endpoints.remote ? "auditable-voting-email-relay" : "auditable-voting-email-sender";
+  if (health.service !== expectedService || !Array.isArray(health.transports) || typeof health.maxRecipients !== "number") {
+    throw new Error("Email sender unavailable.");
   }
   const transports = health.transports.filter((value): value is SenderTransport => value === "smtp" || value === "cashu");
   return { service: health.service, transports, maxRecipients: health.maxRecipients };
@@ -111,7 +124,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const [rows, setRows] = useState<DraftResident[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [issued, setIssued] = useState<IssuedEmailAdmission[]>([]);
-  const [deliveryBundle, setDeliveryBundle] = useState<{ csv: string; count: number; fileName: string } | null>(null);
+  const [deliveryBundle, setDeliveryBundle] = useState<{ csv: string; count: number; fileName: string; electionId: string } | null>(null);
   const [revealed, setRevealed] = useState<Set<number>>(() => new Set());
   const [expiresAt, setExpiresAt] = useState("");
   const [status, setStatus] = useState("");
@@ -119,6 +132,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const [senderHealth, setSenderHealth] = useState<SenderHealth | null>(null);
   const [senderCheck, setSenderCheck] = useState<"checking" | "available" | "unavailable">("checking");
   const [transport, setTransport] = useState<SenderTransport>("smtp");
+  const [relayUrl, setRelayUrl] = useState(readStoredRelayUrl);
   const [sending, setSending] = useState(false);
   const generating = useRef(false);
   const importRef = useRef<HTMLInputElement>(null);
@@ -126,9 +140,20 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const { isCopied, showCopied } = useTransientCopiedLabel();
 
   useEffect(() => {
+    try {
+      if (relayUrl.trim()) window.localStorage.setItem(RELAY_URL_STORAGE_KEY, relayUrl);
+      else window.localStorage.removeItem(RELAY_URL_STORAGE_KEY);
+    } catch {
+      // Storage may be unavailable; the field still works for this session.
+    }
+  }, [relayUrl]);
+
+  useEffect(() => {
     const controller = new AbortController();
+    const endpoints = emailSenderEndpoints(relayUrl);
     let active = true;
-    void probeSenderHealth(controller.signal)
+    setSenderCheck("checking");
+    void probeSenderHealth(endpoints, controller.signal)
       .then((health) => {
         if (!active) return;
         setSenderHealth(health);
@@ -142,7 +167,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       active = false;
       controller.abort();
     };
-  }, []);
+  }, [relayUrl]);
 
   function newRowId() {
     nextRowId.current += 1;
@@ -183,7 +208,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
           if (count < 1) {
             setStatus("The exported bundle contains no recipients.");
           } else {
-            setDeliveryBundle({ csv: text, count, fileName: file.name });
+            setDeliveryBundle({ csv: text, count, fileName: file.name, electionId: extractBundleElectionId(text) });
             setRows([]);
             setIssued([]);
             setRevealed(new Set());
@@ -339,8 +364,9 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       setStatus("Publish and open the questionnaire before sending email.");
       return;
     }
+    const endpoints = emailSenderEndpoints(relayUrl);
     setSending(true);
-    setStatus("Checking the local email sender…");
+    setStatus(endpoints.remote ? "Checking the remote email relay…" : "Checking the local email sender…");
     try {
       // The mount-time check can be minutes stale: the companion may have
       // restarted (or the dev proxy may have lost its socket) since then.
@@ -348,25 +374,47 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       // an actionable message instead of an opaque 502.
       let health: SenderHealth;
       try {
-        health = await probeSenderHealth(timeoutSignal(HEALTH_TIMEOUT_MS));
+        health = await probeSenderHealth(endpoints, timeoutSignal(HEALTH_TIMEOUT_MS));
         setSenderHealth(health);
         setSenderCheck("available");
       } catch {
         setSenderCheck("unavailable");
-        setStatus('Local email sender is not reachable. Start it with "npm --prefix web run email:dev" (it starts the sender before Vite) and retry; recipients already sent are skipped.');
+        setStatus(endpoints.remote
+          ? "The remote email relay is not reachable. Check the URL, CORS and relay status."
+          : 'Local email sender is not reachable. Start it with "npm --prefix web run email:dev" (it starts the sender before Vite) and retry; recipients already sent are skipped.');
         return;
       }
       if (!health.transports.includes(transport)) {
-        setStatus(`The local sender has no ${transport === "smtp" ? "SMTP" : "cashu.email"} credentials configured.`);
+        setStatus(`The email sender has no ${transport === "smtp" ? "SMTP" : "cashu.email"} credentials configured.`);
+        return;
+      }
+      if (endpoints.remote && !props.signer) {
+        setStatus("Connect a coordinator signer before sending through a remote relay.");
+        return;
+      }
+      const relayElectionId = deliveryBundle?.electionId || props.electionId;
+      if (endpoints.remote && !relayElectionId) {
+        setStatus("The bundle does not include an election ID. Select the questionnaire or load an exported bundle before using a remote relay.");
         return;
       }
 
       setStatus(`Sending ${deliveryBundle?.count ?? issued.length} email${(deliveryBundle?.count ?? issued.length) === 1 ? "" : "s"} through ${transport === "smtp" ? "SMTP" : "cashu.email"}…`);
-      const postBatch = () => fetch("/__email/send", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ transport, bundleCsv }),
-      });
+      const postBatch = async () => {
+        if (endpoints.remote && props.signer) {
+          const body = JSON.stringify({ electionId: relayElectionId, bundleCsv });
+          const authorization = await nip98Authorization(props.signer, endpoints.send, body);
+          return fetch(endpoints.send, {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/json", authorization },
+            body,
+          });
+        }
+        return fetch(endpoints.send, {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ transport, bundleCsv }),
+        });
+      };
       const readPayload = async (response: Response) => await response.json().catch(() => ({})) as {
         error?: string;
         code?: string;
@@ -382,7 +430,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       const retryableStatus = (status: number) => status === 502 || status === 503 || status === 504;
       let response = await postBatch();
       let payload = await readPayload(response);
-      const proxyFailure = retryableStatus(response.status)
+      const proxyFailure = !endpoints.remote && retryableStatus(response.status)
         && (payload.code === "proxy_unreachable" || !payload.error);
       if (proxyFailure) {
         // A proxy-level 502/503/504 means the request never reached the send
@@ -397,10 +445,10 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       applyDeliveryResults(payload.results ?? []);
       if (!response.ok) {
         if (payload.error) throw new Error(payload.error);
-        if (retryableStatus(response.status)) {
+        if (!endpoints.remote && retryableStatus(response.status)) {
           throw new Error(`the dev proxy could not reach the local email sender (HTTP ${response.status}) after one retry. Start the companion with "npm --prefix web run email:dev" and retry; the ledger skips recipients already sent.`);
         }
-        throw new Error("The local sender rejected the batch.");
+        throw new Error(endpoints.remote ? "The relay rejected the batch." : "The local sender rejected the batch.");
       }
       const notAttempted = payload.notAttempted ?? 0;
       const capSuffix = transport === "cashu" && typeof payload.satsSpent === "number"
@@ -448,12 +496,30 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
 
   const hasBundle = Boolean(deliveryBundle);
   const hasRows = rows.some((row) => [row.mastersListNumber, row.name, row.email, row.phone].some((value) => value.trim()));
+  const relayEndpoints = emailSenderEndpoints(relayUrl);
 
   return <section className="simple-voter-section simple-delivery-panel" aria-label="Resident email admission">
     <p className="simple-voter-note">Generate paper-compatible codes and email them from the coordinator's computer.</p>
     <details className="simple-organiser-disclosure">
       <summary>Storage and privacy</summary>
       <p className="simple-voter-note">Contact details and codes stay in this browser until export and never enter public voting events. Reload discards plaintext codes but not issued admissions. Exported files are sensitive; delete them after use.</p>
+    </details>
+
+    <details className="simple-organiser-disclosure">
+      <summary>Remote email relay (optional)</summary>
+      <label className="simple-voter-field">
+        <span>Relay URL</span>
+        <input
+          className="simple-voter-input"
+          aria-label="Remote email relay URL"
+          value={relayUrl}
+          onChange={(event) => setRelayUrl(event.target.value)}
+          placeholder="https://mail.example.org"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+      <p className="simple-voter-note">Leave empty to use the local companion. A remote relay sees recipient addresses and admission codes; use only a relay you trust.</p>
     </details>
 
     <div className="simple-voter-action-row simple-voter-action-row-inline" aria-label="Resident table actions">
@@ -506,12 +572,15 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
     </div> : null}
 
     {issued.length || hasBundle ? <div className="simple-voter-action-row simple-voter-action-row-inline" aria-label="Local email sender">
-      {senderCheck === "checking" ? <p className="simple-voter-note">Checking local email sender…</p> : null}
+      {senderCheck === "checking" ? <p className="simple-voter-note">{relayEndpoints.remote ? "Checking the remote email relay…" : "Checking local email sender…"}</p> : null}
       {senderCheck === "unavailable" ? <p className="simple-voter-note">
-        {hostedOrigin
-          ? <>This hosted page cannot reach your local email companion. Export the bundle, open the local coordinator URL, then import the bundle here to send. Or send the exported CSV with <code>scripts/otp-send-email.mjs</code>.</>
-          : <>Local sender not connected. Run <code>npm --prefix web run email:dev</code> and use its local URL to send directly. Export remains available.</>}
+        {relayEndpoints.remote
+          ? <>The remote relay at <code>{relayEndpoints.base}</code> is not reachable. Check the URL, CORS and relay status.</>
+          : hostedOrigin
+            ? <>This hosted page cannot reach your local email companion. Export the bundle, open the local coordinator URL, then import the bundle here to send. Or send the exported CSV with <code>scripts/otp-send-email.mjs</code>.</>
+            : <>Local sender not connected. Run <code>npm --prefix web run email:dev</code> and use its local URL to send directly. Export remains available.</>}
       </p> : null}
+      {senderCheck === "available" && relayEndpoints.remote ? <p className="simple-voter-note">Sending through <code>{relayEndpoints.base}</code>. The relay will see recipient addresses and admission codes.</p> : null}
       {senderCheck === "available" && senderHealth?.transports.length ? <>
         <label htmlFor="email-sender-transport">Email sender</label>
         <select
@@ -519,17 +588,17 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
           className="simple-voter-input simple-delivery-transport"
           aria-label="Email sender"
           value={transport}
-          disabled={sending}
+          disabled={sending || relayEndpoints.remote}
           onChange={(event) => setTransport(event.target.value as SenderTransport)}
         >
           {senderHealth.transports.includes("smtp") ? <option value="smtp">SMTP mailbox</option> : null}
-          {senderHealth.transports.includes("cashu") ? <option value="cashu">cashu.email</option> : null}
+          {!relayEndpoints.remote && senderHealth.transports.includes("cashu") ? <option value="cashu">cashu.email</option> : null}
         </select>
-        <button type="button" className="simple-voter-secondary" disabled={sending} onClick={() => void sendEmails()}>
+        <button type="button" className="simple-voter-secondary" disabled={sending || (relayEndpoints.remote && !props.signer)} onClick={() => void sendEmails()}>
           {sending ? "Sending…" : "Send emails"}
         </button>
       </> : null}
-      {senderCheck === "available" && !senderHealth?.transports.length ? <p className="simple-voter-note">Local sender is running but has no SMTP or cashu.email credentials configured.</p> : null}
+      {senderCheck === "available" && !senderHealth?.transports.length ? <p className="simple-voter-note">The email sender is running but has no SMTP or cashu.email credentials configured.</p> : null}
     </div> : null}
 
     {!hasBundle ? <>

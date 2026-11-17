@@ -79,6 +79,29 @@ The relay rejects:
 - a reused NIP-98 event ID;
 - more than the configured recipients or rate limits.
 
+## Using the relay from the UI
+
+In **Voters → Resident email admission**, expand **Remote email relay (optional)**
+and enter the relay origin:
+
+```text
+https://mail.example.org
+```
+
+Leave the field empty to use the local companion or the export/import path.
+
+When a relay is configured:
+
+- the app probes `GET /health` on that origin;
+- `Send emails` is enabled only when a coordinator signer is available;
+- the app signs `POST /send` with NIP-98;
+- the import/send path uses the bundle's `vote_url` election ID, so an exported
+  bundle can be sent on the local origin without regenerating codes;
+- the UI warns that the relay sees recipient addresses and admission codes.
+
+The relay must allow the app origin in `RELAY_ALLOWED_ORIGINS`. For GitHub Pages,
+that is normally `https://tidley.github.io`.
+
 ## Configuration
 
 | Variable | Purpose | Default |

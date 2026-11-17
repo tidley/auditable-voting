@@ -18,4 +18,13 @@ createRoot(root).render(React.createElement(DeliveryPanel, {
   definition,
   runtime: { addPaperBallotAdmission() {} } as never,
   voterUrl: "https://tidley.github.io/auditable-voting/?role=voter&q=resident-email-harness&coordinator=npub1test&request_ballot=1",
+  signer: {
+    getPublicKey: async () => "b".repeat(64),
+    signEvent: async (event: Record<string, unknown>) => ({
+      ...event,
+      id: "a".repeat(64),
+      pubkey: "b".repeat(64),
+      sig: "c".repeat(128),
+    }),
+  } as never,
 }));

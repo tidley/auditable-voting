@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DeliveryPanel, { batchDefaultExpiry, emailVoterUrl } from "./DeliveryPanel";
 import type { QuestionnaireDefinition } from "../questionnaireProtocol";
+import type { SignerService } from "../services/signerService";
 
 if (!globalThis.crypto?.subtle) {
   Object.defineProperty(globalThis, "crypto", { value: webcrypto, configurable: true, writable: true });
@@ -382,6 +383,60 @@ describe("Resident email admission", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Send emails" }));
     expect(await screen.findByText(/Email sending failed: The ledger belongs to different admission details/)).toBeTruthy();
     expect(sendCalls).toBe(1);
+  });
+
+  it("sends through a configured remote relay with NIP-98 authorization", async () => {
+    const signer = {
+      getPublicKey: vi.fn(async () => "b".repeat(64)),
+      signEvent: vi.fn(async (event: Record<string, unknown>) => ({
+        ...event,
+        id: "a".repeat(64),
+        pubkey: "b".repeat(64),
+        sig: "c".repeat(128),
+      })),
+    } as unknown as SignerService;
+    let submittedBody: Record<string, unknown> = {};
+    let submittedAuthorization = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "https://relay.test/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-relay", version: 1, transports: ["smtp"], maxRecipients: 1000, auth: "nip98" }) };
+      }
+      if (String(input) === "https://relay.test/send") {
+        submittedBody = JSON.parse(String(init?.body));
+        submittedAuthorization = String((init?.headers as Record<string, string>)?.authorization ?? "");
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sent: 2,
+            skipped: 0,
+            failed: 0,
+            results: [
+              { master: "101", ok: true, detail: "sent", ref: "relay-1" },
+              { master: "102", ok: true, detail: "sent", ref: "relay-2" },
+            ],
+          }),
+        };
+      }
+      throw new Error(`Unexpected fetch ${String(input)}`);
+    }));
+    const props = makeProps();
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} signer={signer} />);
+    fireEvent.change(screen.getByLabelText("Remote email relay URL"), { target: { value: "https://relay.test" } });
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    expect(await screen.findByText(/Sending through/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Send emails" }));
+    expect(await screen.findByText("Email delivery: 2 sent, 0 already sent, 0 failed.")).toBeTruthy();
+    expect(submittedBody.electionId).toBe(ELECTION_ID);
+    expect(String(submittedBody.bundleCsv)).toContain("alice@example.org");
+    expect(submittedAuthorization).toMatch(/^Nostr /);
+    const signed = JSON.parse(Buffer.from(submittedAuthorization.slice("Nostr ".length), "base64").toString("utf8"));
+    const tag = (name: string) => signed.tags.find((entry: string[]) => entry[0] === name)?.[1];
+    expect(signed.kind).toBe(27235);
+    expect(tag("method")).toBe("POST");
+    expect(tag("u")).toBe("https://relay.test/send");
+    expect(tag("payload")).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("re-checks the sender before sending and never posts when it has gone away", async () => {
