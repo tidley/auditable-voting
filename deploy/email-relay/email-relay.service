@@ -1,0 +1,25 @@
+[Unit]
+Description=Auditable Voting Email Relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tollgate
+Group=tollgate
+WorkingDirectory=/opt/tollgate/auditable-voting
+EnvironmentFile=/etc/tollgate/email-relay.env
+ExecStart=/usr/bin/node /opt/tollgate/auditable-voting/scripts/email-relay.mjs
+Restart=on-failure
+RestartSec=5
+StateDirectory=tollgate-email-relay
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tollgate-email-relay
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

@@ -28,6 +28,9 @@ The relay:
 - writes a per-election ledger and redacted results;
 - holds SMTP credentials, never the browser.
 
+For production deployment, systemd/Caddy/OpenBao and FIPS notes, see
+[email relay deployment](email-relay-deployment.md).
+
 ## API
 
 ### `GET /health`
@@ -227,16 +230,38 @@ file, SOPS, or an optional OpenBao KV v2 path. OpenBao is a secret backend, not
 a replacement for the relay or NIP-98. Never expose OpenBao to the browser and
 never give the browser an OpenBao token.
 
-A future adapter will use:
-
 ```text
-OPENBAO_ADDR
-OPENBAO_TOKEN_FILE
+OPENBAO_ADDR=https://openbao.example.org
+OPENBAO_TOKEN_FILE=/etc/tollgate/openbao-token
 OPENBAO_SECRET_PATH=secret/data/email/strato
+OPENBAO_CACHE_SECONDS=60
 ```
 
-with a relay-only policy and a short cache. Until then, use the environment or
-SOPS.
+KV v2 fields:
+
+```json
+{
+  "host": "smtp.example.org",
+  "port": "465",
+  "secure": "true",
+  "username": "coordinator@example.org",
+  "password": "...",
+  "from": "coordinator@example.org"
+}
+```
+
+OpenBao policy:
+
+```hcl
+path "secret/data/email/strato" {
+  capabilities = ["read"]
+}
+```
+
+The token file must be mode `600` or `400`; the relay refuses group/world
+readable tokens. If OpenBao is configured but unreachable or the secret is
+malformed, the relay fails closed instead of falling back to stale environment
+values. See [email relay deployment](email-relay-deployment.md).
 
 ## Tests
 
