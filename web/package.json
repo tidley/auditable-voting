@@ -37,7 +37,8 @@
     "test:scoped-ballot-load": "tsx scripts/scoped-ballot-load-sim.ts",
     "test:e2e": "npx playwright test",
     "email:sender": "npm run build && node --env-file-if-exists=../.env ../scripts/email-sender.mjs",
-    "email:dev": "node ../scripts/dev-with-email.mjs"
+    "email:dev": "node ../scripts/dev-with-email.mjs",
+    "email:relay": "node --env-file-if-exists=../.env ../scripts/email-relay.mjs"
   },
   "dependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.5",
