@@ -17,6 +17,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseAdmissionBundle, runBatch, smtpConfigFromEnv } from "./otp-send-email.mjs";
+import { createOpenBaoSmtpEnvProvider, openBaoConfigured } from "./openbao-smtp.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(resolve(__dirname, "../web/package.json"));
@@ -149,6 +150,12 @@ function configuredRelayTransports(env) {
     smtpConfigFromEnv(env);
     return ["smtp"];
   } catch {
+    if (openBaoConfigured(env)) {
+      const tokenFile = String(env.OPENBAO_TOKEN_FILE ?? "").trim();
+      if (String(env.OPENBAO_TOKEN ?? "").trim() || (tokenFile && existsSync(tokenFile))) {
+        return ["smtp"];
+      }
+    }
     return [];
   }
 }
@@ -273,6 +280,7 @@ export function createEmailRelayServer(options = {}) {
   const replayTtlSeconds = options.replayTtlSeconds ?? DEFAULT_REPLAY_TTL_SECONDS;
   const now = options.now ?? (() => Date.now());
   const execute = options.runDelivery ?? runBatch;
+  const smtpEnvProvider = options.smtpEnvProvider ?? createOpenBaoSmtpEnvProvider({ env });
   const replayCache = new Map();
   const inFlight = new Set();
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -399,12 +407,13 @@ export function createEmailRelayServer(options = {}) {
         const electionDir = join(stateDir, "elections", electionId);
         mkdirSync(electionDir, { recursive: true, mode: 0o700 });
         const batchId = `${Date.now()}-${process.pid}`;
+        const smtpEnv = await smtpEnvProvider();
         const result = await execute({
           transport: "smtp",
           csvText: body.bundleCsv,
           ledger: join(electionDir, "send-ledger.json"),
           results: join(electionDir, `results-${batchId}.csv`),
-          smtpEnv: env,
+          smtpEnv,
           smtpTransport: options.smtpTransport,
         });
         console.log(JSON.stringify({

@@ -1,0 +1,20 @@
+# Public HTTPS relay behind Caddy.
+#
+# Replace mail.example.org with the domain delegated to the relay.
+# Caddy must be able to obtain a certificate (HTTP-01 or DNS-01).
+
+mail.example.org {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:4320
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	log {
+		output file /var/log/caddy/email-relay.log
+		format json
+	}
+}
