@@ -9388,6 +9388,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
                 definition={readCachedQuestionnaireDefinition(optionAElectionId)}
                 runtime={optionACoordinatorRuntime}
                 voterUrl={publicQuestionnaireInviteUrl}
+                signer={optionASigner}
                 onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)}
               />
             </details>

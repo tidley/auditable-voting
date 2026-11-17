@@ -183,3 +183,66 @@ test("loads an exported delivery bundle on the local origin and sends it", async
   expect(submitted.transport).toBe("smtp");
   expect(submitted.bundleCsv).toBe(bundle);
 });
+
+test("sends through a configured remote relay with NIP-98 auth", async ({ page }) => {
+  const cors = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "authorization, content-type",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+  };
+  let submitted: { body?: { electionId?: string; bundleCsv?: string }; authorization?: string } = {};
+  await page.route("https://relay.test/**", async (route) => {
+    const request = route.request();
+    if (request.method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: cors });
+      return;
+    }
+    if (request.url().endsWith("/health")) {
+      await route.fulfill({
+        status: 200,
+        headers: { ...cors, "content-type": "application/json" },
+        body: JSON.stringify({ service: "auditable-voting-email-relay", version: 1, transports: ["smtp"], maxRecipients: 1000, auth: "nip98" }),
+      });
+      return;
+    }
+    if (request.url().endsWith("/send")) {
+      submitted = {
+        body: request.postDataJSON(),
+        authorization: request.headers().authorization,
+      };
+      await route.fulfill({
+        status: 200,
+        headers: { ...cors, "content-type": "application/json" },
+        body: JSON.stringify({
+          sent: 3,
+          skipped: 0,
+          failed: 0,
+          results: [401, 402, 403].map((master) => ({ master: String(master), ok: true, detail: "sent", ref: `relay-${master}` })),
+        }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, headers: cors });
+  });
+
+  await page.goto("/e2e/resident-email-harness.html");
+  const section = page.getByRole("region", { name: "Resident email admission" });
+  await section.getByText("Remote email relay (optional)", { exact: true }).click();
+  await section.getByLabel("Remote email relay URL", { exact: true }).fill("https://relay.test");
+  await importCsv(page);
+  await section.getByRole("button", { name: "Set defaults" }).click();
+  await section.getByRole("button", { name: "Generate admission codes" }).click();
+  await expect(section.getByLabel("Code for resident 401", { exact: true })).toBeVisible();
+  await expect(section.getByLabel("Email sender", { exact: true })).toHaveValue("smtp");
+  await section.getByRole("button", { name: "Send emails", exact: true }).click();
+  await expect(section.getByText("Email delivery: 3 sent, 0 already sent, 0 failed.")).toBeVisible();
+  expect(submitted.body?.electionId).toBe("resident-email-harness");
+  expect(submitted.body?.bundleCsv).toContain("alice@example.test");
+  expect(submitted.authorization).toMatch(/^Nostr /);
+  const signed = JSON.parse(Buffer.from(String(submitted.authorization).slice("Nostr ".length), "base64").toString("utf8"));
+  const tag = (name: string) => signed.tags.find((entry: string[]) => entry[0] === name)?.[1];
+  expect(signed.kind).toBe(27235);
+  expect(tag("method")).toBe("POST");
+  expect(tag("u")).toBe("https://relay.test/send");
+  expect(tag("payload")).toMatch(/^[0-9a-f]{64}$/);
+});
