@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 
-const MINT = "https://nofee.testnut.cashu.space";
+const MINT = "https://testnut.cashu.space";
 const POSTAGE_SATS = 100;
 
 function freshNsecHex() {
