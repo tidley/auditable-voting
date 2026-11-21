@@ -34,7 +34,7 @@ provider delivery; see [`docs/otp-delivery.md`](otp-delivery.md).
    picker to choose another local expiry. The browser converts it to an ISO UTC
    timestamp.
 4. Generate admissions in one batch. `createPaperBallotAdmissionSheet()` creates
-   the same ten-character codes as the paper workflow. Every admission is added
+   the same ten-digit codes as the paper workflow. Every admission is added
    to the coordinator runtime and triggers the existing worker-refresh callback.
    Roster identity fields and the expiry lock after generation so a registered
    admission cannot silently acquire a different number.

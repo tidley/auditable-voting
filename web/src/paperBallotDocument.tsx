@@ -35,12 +35,12 @@ export function buildPaperBallotDocument(ballots: PaperBallot[]): string {
         <meta charSet='utf-8' />
         <meta name='viewport' content='width=device-width, initial-scale=1' />
         <meta httpEquiv='Content-Security-Policy' content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" />
-        <title>Paper ballots — {ballots[0]?.questionnaireTitle ?? 'Questionnaire'}</title>
+        <title>Admission codes — {ballots[0]?.questionnaireTitle ?? 'Questionnaire'}</title>
         <style>{printStyles}</style>
       </head>
       <body>
         <aside className='paper-document-help'>
-          <p><strong>Print or save these paper ballots</strong></p>
+          <p><strong>Print or save these admission codes</strong></p>
           <p>Use your browser’s Print command (Ctrl+P or ⌘P). Choose Save as PDF to keep a PDF copy.</p>
           <p>This document contains admission codes and master-list numbers. Keep it private and store any downloaded copy securely.</p>
         </aside>

@@ -499,7 +499,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const relayEndpoints = emailSenderEndpoints(relayUrl);
 
   return <section className="simple-voter-section simple-delivery-panel" aria-label="Resident email admission">
-    <p className="simple-voter-note">Generate paper-compatible codes and email them from the coordinator's computer.</p>
+    <p className="simple-voter-note">Generate printed or email admission codes from the coordinator's computer.</p>
     <details className="simple-organiser-disclosure">
       <summary>Storage and privacy</summary>
       <p className="simple-voter-note">Contact details and codes stay in this browser until export and never enter public voting events. Reload discards plaintext codes but not issued admissions. Exported files are sensitive; delete them after use.</p>

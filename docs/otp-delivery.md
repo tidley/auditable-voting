@@ -2,7 +2,7 @@
 
 ## Scope and trust boundary
 
-The coordinator can import resident contacts, issue the existing ten-character
+The coordinator can import resident contacts, issue the existing ten-digit
 single-use admission codes used by paper access, and deliver those exact codes by
 email. This is a delivery integration, not a second OTP protocol.
 
@@ -205,8 +205,8 @@ time.
    stage downloads the resident contact CSV.
 5. Select **Set defaults** to apply a future expiry of 24 hours from now, or use
    the date picker to choose another local expiry.
-6. Select **Generate admission codes**. The app generates ten-character
-   Crockford codes using `createPaperBallotAdmissionSheet()` and registers their
+6. Select **Generate admission codes**. The app generates ten-digit
+   numeric admission codes using `createPaperBallotAdmissionSheet()` and registers their
    election/number/code admission hashes with the existing issuer runtime and
    worker configuration. Roster identity fields lock after generation. Codes
    remain masked until **Reveal** is selected for an individual resident.

@@ -34,7 +34,7 @@ export default function PaperBallotCoordinatorPanel(props: {
   async function generate() {
     if (generating.current) return;
     if (!props.runtime || !props.definition || props.definition.questionnaireId !== props.electionId) {
-      setStatus("Open the questionnaire before generating paper ballots.");
+      setStatus("Open the questionnaire before generating admission codes.");
       return;
     }
     const expiry = paperBallotExpiryToIsoUtc(expiresAt);
@@ -62,16 +62,16 @@ export default function PaperBallotCoordinatorPanel(props: {
       next.forEach((entry) => props.runtime?.addPaperBallotAdmission(entry.admission));
       props.onAdmissionsChanged?.();
       setSheet([...sheet, ...next]);
-      setStatus(`${next.length} paper ballot code${next.length === 1 ? "" : "s"} saved. Open or download the printable document now; codes are not retained here after reload.`);
+      setStatus(`${next.length} printed admission code${next.length === 1 ? "" : "s"} saved. Open or download the printable document now; codes are not retained here after reload.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not generate paper ballot codes.");
+      setStatus(error instanceof Error ? error.message : "Could not generate printed admission codes.");
     } finally {
       generating.current = false;
     }
   }
 
-  return <section className='simple-settings-card' aria-label='Paper ballot access'>
-    <h3 className='simple-voter-question'>Paper ballot access</h3>
+  return <section className='simple-settings-card' aria-label='Printed admission codes'>
+    <h3 className='simple-voter-question'>Printed admission codes</h3>
     <p className='simple-voter-note'>Save or print codes before leaving. Do not generate another batch for the same roster.</p>
     <details className='simple-organiser-disclosure'>
       <summary>Code storage and expiry</summary>

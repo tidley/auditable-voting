@@ -20,7 +20,7 @@ export default function PaperBallotCodeInput({ value, onChange }: { value: strin
     }
     const start = text.length === 10 ? 0 : index;
     if (!/^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]+$/.test(text) || start + text.length > 10) {
-      setError('Use the 10 letters and numbers printed on your paper ballot.');
+      setError('Use the 10-digit admission code from your email or printed ballot. Older codes may contain letters.');
       return;
     }
     const next = [...cells];
@@ -36,7 +36,7 @@ export default function PaperBallotCodeInput({ value, onChange }: { value: strin
         ref={node => { inputs.current[index] = node; }}
         type='text'
         className='simple-voter-input simple-paper-code-character'
-        aria-label={`Paper code character ${index + 1} of 10`}
+        aria-label={`Admission code character ${index + 1} of 10`}
         aria-describedby={`${id}-help ${id}-error`}
         aria-invalid={error ? true : undefined}
         value={character}
@@ -61,11 +61,11 @@ export default function PaperBallotCodeInput({ value, onChange }: { value: strin
     })}</div>;
   }
   return <fieldset className='simple-paper-code-field'>
-    <legend>Paper code</legend>
+    <legend>Admission code</legend>
     <div className='simple-paper-code-digits'>
       {renderGroup(0)}<span className='simple-paper-code-separator' aria-hidden='true'>-</span>{renderGroup(5)}
     </div>
-    <p id={`${id}-help`} className='simple-voter-note'>10 characters in two groups of five. You can paste the whole code into any box.</p>
+    <p id={`${id}-help`} className='simple-voter-note'>10 digits in two groups of five. Older codes may contain letters. You can paste the whole code into any box.</p>
     <p id={`${id}-error`} className='simple-voter-note' role='status'>{error}</p>
   </fieldset>;
 }

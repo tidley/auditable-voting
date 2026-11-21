@@ -10,6 +10,8 @@ import {
   loadPaperBallotAdmission,
   normalisePaperBallotMasterlistNumber,
   normalisePaperBallotCode,
+  isPaperBallotCode,
+  formatPaperBallotCode,
   paperBallotExpiryToIsoUtc,
   redeemPaperBallotAdmission,
   savePaperBallotAdmission,
@@ -22,7 +24,7 @@ describe("paper ballot admission", () => {
     window.localStorage.clear();
   });
 
-  it("creates ten-character uppercase codes and derives a canonical admission key", async () => {
+  it("creates ten-digit numeric codes and derives a canonical admission key", async () => {
     const code = createPaperBallotCode(() => new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
 
     expect(code).toMatch(PAPER_BALLOT_CODE_PATTERN);
@@ -55,12 +57,26 @@ describe("paper ballot admission", () => {
 
     expect(sheet).toHaveLength(2);
     expect(sheet.map((entry) => entry.masterlistNumber)).toEqual(["ML-001", "ML-002"]);
-    expect(sheet.map((entry) => entry.code)).toEqual(["0123456789", "ABCDEFGHJK"]);
+    expect(sheet.map((entry) => entry.code)).toEqual(["0123456789", "0123450123"]);
     expect(sheet.every((entry) => PAPER_BALLOT_CODE_PATTERN.test(entry.code))).toBe(true);
     expect(sheet.every((entry) => /^[0-9a-f]{64}$/.test(entry.admission.registryKey))).toBe(true);
     expect(sheet.every((entry) => !('masterlistKey' in entry.admission))).toBe(true);
     expect(JSON.stringify(sheet.map((entry) => entry.admission))).not.toContain("ML-001");
     expect(JSON.stringify(sheet.map((entry) => entry.admission))).not.toContain("0123456789");
+  });
+
+  it("accepts new numeric codes and legacy alphanumeric codes", async () => {
+    expect(isPaperBallotCode("1234567890")).toBe(true);
+    expect(isPaperBallotCode("12345-67890")).toBe(true);
+    expect(isPaperBallotCode("ABCD1234EF")).toBe(true);
+    expect(isPaperBallotCode("12345")).toBe(false);
+    expect(formatPaperBallotCode("1234567890")).toBe("12345-67890");
+    expect(formatPaperBallotCode("ABCD1234EF")).toBe("ABCD1-234EF");
+    expect(await hashPaperBallotAdmissionKey({
+      electionId: "election-a", masterlistNumber: "ML-001", code: "12345-67890",
+    })).toBe(await hashPaperBallotAdmissionKey({
+      electionId: "election-a", masterlistNumber: "ML-001", code: "1234567890",
+    }));
   });
 
   it("converts a local expiry field value to an ISO UTC timestamp", () => {

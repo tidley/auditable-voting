@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PaperBallotCodeInput from './PaperBallotCodeInput';
-import { normalisePaperBallotCode, PAPER_BALLOT_CODE_PATTERN } from './paperBallotAdmission';
+import { isPaperBallotCode, normalisePaperBallotCode } from './paperBallotAdmission';
 import { createPortal } from "react-dom";
 import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
 import {
@@ -4497,13 +4497,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && !responseSubmittedForCurrentQuestionnaire
     && !allQuestionResponsesSubmitted;
   const paperBallotAccess = !snapshot?.credentialReady && !snapshot?.submission ? <div className='simple-paper-ballot-access'>
-          <p className='simple-voter-note'>Have an emailed or printed admission code? Enter it with your master-list number. These details are used only to admit you and never form part of your ballot.</p>
+          <p className='simple-voter-note'>Have an emailed or printed admission code? Enter it with your master-list number. Email is only the delivery method; the code is the same as a printed admission code. These details are used only to admit you and never form part of your ballot.</p>
           <label className='simple-voter-field'>
             <span>Master-list number</span>
             <input className='simple-voter-input simple-paper-masterlist-input' value={paperBallotMasterlistNumber} onChange={(event) => setPaperBallotMasterlistNumber(event.target.value)} autoComplete='off' spellCheck={false} />
           </label>
           <PaperBallotCodeInput value={paperBallotCode} onChange={setPaperBallotCode} />
-          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!snapshot?.loginVerified || Boolean(privateInviteBlock) || proofOfWorkInFlight || !PAPER_BALLOT_CODE_PATTERN.test(normalisePaperBallotCode(paperBallotCode)) || !paperBallotMasterlistNumber.trim()} onPress={() => void requestPaperBallot()}>
+          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!snapshot?.loginVerified || Boolean(privateInviteBlock) || proofOfWorkInFlight || !isPaperBallotCode(normalisePaperBallotCode(paperBallotCode)) || !paperBallotMasterlistNumber.trim()} onPress={() => void requestPaperBallot()}>
             Use admission code
           </UiButton>
         </div> : null;

@@ -10,7 +10,7 @@ function Harness() {
   const [value, setValue] = useState('');
   return <><PaperBallotCodeInput value={value} onChange={setValue} /><output aria-label='Entered code'>{value}</output><button onClick={() => setValue('')}>Reset</button></>;
 }
-const cell = (index: number) => screen.getByLabelText(`Paper code character ${index} of 10`) as HTMLInputElement;
+const cell = (index: number) => screen.getByLabelText(`Admission code character ${index} of 10`) as HTMLInputElement;
 
 it('advances through ten single-character boxes and preserves positions during correction', async () => {
   const user = userEvent.setup();
@@ -36,7 +36,7 @@ it('pastes a full grouped code from any box and rejects invalid or overlong inpu
   fireEvent.paste(cell(4), { clipboardData: { getData: () => '7k3m9-t2x4r' } });
   expect(screen.getByLabelText('Entered code').textContent).toBe('7K3M9T2X4R');
   fireEvent.paste(cell(1), { clipboardData: { getData: () => '7K3M9-T2X4RU' } });
-  expect(screen.getByText('Use the 10 letters and numbers printed on your paper ballot.')).toBeTruthy();
+  expect(screen.getByText('Use the 10-digit admission code from your email or printed ballot. Older codes may contain letters.')).toBeTruthy();
   expect(cell(1).getAttribute('aria-invalid')).toBe('true');
   expect(screen.getByLabelText('Entered code').textContent).toBe('7K3M9T2X4R');
 });

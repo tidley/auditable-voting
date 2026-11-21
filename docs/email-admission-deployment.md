@@ -10,7 +10,7 @@ the Strato-specific settings.
 
 ## What the feature does
 
-The coordinator imports a resident roster, generates the same ten-character,
+The coordinator imports a resident roster, generates the same ten-digit,
 single-use admission codes used for paper ballots, and emails one message per
 resident.
 
