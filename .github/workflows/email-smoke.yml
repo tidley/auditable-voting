@@ -69,6 +69,13 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # Ubuntu's default Python moved to 3.14, where coincurve has no wheel and
+      # its source build fails inside scikit-build-core. Pin 3.12 for the
+      # Nutshell/cashu CLI.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install web dependencies (for nostr-tools)
         run: npm ci
         working-directory: web
