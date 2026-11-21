@@ -32,9 +32,9 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('tabpanel', { name: 'Voters', exact: true })).toBeFocused();
     await expect(page.getByLabel('Questionnaire', { exact: true })).toBeVisible();
     await expect(page.getByLabel('Voter npub', { exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Paper ballot access', exact: true })).toBeHidden();
-    await page.getByText('Paper ballots', { exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Paper ballot access', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Printed admission codes', exact: true })).toBeHidden();
+    await page.locator('summary').filter({ hasText: 'Printed admission codes' }).click();
+    await expect(page.getByRole('heading', { name: 'Printed admission codes', exact: true })).toBeVisible();
     await expect(page.getByText('Save or print codes before leaving. Do not generate another batch for the same roster.', { exact: true })).toBeVisible();
     for (const width of [1280, 375, 320]) {
       await page.setViewportSize({ width, height: 900 });
@@ -45,6 +45,6 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByLabel('Voter npub', { exact: true })).toBeHidden();
     await expect(page.getByRole('button', { name: 'Back: Voters', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Back: Voters', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Paper ballot access', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Printed admission codes', exact: true })).toBeVisible();
   });
 }

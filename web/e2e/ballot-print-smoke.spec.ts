@@ -22,7 +22,7 @@ test("paper ballots open as a separate printable and downloadable document", asy
   expect(await documentPage.evaluate(() => window.opener)).toBeNull();
   const ballots = documentPage.locator(".ballot-print");
   await expect(ballots).toHaveCount(2);
-  await expect(ballots.first().locator("code")).toHaveText(/^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{5}-[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{5}$/);
+  await expect(ballots.first().locator("code")).toHaveText(/^\d{5}-\d{5}$/);
   await expect(ballots.first()).toContainText("includes all of: Raised beds; Tool library. Other selections are allowed.");
   await expect(ballots.first()).toContainText("Otherwise leave blank.");
   await expect(documentPage.locator("body")).not.toContainText(/nsec|npub|Serial:/);

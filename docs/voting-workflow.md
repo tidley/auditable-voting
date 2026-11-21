@@ -86,7 +86,7 @@ both issuer and ballot worker, that operator has both roles' visibility.
 5. Publish the definition and open/select that questionnaire in Organiser so its
    issuer runtime is available. Under **Session → Results & Voters** (Voters),
    find **Paper ballot access**. For paper, enter master-list numbers and a future
-   expiry; generate and print the ten-character Crockford codes. Printouts are
+   expiry; generate and print the ten-digit numeric admission codes (legacy alphanumeric codes remain accepted). Printouts are
    sensitive bearer material. Stored admission records retain the combined
    election/number/code hash plus lifecycle metadata, not the plain values or
    a separate roster hash.

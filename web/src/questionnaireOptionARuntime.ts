@@ -1191,7 +1191,7 @@ export class QuestionnaireOptionAVoterRuntime {
       masterlistNumber: input.masterlistNumber,
     });
     if (!registryKey) {
-      throw new OptionARuntimeError("invalid_submission", "Enter the ten-character paper code and your master-list number.");
+      throw new OptionARuntimeError("invalid_submission", "Enter the ten-digit admission code and your master-list number. Legacy codes may contain letters.");
     }
     this.paperBallotAdmissionKey = registryKey;
     return this.requestBlindBallot({ forceResend: true });

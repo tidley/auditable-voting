@@ -7,7 +7,7 @@ Deliver one focused contribution that lets an organiser upload a resident contac
 ## Scope
 
 - One resident-contact upload control and one resident admission workspace.
-- Reuse the existing ten-character paper-ballot code creation, admission registry, voter redemption and worker synchronisation.
+- Reuse the existing ten-digit admission code creation, admission registry, voter redemption and worker synchronisation.
 - Download a sensitive email-delivery bundle containing each resident's name, email address, master-list number, exact generated code, expiry and normal public questionnaire link.
 - Keep plaintext codes hidden by default in the coordinator UI; allow deliberate per-resident reveal and copy.
 - Adapt `scripts/otp-send-email.mjs` to send pre-generated admission bundles without generating or substituting codes.

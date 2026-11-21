@@ -9143,9 +9143,22 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
                 title='Voters'
                 hideToggle
                 headerAction={(
-                  <span className='simple-admitted-voter-count simple-admitted-voter-count-header'>
-                    {admittedVoterSummaryLabel}
-                  </span>
+                  <div className='simple-invite-share-heading simple-admitted-voters-heading'>
+                    <span className='simple-admitted-voter-count simple-admitted-voter-count-header'>
+                      {admittedVoterSummaryLabel}
+                    </span>
+                    <UiButton
+                      icon='invite'
+                      className='simple-voter-secondary'
+                      onPress={() => {
+                        const field = document.getElementById('coordinator-add-voter-npub');
+                        field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        (field as HTMLInputElement | null)?.focus();
+                      }}
+                    >
+                      Add voters
+                    </UiButton>
+                  </div>
                 )}
               >
                 <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Voters'>
@@ -9167,7 +9180,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
                   />
                   {participantRosterTotalCount === 0 ? (
                     <p className='simple-voter-empty'>
-                      No participants yet.
+                      New rounds start with an empty voter list. Use Add voters or Import contacts for this round.
                     </p>
                   ) : participantRosterVisibleCount === 0 ? (
                     <p className='simple-voter-empty'>
@@ -9202,6 +9215,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	                      <UiTextField
 	                        inputClassName='simple-voter-input simple-voter-input-inline'
 	                        inputProps={{
+	                          id: 'coordinator-add-voter-npub',
 	                          'aria-label': 'Voter npub',
 	                          value: admittedVoterDraftNpub,
 	                          placeholder: 'npub1... or nostr:nprofile1...',
@@ -9290,7 +9304,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
 	                    {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
 	                    {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
                       <details className='simple-organiser-disclosure'>
-                        <summary>Paper ballots</summary>
+                        <summary>Printed admission codes</summary>
                         <PaperBallotCoordinatorPanel key={optionAElectionId} electionId={optionAElectionId} definition={readCachedQuestionnaireDefinition(optionAElectionId)} runtime={optionACoordinatorRuntime} onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)} />
                       </details>
 	                    {optionAElectionId ? (

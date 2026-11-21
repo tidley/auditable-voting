@@ -1,10 +1,13 @@
 import { hashQuestionnaireInviteCode } from "./questionnaireInviteCode";
 import { buildNamespacedLocalStorageKey } from "./appStorageNamespace";
 
-// Crockford Base32 avoids ambiguous printed glyphs such as I, L, O, and U.
-export const PAPER_BALLOT_CODE_PATTERN = /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10}$/;
+// New admission codes are numeric and easy to read over the phone. Legacy
+// Crockford Base32 codes remain accepted so already-issued paper and email
+// admissions keep working.
+export const PAPER_BALLOT_CODE_PATTERN = /^[0-9]{10}$/;
+export const LEGACY_PAPER_BALLOT_CODE_PATTERN = /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{10}$/;
 
-const PAPER_BALLOT_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const PAPER_BALLOT_ALPHABET = "0123456789";
 const PAPER_BALLOT_ADMISSIONS_STORAGE_KEY = "optiona:paper-ballot-admissions";
 
 export type PaperBallotAdmissionEntry = {
@@ -115,9 +118,14 @@ export function normalisePaperBallotCode(code: string | null | undefined) {
   return (code ?? "").replace(/[\s-]/g, "").toUpperCase().replace(/[IL]/g, "1").replace(/O/g, "0");
 }
 
+export function isPaperBallotCode(code: string | null | undefined) {
+  const normalised = normalisePaperBallotCode(code);
+  return PAPER_BALLOT_CODE_PATTERN.test(normalised) || LEGACY_PAPER_BALLOT_CODE_PATTERN.test(normalised);
+}
+
 export function formatPaperBallotCode(code: string) {
   const normalised = normalisePaperBallotCode(code);
-  return PAPER_BALLOT_CODE_PATTERN.test(normalised) ? `${normalised.slice(0, 5)}-${normalised.slice(5)}` : normalised;
+  return isPaperBallotCode(normalised) ? `${normalised.slice(0, 5)}-${normalised.slice(5)}` : normalised;
 }
 
 export function normalisePaperBallotMasterlistNumber(masterlistNumber: string | null | undefined) {
@@ -134,7 +142,7 @@ export function hashPaperBallotAdmissionKey(input: { electionId: string; masterl
   const electionId = input.electionId.trim();
   const masterlistNumber = normalisePaperBallotMasterlistNumber(input.masterlistNumber);
   const code = normalisePaperBallotCode(input.code);
-  if (!electionId || !masterlistNumber || !PAPER_BALLOT_CODE_PATTERN.test(code)) {
+  if (!electionId || !masterlistNumber || !isPaperBallotCode(code)) {
     return Promise.resolve("");
   }
   return hashQuestionnaireInviteCode(`paper-ballot-admission:v1:${JSON.stringify([electionId, masterlistNumber, code])}`);
