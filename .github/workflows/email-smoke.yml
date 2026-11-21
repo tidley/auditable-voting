@@ -81,7 +81,7 @@ jobs:
         working-directory: web
 
       - name: Install Nutshell CLI (produces JSON V4 cashuB tokens)
-        run: pip install --user cashu
+        run: pip install --user "marshmallow<4" cashu
 
       # Exactly ONE real send. No retry loop. 200 {ok:true} or the job fails
       # loudly (the "dependency is broken" signal the operator wants).
