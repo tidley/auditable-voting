@@ -32,6 +32,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('tabpanel', { name: 'Voters', exact: true })).toBeFocused();
     await expect(page.getByLabel('Questionnaire', { exact: true })).toBeVisible();
     await expect(page.getByLabel('Voter npub', { exact: true })).toBeVisible();
+    await expect(page.getByRole('status', { name: 'Ballot issuer status' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Printed admission codes', exact: true })).toBeHidden();
     await page.locator('summary').filter({ hasText: 'Printed admission codes' }).click();
     await expect(page.getByRole('heading', { name: 'Printed admission codes', exact: true })).toBeVisible();

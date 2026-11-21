@@ -4119,10 +4119,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     || displaySubmission?.electionId
     || statusQuestionnaireId;
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
+  const credentialRequestSentAt = snapshot?.blindRequest?.lastSentAt ?? snapshot?.blindRequestSentAt ?? "";
+  const credentialRequestSentLabel = credentialRequestSentAt && Number.isFinite(Date.parse(credentialRequestSentAt))
+    ? new Date(credentialRequestSentAt).toLocaleString()
+    : "";
   const credentialStateText = snapshot?.credentialReady
     ? "Received"
     : snapshot?.blindRequestSent
-      ? credentialIssuerIsProxy ? "Request sent" : `Waiting for ${credentialIssuerName}`
+      ? `Waiting for ${credentialIssuerName}`
       : "Not requested";
   const submissionStateText = snapshot?.privateSubmissionQueued
     ? t("voterQueuedPrivately")
@@ -4516,7 +4520,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           <UiButton icon='key' className='simple-voter-secondary' isDisabled={!canRequestOrResendBallot} onPress={() => void requestBallot()}>
             Request ballot
           </UiButton>
-        ) : null}
+        ) : (
+          <UiButton icon='key' className='simple-voter-secondary' isDisabled={!canRequestOrResendBallot} onPress={() => void requestBallot()}>
+            Resend request
+          </UiButton>
+        )}
         <UiButton icon='refresh' className='simple-voter-secondary' onPress={refreshStatus}>Refresh status</UiButton>
       </div>
       <p className='simple-voter-note'>Organiser: {coordinatorLabel}</p>
@@ -4544,13 +4552,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       <p className='simple-voter-note'>Questionnaire ID: {electionId || "Missing"}</p>
       <ul className='simple-vote-status-list'>
         <li className={snapshot?.loginVerified ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Identity confirmed: {snapshot?.loginVerified ? "Yes" : "No"}</li>
-        <li className={snapshot?.blindRequestSent ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot request: {requestStateText}</li>
+        <li className={snapshot?.blindRequestSent ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot request: {requestStateText}{credentialRequestSentLabel ? ` — ${credentialRequestSentLabel}` : ""}</li>
         <li className={snapshot?.credentialReady ? "is-complete" : waitingForCredential ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot credential: {credentialStateText}</li>
         <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
       </ul>
-      {waitingForCredential && !credentialIssuerIsProxy ? (
+      {waitingForCredential ? (
         <p className='simple-voter-note'>
-          Waiting for the organiser to issue your ballot credential. This page checks automatically; the organiser must be online and can press Process requests.
+          {credentialIssuerIsProxy
+            ? `Waiting for the audit proxy ${credentialIssuerLabel} to issue your ballot credential. The organiser must confirm the Guardian has a recent heartbeat in Guardian → Connection details; if it does not, switch the questionnaire to Browser only.`
+            : "Waiting for the organiser to issue your ballot credential. Keep the organiser tab open on this questionnaire; it checks automatically and can press Process requests."}
         </p>
       ) : null}
     </section>
