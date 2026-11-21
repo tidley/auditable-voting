@@ -6,10 +6,10 @@
 # Design (respects rate-limit + cost constraints):
 #   - offline-test: deterministic stub-based send-logic regression net. 0 cost,
 #     0 network, no Cloudflare exposure. Runs on EVERY PR/commit.
-#   - live-send: ONE real cashu.email send, only on a schedule (~daily) and on
-#     manual dispatch — NOT on push-to-main and NOT per PR commit. Bounded spend
-#     + no Cloudflare hammering. This is the "one test per CI run to confirm the
-#     dependency actually works" that catches "it's not working" complaints.
+#   - live-send: ONE real cashu.email send, manual dispatch only while #44 is
+#     open. The provider currently rejects a fresh testnut token with HTTP 402,
+#     so the daily schedule is disabled. When #44 is resolved, restore the cron
+#     and this remains the one-send provider probe.
 #
 # ZERO SECRETS: the live send is fully self-contained. It generates a fresh
 # ephemeral Nostr key at run time, mints fresh testnut ecash via the Nutshell
@@ -23,8 +23,12 @@ name: Email Smoke (cashu.email)
 
 on:
   pull_request:
-  schedule:
-    - cron: "37 4 * * *"   # daily 04:37 UTC — 1 send/day max from live-send
+  # The daily live send is disabled until #44 resolves cashu.email's token
+  # decoder. The provider currently rejects a freshly minted testnut token with
+  # HTTP 402 "Failed to extract proofs from token". Keep the offline job on PRs
+  # and use workflow_dispatch for a manual provider probe.
+  # schedule:
+  #   - cron: "37 4 * * *"
   workflow_dispatch:        # manual on-demand probe (e.g. before onboarding)
 
 concurrency:
@@ -57,9 +61,7 @@ jobs:
   live-send:
     name: Real cashu.email send (self-contained, zero secrets)
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'schedule') ||
-      (github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -81,7 +83,7 @@ jobs:
         working-directory: web
 
       - name: Install Nutshell CLI (produces JSON V4 cashuB tokens)
-        run: pip install --user cashu
+        run: pip install --user "marshmallow<4" cashu
 
       # Exactly ONE real send. No retry loop. 200 {ok:true} or the job fails
       # loudly (the "dependency is broken" signal the operator wants).
