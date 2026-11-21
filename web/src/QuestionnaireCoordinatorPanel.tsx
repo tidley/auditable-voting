@@ -5303,11 +5303,32 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
   }
 
 	  if (view === "responses") {
+	    const issuerHeartbeatMs = Date.parse(selectedWorkerStatus?.heartbeatAt ?? "");
+	    const issuerHeartbeatFresh = Number.isFinite(issuerHeartbeatMs)
+	      && workerStatusNow - issuerHeartbeatMs < 5 * 60 * 1000;
+	    const delegatedIssuer = delegationMode === "delegated_worker";
 	    return (
 	      <>
 	        <div className={questionnaireToolbarClassName}>
 	          {questionnaireTopControls}
 	        </div>
+        {props.hideResults ? (
+          <div className='simple-voter-note' role='status' aria-label='Ballot issuer status'>
+            {delegatedIssuer && activeWorkerDelegation ? (
+              <>
+                Ballot issuer: Guardian <code>{activeWorkerDelegation.workerNpub}</code>. Last heartbeat:{" "}
+                <strong>{formatWorkerTime(selectedWorkerStatus?.heartbeatAt, "Not seen")}</strong>.{" "}
+                {issuerHeartbeatFresh
+                  ? "Ready to issue."
+                  : "No recent heartbeat. Open Guardian → Connection details and confirm the worker, or switch to Browser only for this test."}
+              </>
+            ) : delegatedIssuer ? (
+              <>Guardian mode is selected but there is no active delegation. Open Guardian, confirm a live worker, or switch to Browser only.</>
+            ) : (
+              <>Ballot issuer: this coordinator browser (Browser only). Keep this tab open while voters request their ballots.</>
+            )}
+          </div>
+        ) : null}
         <div hidden={props.hideResults}>
         <QuestionnaireResultsDashboard
           variant='session'
