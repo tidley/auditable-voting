@@ -347,7 +347,10 @@ not a security boundary; the CLI/export fallback remains available.
 Guardian is opt-in. New rounds default to Browser only and do not inherit a
 previous delegation. A NIP-46 signer can revoke or reset the Guardian; if a
 public revocation cannot be published, the local issuer is still reset to
-Browser only and the UI reports the failure.
+Browser only and the UI reports the failure. Opening the Guardian step from the
+step navigation does not change the issuer mode; only the explicit Guardian
+setup or reset actions do. When a credential arrives, the voter status changes
+to “Ballot credential received.” instead of remaining on “pending receipt”.
 
 Issuer mode is stored per election, so it survives moving between Prepare,
 Guardian and Voters. Selecting **Browser only** clears the stored delegation
@@ -470,7 +473,7 @@ No production secrets or real delivery are needed for the offline suites:
 node --test scripts/test/otp-send-email.test.mjs scripts/test/email-sender.test.mjs
 cd web
 npx vitest run src/otpDelivery/DeliveryPanel.test.tsx src/otpDelivery/csv.test.ts
-npx playwright test e2e/delivery-smoke.spec.ts e2e/ballot-print-smoke.spec.ts
+npx playwright test e2e/delivery-smoke.spec.ts e2e/ballot-print-smoke.spec.ts e2e/email-admission-happy-path.spec.ts
 ```
 
 The sender suite includes injected SMTP and mocked cashu.email transports,
@@ -478,9 +481,16 @@ exact-code guidance, resume/partial-failure behaviour and redaction checks. The
 companion suite verifies loopback Host/Origin rejection, health-output redaction,
 static serving, validated same-origin send batches and safe error responses.
 Component/browser harnesses verify code generation, the single Import/edit/export
-table and the Send UI against a mocked loopback response; they are not relay
-redemption tests. A real controlled-inbox batch and separate-device redemption
-remain manual acceptance steps.
+table and the Send UI against a mocked loopback response.
+
+`e2e/email-admission-happy-path.spec.ts` additionally runs the real coordinator
+and voter runtimes against a deterministic in-memory Nostr relay and an
+intercepted email companion. It publishes a Browser-only questionnaire,
+generates and sends an admission email, asserts the real email template, uses
+the extracted code in a separate voter context, receives the blind credential,
+submits an answer and checks that the coordinator records the response. A real
+controlled-inbox batch and separate-device redemption remain manual acceptance
+steps.
 
 The opt-in provider smoke remains separate and never runs on pull requests:
 `.github/workflows/email-smoke.yml` contains its schedule, credentials boundary
