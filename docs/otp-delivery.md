@@ -353,7 +353,7 @@ Issuer mode is stored per election, so it survives moving between Prepare,
 Guardian and Voters. Selecting **Browser only** clears the stored delegation
 and summary instead of only changing the visible dropdown. When the gate is red
 it also offers **Switch to Browser only**, which performs the same local reset
-and reloads the page.
+and refreshes the Voters panel without discarding generated plaintext codes.
 
 Guardian heartbeats are read with the coordinator signer when no local nsec is
 available. If the signer does not support NIP-44 decryption, Connection details
