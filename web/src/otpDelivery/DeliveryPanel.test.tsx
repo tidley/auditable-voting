@@ -463,6 +463,32 @@ describe("Resident email admission", () => {
     expect(screen.getByRole("button", { name: "Send emails" })).toHaveProperty("disabled", true);
   });
 
+  it("offers a one-click Browser only recovery when the issuer is red", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+      }
+      throw new Error(`Unexpected fetch ${String(input)}`);
+    }));
+    const onSwitchToBrowserOnly = vi.fn();
+    const props = {
+      ...makeProps(),
+      onSwitchToBrowserOnly,
+      issuerStatus: {
+        mode: "delegated_worker" as const,
+        workerNpub: "npub1worker",
+        delegationId: "delegation_1",
+        summaryIssuerNpub: "npub1worker",
+      },
+    };
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    expect(await screen.findByText(/Guardian has no heartbeat/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Switch to Browser only" }));
+    expect(onSwitchToBrowserOnly).toHaveBeenCalledTimes(1);
+  });
+
   it("requires an explicit same-machine acknowledgement for a loopback voter link", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === "/__email/health") {

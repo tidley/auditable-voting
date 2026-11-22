@@ -349,6 +349,16 @@ previous delegation. A NIP-46 signer can revoke or reset the Guardian; if a
 public revocation cannot be published, the local issuer is still reset to
 Browser only and the UI reports the failure.
 
+Issuer mode is stored per election, so it survives moving between Prepare,
+Guardian and Voters. Selecting **Browser only** clears the stored delegation
+and summary instead of only changing the visible dropdown. When the gate is red
+it also offers **Switch to Browser only**, which performs the same local reset
+and reloads the page.
+
+Guardian heartbeats are read with the coordinator signer when no local nsec is
+available. If the signer does not support NIP-44 decryption, Connection details
+says so explicitly; use Browser only or a local nsec for that round.
+
 ## Sending an exported bundle from a hosted page
 
 The GitHub Pages build cannot reach the loopback companion. If codes were
