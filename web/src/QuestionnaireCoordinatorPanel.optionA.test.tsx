@@ -47,6 +47,12 @@ vi.mock("./questionnaireWorkerDelegation", async () => {
       failures: 0,
       relayResults: [],
     }),
+    publishWorkerDelegationRevocation: vi.fn().mockResolvedValue({
+      eventId: "mock-worker-revocation",
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    }),
   };
 });
 
@@ -54,10 +60,17 @@ vi.mock("./questionnaireOptionABlindDm", async () => {
   const actual = await vi.importActual<typeof import("./questionnaireOptionABlindDm")>("./questionnaireOptionABlindDm");
   return {
     ...actual,
+    fetchOptionAWorkerStatusDms: vi.fn().mockResolvedValue([]),
     fetchOptionAWorkerStatusDmsWithNsec: vi.fn().mockResolvedValue([]),
     subscribePrivateQueueProgressDmsWithNsec: vi.fn().mockReturnValue({ close: vi.fn() }),
     publishOptionAWorkerDelegationDm: vi.fn().mockResolvedValue({
       eventId: "mock-worker-delegation-dm",
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    }),
+    publishOptionAWorkerDelegationRevocationDm: vi.fn().mockResolvedValue({
+      eventId: "mock-worker-revocation-dm",
       successes: 1,
       failures: 0,
       relayResults: [],
@@ -76,7 +89,7 @@ import { loadCoordinatorState, loadElectionSummary, saveCoordinatorState, upsert
 import { readCachedQuestionnaireDefinitionReference, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
-import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerDelegationDm, publishOptionAWorkerElectionConfigDm, subscribePrivateQueueProgressDmsWithNsec } from "./questionnaireOptionABlindDm";
+import { fetchOptionAWorkerStatusDms, fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerDelegationDm, publishOptionAWorkerElectionConfigDm, subscribePrivateQueueProgressDmsWithNsec } from "./questionnaireOptionABlindDm";
 import { questionnaireDefinitionEventHash, questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 import { createWorkerDelegationCertificate, loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, publishWorkerDelegationCertificate, upsertStoredWorkerDelegation, type WorkerCapability } from "./questionnaireWorkerDelegation";
 
@@ -172,6 +185,7 @@ beforeEach(() => {
     failures: 0,
   });
   vi.mocked(fetchOptionAWorkerStatusDmsWithNsec).mockResolvedValue([]);
+  vi.mocked(fetchOptionAWorkerStatusDms).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -459,6 +473,104 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
     await waitFor(() => expect((screen.getByLabelText("Guardian npub") as HTMLInputElement).value).toMatch(/^npub1/));
     expect(JSON.parse(window.localStorage.getItem(draftKey) ?? "{}").delegationMode).toBe("browser_only");
+  });
+
+  it("persists Browser only for a published questionnaire and clears the active Guardian", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const questionnaireId = "q_published_browser_only";
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId,
+      title: "Published",
+      coordinatorNpub,
+    }));
+    upsertElectionSummary({
+      electionId: questionnaireId,
+      title: "Published",
+      description: "",
+      state: "open",
+      coordinatorNpub,
+      issueBlindTokensWorker: {
+        delegationId: "delegation_published",
+        workerNpub: "npub1worker",
+      },
+    });
+    upsertStoredWorkerDelegation({
+      electionId: questionnaireId,
+      mode: "delegated_worker",
+      activeDelegation: {
+        type: "worker_delegation",
+        schemaVersion: 1,
+        delegationId: "delegation_published",
+        electionId: questionnaireId,
+        coordinatorNpub,
+        workerNpub: "npub1worker",
+        capabilities: ["issue_blind_tokens"],
+        controlRelays: ["wss://relay.example"],
+        issuedAt: "2026-11-22T00:00:00.000Z",
+        expiresAt: "2030-11-22T00:00:00.000Z",
+      },
+      lastRevocation: null,
+      lastUpdatedAt: "2026-11-22T00:00:00.000Z",
+    });
+    const draftKey = buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1");
+    window.localStorage.setItem(draftKey, JSON.stringify({
+      questionnaireId,
+      title: { en: "Published" },
+      description: { en: "" },
+      closeTimerEnabled: false,
+      closeAfterMinutes: "60",
+      questions: [{
+        questionId: "q1",
+        prompt: "Proceed?",
+        required: true,
+        type: "yes_no",
+      }],
+      delegationMode: "delegated_worker",
+      delegatedWorkerNpub: "npub1worker",
+    }));
+
+    const onIssuerStatusChange = vi.fn();
+    const guardian = render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        initialQuestionnaireId={questionnaireId}
+        onIssuerStatusChange={onIssuerStatusChange}
+      />,
+    );
+    const mode = await screen.findByLabelText("Mode") as HTMLSelectElement;
+    await waitFor(() => expect(mode.value).toBe("delegated_worker"));
+    fireEvent.change(mode, { target: { value: "browser_only" } });
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(draftKey) ?? "{}").delegationMode).toBe("browser_only"));
+    guardian.unmount();
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='responses'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        initialQuestionnaireId={questionnaireId}
+        onIssuerStatusChange={onIssuerStatusChange}
+      />,
+    );
+    await waitFor(() => expect(onIssuerStatusChange).toHaveBeenCalledWith(expect.objectContaining({ mode: "browser_only" })));
+  });
+
+  it("fetches Guardian heartbeats with the signer when no nsec is available", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        buildPage='proxy'
+        coordinatorNpub={coordinatorNpub}
+      />,
+    );
+    await waitFor(() => expect(fetchOptionAWorkerStatusDms).toHaveBeenCalledWith(expect.objectContaining({ coordinatorNpub })));
+    expect(fetchOptionAWorkerStatusDmsWithNsec).not.toHaveBeenCalled();
   });
 
   it("reuses a generated proxy account when the setup page is reopened", async () => {

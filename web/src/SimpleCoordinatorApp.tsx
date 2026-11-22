@@ -70,6 +70,7 @@ import QuestionnaireCoordinatorPanel, {
   QUESTIONNAIRE_ID_RESET_EVENT,
   readStoredQuestionnaireRelayInput,
   resetStoredQuestionnaireDraftId,
+  storeBrowserOnlyIssuer,
   type QuestionnairePrimaryPublishAction,
   type QuestionnaireReadinessItem,
   type QuestionnaireSetupFocusTarget,
@@ -167,11 +168,12 @@ import {
   type AdmittedVoterRecord,
 } from "./questionnaireOptionAStorage";
 import {
+  publishOptionAWorkerDelegationRevocationDm,
   publishOptionAWorkerElectionConfigDm,
   type WorkerElectionConfigSnapshot,
 } from "./questionnaireOptionABlindDm";
 import { fetchLatestQuestionnaireDefinitionByCoordinator, fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
-import { loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, selectWorkerDelegationForConfig, upsertStoredWorkerDelegation, type WorkerDelegationCertificate } from "./questionnaireWorkerDelegation";
+import { createWorkerDelegationRevocation, loadStoredWorkerDelegation, nextWorkerElectionConfigVersion, publishWorkerDelegationRevocation, selectWorkerDelegationForConfig, upsertStoredWorkerDelegation, type WorkerDelegationCertificate, type WorkerDelegationRevocation } from "./questionnaireWorkerDelegation";
 import { tryWriteClipboard } from "./clipboard";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -1850,6 +1852,44 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
       setProxySeenActive(true);
     }
   }, []);
+  const handleSwitchToBrowserOnly = useCallback(async () => {
+    const electionId = optionAElectionId.trim();
+    if (!electionId) {
+      return;
+    }
+    const active = loadStoredWorkerDelegation(electionId)?.activeDelegation ?? null;
+    let revocation: WorkerDelegationRevocation | null = null;
+    if (active) {
+      revocation = createWorkerDelegationRevocation({
+        delegationId: active.delegationId,
+        electionId,
+        coordinatorNpub: active.coordinatorNpub,
+        workerNpub: active.workerNpub,
+        reason: "revoked_by_coordinator",
+      });
+    }
+    // Clear local routing first so the page unblocks even if the signer or a
+    // relay is unavailable.
+    storeBrowserOnlyIssuer({ electionId, revocation });
+    setIssuerStatus({ mode: "browser_only" });
+    if (active && revocation) {
+      try {
+        const signer = optionASigner ?? createSignerService();
+        const relays = active.controlRelays.length > 0 ? active.controlRelays : undefined;
+        await publishWorkerDelegationRevocation({ signer, revocation, relays });
+        await publishOptionAWorkerDelegationRevocationDm({
+          signer,
+          recipientNpub: active.workerNpub,
+          revocation,
+          relays,
+        });
+      } catch {
+        // The local reset already unblocks this browser. The public revocation
+        // can be retried from Guardian → Connection details.
+      }
+    }
+    window.location.reload();
+  }, [optionAElectionId, optionASigner]);
   useEffect(() => {
     const electionId = optionAElectionId.trim();
     if (!electionId) {
@@ -9408,6 +9448,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
                 voterUrl={publicQuestionnaireInviteUrl}
                 signer={optionASigner}
                 issuerStatus={issuerStatus}
+                onSwitchToBrowserOnly={() => { void handleSwitchToBrowserOnly(); }}
                 onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)}
               />
             </details>

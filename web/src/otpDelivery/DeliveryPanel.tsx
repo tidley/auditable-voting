@@ -43,6 +43,7 @@ interface DeliveryPanelProps {
   voterUrl: string;
   signer?: SignerService | null;
   issuerStatus?: IssuerStatus | null;
+  onSwitchToBrowserOnly?: () => void;
   onAdmissionsChanged?: () => void;
 }
 
@@ -599,6 +600,17 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
           : effectiveVoterUrl ? `Public: ${effectiveVoterUrl}` : "Missing voter URL."}
       </p>
       <p><strong>Ballot issuer:</strong> {issuerReadiness.title}. {issuerReadiness.detail}</p>
+      {issuerReadiness.level === "red" && props.onSwitchToBrowserOnly ? (
+        <p>
+          <button
+            type="button"
+            className="simple-voter-secondary"
+            onClick={props.onSwitchToBrowserOnly}
+          >
+            Switch to Browser only
+          </button>
+        </p>
+      ) : null}
       <p><strong>Email transport:</strong> {senderCheck === "available" ? "Ready." : senderCheck === "checking" ? "Checking…" : "Not connected."}</p>
       {!canSend ? <p><strong>Send emails is disabled until the red items above are resolved.</strong></p> : null}
     </div> : null}

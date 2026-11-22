@@ -71,6 +71,7 @@ import { LocalisedTextTranslations } from "./ui/LocalisedTextTranslations";
 import {
   type WorkerElectionConfigSnapshot,
   type PrivateQueueProgress,
+  fetchOptionAWorkerStatusDms,
   fetchOptionAWorkerStatusDmsWithNsec,
   publishOptionAWorkerDelegationDm,
   publishOptionAWorkerElectionConfigDm,
@@ -953,6 +954,94 @@ export function resetStoredQuestionnaireDraftId() {
   return nextId;
 }
 
+type StoredIssuerSettings = {
+  questionnaireId?: string;
+  delegationMode: "browser_only" | "delegated_worker";
+  delegatedWorkerNpub?: string;
+  delegatedWorkerControlRelays?: string;
+  delegatedWorkerExpiryEnabled?: boolean;
+  delegatedWorkerExpiryMinutes?: string;
+  delegatedWorkerCapabilities?: WorkerCapability[];
+};
+
+/**
+ * Persist operational issuer settings into the questionnaire draft even when
+ * the questionnaire definition is already published. Each coordinator step is
+ * a separate panel instance, so the draft is the only value they share.
+ */
+export function writeStoredIssuerSettings(input: StoredIssuerSettings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const storageKey = buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY);
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (raw) {
+      existing = JSON.parse(raw) as Record<string, unknown>;
+    }
+  } catch {
+    existing = {};
+  }
+  const draftQuestionnaireId = typeof existing.questionnaireId === "string" && existing.questionnaireId.trim()
+    ? existing.questionnaireId.trim()
+    : readStoredQuestionnaireDraftId();
+  const next = {
+    ...existing,
+    questionnaireId: input.questionnaireId?.trim() || draftQuestionnaireId,
+    delegationMode: input.delegationMode,
+    delegatedWorkerNpub: input.delegatedWorkerNpub ?? "",
+    delegatedWorkerControlRelays: input.delegatedWorkerControlRelays ?? "",
+    delegatedWorkerExpiryEnabled: input.delegatedWorkerExpiryEnabled ?? false,
+    delegatedWorkerExpiryMinutes: input.delegatedWorkerExpiryMinutes ?? "",
+    delegatedWorkerCapabilities: input.delegatedWorkerCapabilities ?? [...DEFAULT_WORKER_CAPABILITIES],
+  };
+  window.localStorage.setItem(storageKey, JSON.stringify(next));
+}
+
+/**
+ * Clear the active issuer for an election: Browser only in the per-election
+ * delegation store, the draft and the local election summary. Used by the
+ * Guardian reset action and by the delivery readiness recovery button.
+ */
+export function storeBrowserOnlyIssuer(input: {
+  electionId: string;
+  revocation?: WorkerDelegationRevocation | null;
+}) {
+  const electionId = input.electionId.trim();
+  if (!electionId) {
+    return;
+  }
+  const existing = loadStoredWorkerDelegation(electionId);
+  // The delegation store keeps an active certificate unless a matching
+  // revocation is supplied. Synthesise one for a local reset so the stale
+  // Guardian cannot win the next mount.
+  const revocation = input.revocation ?? (existing?.activeDelegation
+    ? createWorkerDelegationRevocation({
+      delegationId: existing.activeDelegation.delegationId,
+      electionId,
+      coordinatorNpub: existing.activeDelegation.coordinatorNpub,
+      workerNpub: existing.activeDelegation.workerNpub,
+      reason: "revoked_by_coordinator",
+    })
+    : null);
+  writeStoredIssuerSettings({ questionnaireId: electionId, delegationMode: "browser_only" });
+  upsertStoredWorkerDelegation({
+    electionId,
+    mode: "browser_only",
+    activeDelegation: null,
+    lastRevocation: revocation,
+    lastUpdatedAt: new Date().toISOString(),
+  });
+  const existingSummary = loadElectionSummary(electionId);
+  if (existingSummary) {
+    upsertElectionSummary({
+      ...existingSummary,
+      issueBlindTokensWorker: null,
+    });
+  }
+}
+
 function formatUnixTimestamp(timestampSeconds?: number | null) {
   if (!timestampSeconds || !Number.isFinite(timestampSeconds)) {
     return "Not set";
@@ -1715,7 +1804,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     ];
   }, [questions, voterGroups]);
   const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(
-    storedDraft.delegationMode ?? "browser_only",
+    () => {
+      const electionId = (props.initialQuestionnaireId?.trim() || storedDraft.questionnaireId || "").trim();
+      const storedDelegation = electionId ? loadStoredWorkerDelegation(electionId) : null;
+      return storedDelegation?.mode ?? storedDraft.delegationMode ?? "browser_only";
+    },
   );
   const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(
     isProxyBuildPage ? initialWorkerCredentials.npub : storedDraft.delegatedWorkerNpub ?? "",
@@ -1746,6 +1839,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
+  const [workerStatusNotice, setWorkerStatusNotice] = useState("");
   const [workerStatusNow, setWorkerStatusNow] = useState(() => Date.now());
   useEffect(() => {
     const intervalId = window.setInterval(() => setWorkerStatusNow(Date.now()), 1000);
@@ -2089,22 +2183,62 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }, [props.onWorkerDelegationChange, questionnaireId]);
 
+  // Keep the selected issuer mode in sync with the per-election delegation
+  // store when the questionnaire changes (for example Start new round).
+  useEffect(() => {
+    const electionId = questionnaireId.trim();
+    if (!electionId) {
+      return;
+    }
+    const stored = loadStoredWorkerDelegation(electionId);
+    if (stored?.mode === "browser_only") {
+      setDelegationMode("browser_only");
+      if (!isProxyBuildPage) {
+        setDelegatedWorkerNpub("");
+      }
+      return;
+    }
+    if (stored?.mode === "delegated_worker") {
+      setDelegationMode("delegated_worker");
+      if (stored.activeDelegation?.workerNpub) {
+        setDelegatedWorkerNpub(normaliseWorkerNpub(stored.activeDelegation.workerNpub));
+      }
+    }
+  }, [isProxyBuildPage, questionnaireId]);
+
   useEffect(() => {
     const nsec = coordinatorNsec.trim();
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
-    if (!nsec || !coordinatorNpubTrimmed) {
+    if (!coordinatorNpubTrimmed) {
       setAvailableWorkerStatuses([]);
+      setWorkerStatusNotice("");
       return;
     }
+    const signer = nsec ? null : createSignerService();
+    if (!nsec && !signer?.nip44Decrypt) {
+      setAvailableWorkerStatuses([]);
+      setWorkerStatusNotice(
+        "This signer cannot decrypt Guardian heartbeat messages (no NIP-44 support). Use Browser only, or sign in with a local nsec to verify the Guardian.",
+      );
+      return;
+    }
+    setWorkerStatusNotice("");
     let cancelled = false;
     const refreshStatuses = async () => {
       try {
-        const snapshots = await fetchOptionAWorkerStatusDmsWithNsec({
-          nsec,
-          coordinatorNpub: coordinatorNpubTrimmed,
-          limit: 150,
-          since: Math.floor(Date.now() / 1000) - (24 * 60 * 60),
-        });
+        const snapshots = nsec
+          ? await fetchOptionAWorkerStatusDmsWithNsec({
+            nsec,
+            coordinatorNpub: coordinatorNpubTrimmed,
+            limit: 150,
+            since: Math.floor(Date.now() / 1000) - (24 * 60 * 60),
+          })
+          : await fetchOptionAWorkerStatusDms({
+            signer: signer as NonNullable<typeof signer>,
+            coordinatorNpub: coordinatorNpubTrimmed,
+            limit: 150,
+            since: Math.floor(Date.now() / 1000) - (24 * 60 * 60),
+          });
         if (cancelled) {
           return;
         }
@@ -2166,14 +2300,33 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
     setDelegationMode("delegated_worker");
     setDelegatedWorkerNpub(workerNpub);
+    const nextControlRelays = Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0
+      ? snapshot.advertisedRelays.join(", ")
+      : delegatedWorkerControlRelays;
     if (Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0) {
-      setDelegatedWorkerControlRelays(snapshot.advertisedRelays.join(", "));
+      setDelegatedWorkerControlRelays(nextControlRelays);
     }
     if (normaliseWorkerNpub(generatedWorkerNpub) !== workerNpub) {
       setGeneratedWorkerNsec("");
       setGeneratedWorkerNpub("");
     }
-  }, [generatedWorkerNpub]);
+    writeStoredIssuerSettings({
+      questionnaireId: questionnaireId.trim(),
+      delegationMode: "delegated_worker",
+      delegatedWorkerNpub: workerNpub,
+      delegatedWorkerControlRelays: nextControlRelays,
+      delegatedWorkerExpiryEnabled,
+      delegatedWorkerExpiryMinutes,
+      delegatedWorkerCapabilities,
+    });
+  }, [
+    delegatedWorkerCapabilities,
+    delegatedWorkerControlRelays,
+    delegatedWorkerExpiryEnabled,
+    delegatedWorkerExpiryMinutes,
+    generatedWorkerNpub,
+    questionnaireId,
+  ]);
 
   useEffect(() => {
     if (isProxyBuildPage || delegationMode !== "delegated_worker" || activeWorkerDelegation || availableWorkerStatuses.length === 0) {
@@ -5007,20 +5160,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     setActiveWorkerDelegation(null);
     props.onWorkerDelegationChange?.(null);
     setDelegationMode("browser_only");
-    upsertStoredWorkerDelegation({
-      electionId,
-      mode: "browser_only",
-      activeDelegation: null,
-      lastRevocation: revocation,
-      lastUpdatedAt: new Date().toISOString(),
-    });
-    const existingSummary = loadElectionSummary(electionId);
-    if (existingSummary) {
-      upsertElectionSummary({
-        ...existingSummary,
-        issueBlindTokensWorker: null,
-      });
-    }
+    storeBrowserOnlyIssuer({ electionId, revocation });
   }
 
   async function revokeWorkerDelegation() {
@@ -5082,6 +5222,25 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     setStatus("Issuer reset to Browser only. Keep this coordinator tab open while voters request ballots.");
   }
 
+  function handleDelegationModeChange(next: "browser_only" | "delegated_worker") {
+    if (next === "browser_only") {
+      // Switching to Browser only must also clear the stored delegation and
+      // summary, otherwise the next panel instance keeps routing to a Guardian.
+      void resetIssuerToBrowserOnly();
+      return;
+    }
+    setDelegationMode("delegated_worker");
+    writeStoredIssuerSettings({
+      questionnaireId: questionnaireId.trim(),
+      delegationMode: "delegated_worker",
+      delegatedWorkerNpub,
+      delegatedWorkerControlRelays,
+      delegatedWorkerExpiryEnabled,
+      delegatedWorkerExpiryMinutes,
+      delegatedWorkerCapabilities,
+    });
+  }
+
   function generateWorkerCredentials() {
     const credentials = createWorkerCredentials();
     setGeneratedWorkerNsec(credentials.nsec);
@@ -5093,6 +5252,15 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       : ["issue_blind_tokens", ...current]);
     setDelegationMode("delegated_worker");
     setDelegatedWorkerNpub(credentials.npub);
+    writeStoredIssuerSettings({
+      questionnaireId: questionnaireId.trim(),
+      delegationMode: "delegated_worker",
+      delegatedWorkerNpub: credentials.npub,
+      delegatedWorkerControlRelays,
+      delegatedWorkerExpiryEnabled,
+      delegatedWorkerExpiryMinutes,
+      delegatedWorkerCapabilities,
+    });
   }
 
   function setupAuditProxyFromChecklist() {
@@ -5100,6 +5268,15 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       ? current
       : ["issue_blind_tokens", ...current]);
     setDelegationMode("delegated_worker");
+    writeStoredIssuerSettings({
+      questionnaireId: questionnaireId.trim(),
+      delegationMode: "delegated_worker",
+      delegatedWorkerNpub,
+      delegatedWorkerControlRelays,
+      delegatedWorkerExpiryEnabled,
+      delegatedWorkerExpiryMinutes,
+      delegatedWorkerCapabilities,
+    });
     setAuditProxyExpandSignal((current) => current + 1);
     props.onConfigureWorker?.(questionnaireId.trim());
   }
@@ -6181,7 +6358,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       id='delegation-mode'
                       selectClassName='simple-voter-input'
                       value={delegationMode}
-                      onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
+                      onChange={(event) => handleDelegationModeChange(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
                     >
                       <option value='browser_only'>Browser only</option>
                       <option value='delegated_worker'>Guardian</option>
@@ -6297,6 +6474,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <p className='simple-voter-note'><strong>Delegation state</strong><span className={delegationStatusLabel === "Active" ? "simple-delegate-status-value is-active" : "simple-delegate-status-value"}>{delegationStatusLabel}</span></p>
                     <p className='simple-voter-note'><strong>Guardian npub</strong><span>{selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</span></p>
                     <p className='simple-voter-note'><strong>Last heartbeat</strong><span>{formatWorkerTime(selectedWorkerStatus?.heartbeatAt, "Not seen")}</span></p>
+                    {workerStatusNotice ? <p className='simple-voter-note' role='status'>{workerStatusNotice}</p> : null}
                     <p className='simple-voter-note'><strong>Last blind issuance</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastBlindIssuanceAt, "Not reported")}</span></p>
                     <p className='simple-voter-note'><strong>Last vote verification</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastVoteVerificationAt, "Not reported")}</span></p>
                     <p className='simple-voter-note'><strong>Last decision publish</strong><span>{formatWorkerTime(selectedWorkerStatus?.lastDecisionPublishAt, "Not reported")}</span></p>
