@@ -102,7 +102,9 @@ test("email admission happy path issues a credential and accepts a vote", async 
   test.setTimeout(240_000);
   const relay = new InMemoryNostrRelay();
 
-  const coordinatorContext = await browser.newContext();
+  const coordinatorContext = await browser.newContext({
+    recordVideo: { dir: test.info().outputPath("coordinator-video") },
+  });
   const coordinator = await coordinatorContext.newPage();
   await installNostrRelay(coordinator, relay);
   const emailSender = await installEmailSender(coordinator);
@@ -132,7 +134,9 @@ test("email admission happy path issues a credential and accepts a vote", async 
   expect(message.text).toContain(resident.voteUrl);
   expect(message.html).toContain(`href="${resident.voteUrl.replace(/&/g, "&amp;")}"`);
 
-  const voterContext = await browser.newContext();
+  const voterContext = await browser.newContext({
+    recordVideo: { dir: test.info().outputPath("voter-video") },
+  });
   const voter = await voterContext.newPage();
   await installNostrRelay(voter, relay);
   await voter.goto(resident.voteUrl);
