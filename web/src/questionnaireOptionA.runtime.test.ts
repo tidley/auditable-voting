@@ -47,7 +47,7 @@ import {
   buildQuestionnaireBlindTokenSignedMessage,
 } from "./questionnaireBlindToken";
 import { hashQuestionnaireInviteCode } from "./questionnaireInviteCode";
-import { hashPaperBallotAdmissionKey } from "./paperBallotAdmission";
+import { hashPaperBallotAdmissionKey, hashPaperBallotCodeOnlyKey } from "./paperBallotAdmission";
 import {
   generateQuestionnaireBlindKeyPair,
   signBlindedQuestionnaireToken,
@@ -965,6 +965,26 @@ describe("questionnaireOptionARuntime", () => {
     expect(JSON.stringify(submission)).not.toContain(code);
     expect(JSON.stringify(submission)).not.toContain(masterlistNumber);
     expect("paperBallotAdmissionKey" in (submission ?? {})).toBe(false);
+  });
+
+  it("redeems a code-only admission without a master-list number", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    const code = "0123456789";
+    const registryKey = await hashPaperBallotCodeOnlyKey({ electionId, code });
+    coordinator.addPaperBallotAdmission({ electionId, registryKey, expiresAt: "2030-01-01T00:00:00Z", state: "available" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const invite = (await coordinator.sendInvite(voterNpub, {
+      title: "Runtime", description: "Test", voteUrl: "https://example.org/vote",
+    })).invite;
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(invite);
+    await voter.requestPaperBallotAdmission({ code });
+    expect(voter.getSnapshot()?.blindRequest?.paperBallotAdmissionKey).toBe(registryKey);
+    await coordinator.processPendingBlindRequests();
+    expect(coordinator.getSnapshot()?.paperBallotAdmissions?.[registryKey]?.state).toBe("redeemed");
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
   });
 
   it.each([false, true])("corrects pending ordinary and paper requests without replacing recovery secrets (per-question: %s)", async (perQuestion) => {
