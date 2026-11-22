@@ -38,6 +38,11 @@ function base64Ascii(value: string): string {
   throw new Error("Base64 encoding is unavailable in this browser.");
 }
 
+export function extractBundleVoteUrl(csv: string): string {
+  const match = csv.match(/https?:\/\/[^,"\r\n]+/);
+  return match?.[0] ?? "";
+}
+
 export function extractBundleElectionId(csv: string): string {
   const match = csv.match(/[?&]q=([^&,"\r\n]+)/);
   if (!match) return "";

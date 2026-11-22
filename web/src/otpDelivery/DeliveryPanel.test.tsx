@@ -439,6 +439,51 @@ describe("Resident email admission", () => {
     expect(tag("payload")).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("blocks sending when the Guardian heartbeat is stale", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+      }
+      throw new Error(`Unexpected fetch ${String(input)}`);
+    }));
+    const props = {
+      ...makeProps(),
+      issuerStatus: {
+        mode: "delegated_worker" as const,
+        workerNpub: "npub1worker",
+        delegationId: "delegation_1",
+        summaryIssuerNpub: "npub1worker",
+        heartbeatAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      },
+    };
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    expect(await screen.findByText(/Guardian heartbeat is stale/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send emails" })).toHaveProperty("disabled", true);
+  });
+
+  it("requires an explicit same-machine acknowledgement for a loopback voter link", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/__email/health") {
+        return { ok: true, json: async () => ({ service: "auditable-voting-email-sender", version: 1, transports: ["smtp"], maxRecipients: 1000 }) };
+      }
+      throw new Error(`Unexpected fetch ${String(input)}`);
+    }));
+    const props = {
+      ...makeProps(),
+      voterUrl: "http://127.0.0.1:5174/?role=voter&q=election-abc&coordinator=npub1test",
+      issuerStatus: { mode: "browser_only" as const },
+    };
+    render(<DeliveryPanel {...props} runtime={props.runtime as never} />);
+    await importCsv(VALID_CSV);
+    await generateAdmissions();
+    const send = await screen.findByRole("button", { name: "Send emails" });
+    expect(send).toHaveProperty("disabled", true);
+    await userEvent.click(screen.getByLabelText("This is a same-machine test"));
+    await waitFor(() => expect(send).toHaveProperty("disabled", false));
+  });
+
   it("re-checks the sender before sending and never posts when it has gone away", async () => {
     let healthCalls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

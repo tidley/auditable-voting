@@ -329,6 +329,21 @@ The HTML alternative makes the voter link clickable, shows a plain fallback URL,
 formats the code in a monospaced block and escapes all names/title text. The
 admission code is never placed in the URL.
 
+## Delivery readiness
+
+The admission panel blocks **Send emails** when:
+
+- Guardian mode has no active delegation;
+- the Guardian has no fresh heartbeat;
+- the election summary still routes to a Guardian while Browser only is selected;
+- the voter link is a loopback URL and **This is a same-machine test** is not
+  checked;
+- the local companion or relay is unreachable.
+
+For Browser only, keep the coordinator tab open. For Guardian, open Guardian →
+Connection details and confirm a recent heartbeat. The gate is a safety check,
+not a security boundary; the CLI/export fallback remains available.
+
 ## Sending an exported bundle from a hosted page
 
 The GitHub Pages build cannot reach the loopback companion. If codes were
