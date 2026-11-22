@@ -136,3 +136,15 @@ jobs:
           path: web/test-results
           retention-days: 7
           if-no-files-found: ignore
+
+      # The email admission happy path records both sides of the flow. Upload
+      # it on success as well so the passing run is reviewable.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: email-admission-happy-path-video
+          path: |
+            web/test-results/**/coordinator-video/*.webm
+            web/test-results/**/voter-video/*.webm
+          retention-days: 7
+          if-no-files-found: ignore
