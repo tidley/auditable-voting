@@ -3696,6 +3696,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }, [answerNextPendingKey, currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
+  useEffect(() => {
+    if (!snapshot?.credentialReady) {
+      return;
+    }
+    setStatus((current) => current?.startsWith("Admission request sent.")
+      ? "Ballot credential received. You can answer the questions."
+      : current);
+  }, [snapshot?.credentialReady]);
   const manualResendAvailableAtMs = useMemo(
     () => getManualBallotResendAvailableAtMs(snapshot),
     [

@@ -124,7 +124,7 @@ jobs:
         # These local specs are the behaviour contract for the PR. The former
         # deployed-site mocked-OTP video harness was retired with the old
         # same-browser resident preview.
-        run: npx playwright test e2e/delivery-smoke.spec.ts e2e/theme-toggle.spec.ts e2e/branding-icon.spec.ts e2e/i18n-voter.spec.ts e2e/showif-video-harness.spec.ts e2e/ballot-print-smoke.spec.ts e2e/offline-demo.spec.ts e2e/demo-style-parity.spec.ts e2e/organiser-flow.spec.ts
+        run: npx playwright test e2e/delivery-smoke.spec.ts e2e/theme-toggle.spec.ts e2e/branding-icon.spec.ts e2e/i18n-voter.spec.ts e2e/showif-video-harness.spec.ts e2e/ballot-print-smoke.spec.ts e2e/offline-demo.spec.ts e2e/demo-style-parity.spec.ts e2e/organiser-flow.spec.ts e2e/email-admission-happy-path.spec.ts
         working-directory: web
         env:
           PLAYWRIGHT_USE_BUNDLED_CHROMIUM: "1"

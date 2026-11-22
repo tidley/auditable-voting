@@ -27,6 +27,13 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('button', { name: 'Back: Prepare', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '1. Guardian account', exact: true })).toBeVisible();
     await expect(page.getByLabel('Guardian npub', { exact: true })).toBeVisible();
+    // Opening the Guardian step must not silently switch a Browser-only round
+    // to delegated mode.
+    const draftMode = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((entry) => entry.includes('coordinator.questionnaire-draft-data'));
+      return key ? (JSON.parse(localStorage.getItem(key) ?? '{}') as { delegationMode?: string }).delegationMode : null;
+    });
+    expect(draftMode).toBe('browser_only');
     await expect(page.getByText('Last heartbeat', { exact: true })).toBeHidden();
     await page.getByRole('button', { name: 'Next: Voters', exact: true }).click();
     await expect(page.getByRole('tabpanel', { name: 'Voters', exact: true })).toBeFocused();

@@ -9040,7 +9040,6 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
           <UiButton icon={false} aria-current={activeTab === 'configure' ? 'step' : undefined} className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}${editPublished ? ' is-confirmed' : ''}`} onPress={() => selectTab('configure')}><span className='simple-organiser-step-number' aria-hidden='true'>1</span>Prepare</UiButton>
           <UiButton icon={false} aria-current={activeTab === 'proxy' ? 'step' : undefined} className={`simple-coordinator-nav-button${activeTab === 'proxy' ? ' is-active' : ''}${proxySeenActive ? ' is-confirmed' : ''}`} onPress={() => {
             selectTab('proxy');
-            setProxySetupSignal((current) => current + 1);
           }}><span className='simple-organiser-step-number' aria-hidden='true'>2</span>Guardian</UiButton>
           <UiButton icon={false} aria-current={activeTab === 'participants' && participantNavSection === 'voters' ? 'step' : undefined} className={`simple-coordinator-nav-button${activeTab === 'participants' && participantNavSection === 'voters' ? ' is-active' : ''}`} onPress={() => {
             setParticipantNavSection('voters');
@@ -9531,7 +9530,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
               else setParticipantNavSection('voters');
             }}>Back: {activeTab === 'proxy' ? 'Prepare' : participantNavSection === 'voters' ? 'Guardian' : 'Voters'}</UiButton> : null}
             {activeTab !== 'participants' || participantNavSection === 'voters' ? <UiButton icon='chevronRight' className='simple-voter-secondary' onPress={() => {
-              if (activeTab === 'configure') { selectTab('proxy'); setProxySetupSignal(value => value + 1); }
+              if (activeTab === 'configure') { selectTab('proxy'); }
               else if (activeTab === 'proxy') { setParticipantNavSection('voters'); selectTab('participants'); }
               else setParticipantNavSection('results');
             }}>Next: {activeTab === 'configure' ? 'Guardian' : activeTab === 'proxy' ? 'Voters' : 'Results'}</UiButton> : null}
