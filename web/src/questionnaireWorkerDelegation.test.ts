@@ -1,15 +1,24 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadStoredWorkerDelegation,
   isDelegatedWorkerCapabilityEnabled,
   nextWorkerElectionConfigVersion,
+  publishWorkerDelegationRevocation,
   selectWorkerDelegationForConfig,
   upsertStoredWorkerDelegation,
   type WorkerDelegationCertificate,
   type WorkerDelegationRevocation,
 } from "./questionnaireWorkerDelegation";
+
+vi.mock("./sharedNostrPool", () => ({
+  getSharedNostrPool: () => ({ publish: () => [Promise.resolve({})] }),
+}));
+vi.mock("./nostrPublishQueue", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./nostrPublishQueue")>();
+  return { ...actual, queueNostrPublish: async (fn: () => Promise<unknown>) => fn() };
+});
 
 function delegation(delegationId: string, issuedAt: string): WorkerDelegationCertificate {
   return {
@@ -40,6 +49,28 @@ function revocation(active: WorkerDelegationCertificate): WorkerDelegationRevoca
 
 describe("worker delegation storage", () => {
   beforeEach(() => window.localStorage.clear());
+
+  it("publishes a worker revocation with a signer", async () => {
+    const signEvent = vi.fn(async (event: Record<string, unknown>) => ({
+      ...event,
+      id: "a".repeat(64),
+      pubkey: "b".repeat(64),
+      sig: "c".repeat(128),
+    }));
+    const signer = {
+      getPublicKey: async () => "b".repeat(64),
+      signEvent,
+    } as never;
+    const active = delegation("delegation_signer", "2026-07-13T11:47:50.000Z");
+    const result = await publishWorkerDelegationRevocation({
+      signer,
+      revocation: revocation(active),
+      relays: ["wss://relay.example"],
+    });
+    expect(signEvent).toHaveBeenCalledOnce();
+    expect((signEvent.mock.calls[0]?.[0] as { kind: number }).kind).toBe(31995);
+    expect(result.coordinatorNpub).toMatch(/^npub1/);
+  });
 
   it("does not let an older async confirmation replace a newer delegation", () => {
     const newer = delegation("delegation_newer", "2026-07-13T11:47:50.000Z");

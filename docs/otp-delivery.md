@@ -344,6 +344,11 @@ For Browser only, keep the coordinator tab open. For Guardian, open Guardian →
 Connection details and confirm a recent heartbeat. The gate is a safety check,
 not a security boundary; the CLI/export fallback remains available.
 
+Guardian is opt-in. New rounds default to Browser only and do not inherit a
+previous delegation. A NIP-46 signer can revoke or reset the Guardian; if a
+public revocation cannot be published, the local issuer is still reset to
+Browser only and the UI reports the failure.
+
 ## Sending an exported bundle from a hosted page
 
 The GitHub Pages build cannot reach the loopback companion. If codes were

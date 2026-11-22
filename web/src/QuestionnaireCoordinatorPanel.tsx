@@ -88,6 +88,7 @@ import {
   upsertStoredWorkerDelegation,
   type WorkerCapability,
   type WorkerDelegationCertificate,
+  type WorkerDelegationRevocation,
   type WorkerDelegationState,
   type WorkerStatusSnapshot,
 } from "./questionnaireWorkerDelegation";
@@ -935,6 +936,15 @@ export function resetStoredQuestionnaireDraftId() {
   const snapshot: StoredQuestionnaireDraft = {
     ...readStoredQuestionnaireDraft(),
     questionnaireId: nextId,
+    delegationMode: "browser_only",
+    delegatedWorkerNpub: "",
+    delegatedWorkerControlRelays: "",
+    delegatedWorkerExpiryEnabled: false,
+    delegatedWorkerExpiryMinutes: "",
+    privateWorkerEnabled: false,
+    generatedWorkerNsec: "",
+    generatedWorkerNpub: "",
+    generatedWorkerCoordinatorNpub: "",
   };
   window.localStorage.setItem(
     buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY),
@@ -1705,7 +1715,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     ];
   }, [questions, voterGroups]);
   const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(
-    isProxyBuildPage ? "delegated_worker" : storedDraft.delegationMode ?? "browser_only",
+    storedDraft.delegationMode ?? "browser_only",
   );
   const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(
     isProxyBuildPage ? initialWorkerCredentials.npub : storedDraft.delegatedWorkerNpub ?? "",
@@ -1762,11 +1772,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const regenerateQuestionnaireId = useCallback(() => {
     setQuestionnaireId(generateQuestionnaireId());
   }, []);
-  useEffect(() => {
-    if (isProxyBuildPage && delegationMode !== "delegated_worker") {
-      setDelegationMode("delegated_worker");
-    }
-  }, [delegationMode, isProxyBuildPage]);
   const [latestDefinition, setLatestDefinition] = useState<QuestionnaireDefinition | null>(null);
   const latestDefinitionEventRef = useRef<NostrEvent | null>(null);
   const [latestState, setLatestState] = useState<QuestionnaireStateValue | null>(null);
@@ -4892,7 +4897,8 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
       // The public certificate activates voter routing to the proxy. Publish it
       // only after the proxy has a reachable election configuration.
       const publicResult = canReuseActiveDelegation ? null : await publishWorkerDelegationCertificate({
-        coordinatorNsec: coordinatorNsecTrimmed,
+        coordinatorNsec: coordinatorNsecTrimmed || undefined,
+        signer: createSignerService(),
         delegation,
         relays: controlRelays,
       });
@@ -4995,12 +5001,33 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     selectAvailableWorkerStatus,
   ]);
 
+  function applyBrowserOnlyLocalReset(electionId: string, revocation: WorkerDelegationRevocation | null) {
+    setLastWorkerRevocationState("revoked");
+    setActiveWorkerDelegation(null);
+    props.onWorkerDelegationChange?.(null);
+    setDelegationMode("browser_only");
+    upsertStoredWorkerDelegation({
+      electionId,
+      mode: "browser_only",
+      activeDelegation: null,
+      lastRevocation: revocation,
+      lastUpdatedAt: new Date().toISOString(),
+    });
+    const existingSummary = loadElectionSummary(electionId);
+    if (existingSummary) {
+      upsertElectionSummary({
+        ...existingSummary,
+        issueBlindTokensWorker: null,
+      });
+    }
+  }
+
   async function revokeWorkerDelegation() {
     const electionId = questionnaireId.trim();
     const coordinatorNsecTrimmed = coordinatorNsec.trim();
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
     const active = activeWorkerDelegation;
-    if (!active || !electionId || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
+    if (!active || !electionId || !coordinatorNpubTrimmed) {
       setStatus("No active audit proxy delegation to revoke.");
       return;
     }
@@ -5014,10 +5041,12 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     const controlRelays = active.controlRelays.length > 0
       ? active.controlRelays
       : parseDelegatedControlRelays(delegatedWorkerControlRelays);
-    setStatus("Publishing audit proxy revocation...");
+    setStatus("Revoking the Guardian locally and publishing the revocation...");
+    applyBrowserOnlyLocalReset(electionId, revocation);
     try {
       const publicResult = await publishWorkerDelegationRevocation({
-        coordinatorNsec: coordinatorNsecTrimmed,
+        coordinatorNsec: coordinatorNsecTrimmed || undefined,
+        signer: createSignerService(),
         revocation,
         relays: controlRelays,
       });
@@ -5025,32 +5054,31 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
         signer: createSignerService(),
         recipientNpub: active.workerNpub,
         revocation,
-        fallbackNsec: coordinatorNsecTrimmed,
+        fallbackNsec: coordinatorNsecTrimmed || undefined,
         relays: controlRelays,
       });
-      setLastWorkerRevocationState("revoked");
-      setActiveWorkerDelegation(null);
-      props.onWorkerDelegationChange?.(null);
-      upsertStoredWorkerDelegation({
-        electionId,
-        mode: "browser_only",
-        activeDelegation: null,
-        lastRevocation: revocation,
-        lastUpdatedAt: new Date().toISOString(),
-      });
-      const existingSummary = loadElectionSummary(electionId);
-      if (existingSummary) {
-        upsertElectionSummary({
-          ...existingSummary,
-          issueBlindTokensWorker: null,
-        });
-      }
       setStatus(
-        `Audit proxy revocation published (${publicResult.successes} public relay successes, ${dmResult.successes} DM relay successes).`,
+        `Guardian revoked locally. Revocation published (${publicResult.successes} public relay successes, ${dmResult.successes} DM relay successes).`,
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Audit proxy revocation failed.");
+      setStatus(
+        `Guardian revoked locally. Public revocation failed: ${error instanceof Error ? error.message : "unknown error"}. Voters on this origin now use Browser only.`,
+      );
     }
+  }
+
+  async function resetIssuerToBrowserOnly() {
+    const electionId = questionnaireId.trim();
+    if (!electionId) {
+      setStatus("Open a questionnaire before resetting the issuer.");
+      return;
+    }
+    if (activeWorkerDelegation) {
+      await revokeWorkerDelegation();
+      return;
+    }
+    applyBrowserOnlyLocalReset(electionId, null);
+    setStatus("Issuer reset to Browser only. Keep this coordinator tab open while voters request ballots.");
   }
 
   function generateWorkerCredentials() {
@@ -6162,7 +6190,7 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     </p>
                     {delegationMode === "browser_only" && activeWorkerDelegation ? (
                       <p className='simple-voter-note'>
-                        An active Guardian delegation still routes voters. Click Revoke delegation before using Browser only.
+                        An active Guardian delegation still routes voters. Click Revoke delegation or Reset issuer to Browser only.
                       </p>
                     ) : null}
                     {delegationMode === "delegated_worker" && !selectedWorkerStatus ? (
@@ -6281,6 +6309,13 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                       isDisabled={!activeWorkerDelegation}
                     >
                       Revoke delegation
+                    </UiButton>
+                    <UiButton
+                      icon='refresh'
+                      className='simple-voter-secondary'
+                      onPress={() => void resetIssuerToBrowserOnly()}
+                    >
+                      Reset issuer to Browser only
                     </UiButton>
                   </div>
                 </details>

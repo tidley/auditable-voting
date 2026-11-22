@@ -1,4 +1,4 @@
-import { finalizeEvent, getPublicKey, nip19, type NostrEvent } from "nostr-tools";
+import { finalizeEvent, nip19, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { buildNamespacedLocalStorageKey as buildSimpleNamespacedLocalStorageKey } from "./appStorageNamespace";
 import { getSharedNostrPool } from "./sharedNostrPool";
@@ -7,6 +7,7 @@ import { mapRelayPublishResult } from "./nostrPublishResult";
 import { decodeNsec } from "./nostrIdentity";
 import { DEFAULT_NOSTR_PUBLIC_RELAYS as SIMPLE_PUBLIC_RELAYS } from "./nostrRelayConfig";
 import { recordRelayOutcome, selectRelaysWithBackoff } from "./relayBackoff";
+import type { SignerService } from "./services/signerService";
 
 export const OPTIONA_WORKER_DELEGATION_KIND = 31994;
 export const OPTIONA_WORKER_DELEGATION_REVOCATION_KIND = 31995;
@@ -338,23 +339,40 @@ function toHexPubkey(value: string) {
 }
 
 async function publishWorkerControlEvent(input: {
-  coordinatorNsec: string;
+  coordinatorNsec?: string;
+  signer?: SignerService;
   kind: number;
   tags: string[][];
   content: string;
   relays?: string[];
   channel: string;
 }) {
-  const secretKey = decodeNsec(input.coordinatorNsec);
-  if (!secretKey) {
-    throw new Error("Invalid organiser nsec.");
+  let event: NostrEvent;
+  if (input.coordinatorNsec) {
+    const secretKey = decodeNsec(input.coordinatorNsec);
+    if (!secretKey) {
+      throw new Error("Invalid organiser nsec.");
+    }
+    event = finalizeEvent({
+      kind: input.kind,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: input.tags,
+      content: input.content,
+    }, secretKey);
+  } else if (input.signer) {
+    const signed = await input.signer.signEvent({
+      kind: input.kind,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: input.tags,
+      content: input.content,
+    });
+    if (!signed.id || !signed.sig || !signed.pubkey) {
+      throw new Error("The signer did not return a complete signed event.");
+    }
+    event = signed as NostrEvent;
+  } else {
+    throw new Error("An organiser nsec or signer is required.");
   }
-  const event = finalizeEvent({
-    kind: input.kind,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: input.tags,
-    content: input.content,
-  }, secretKey);
   const allRelays = normalizeRelaysRust([...(input.relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
   const relays = selectRelaysWithBackoff(allRelays, allRelays.length);
   const pool = getSharedNostrPool();
@@ -379,18 +397,20 @@ async function publishWorkerControlEvent(input: {
     relayResults,
     successes: relayResults.filter((entry) => entry.success).length,
     failures: relayResults.filter((entry) => !entry.success).length,
-    coordinatorNpub: nip19.npubEncode(getPublicKey(secretKey)),
+    coordinatorNpub: nip19.npubEncode(event.pubkey),
   };
 }
 
 export async function publishWorkerDelegationCertificate(input: {
-  coordinatorNsec: string;
+  coordinatorNsec?: string;
+  signer?: SignerService;
   delegation: WorkerDelegationCertificate;
   relays?: string[];
 }) {
   const delegation = input.delegation;
   return publishWorkerControlEvent({
     coordinatorNsec: input.coordinatorNsec,
+    signer: input.signer,
     kind: OPTIONA_WORKER_DELEGATION_KIND,
     tags: [
       ["t", "optiona_worker_delegation"],
@@ -408,13 +428,15 @@ export async function publishWorkerDelegationCertificate(input: {
 }
 
 export async function publishWorkerDelegationRevocation(input: {
-  coordinatorNsec: string;
+  coordinatorNsec?: string;
+  signer?: SignerService;
   revocation: WorkerDelegationRevocation;
   relays?: string[];
 }) {
   const revocation = input.revocation;
   return publishWorkerControlEvent({
     coordinatorNsec: input.coordinatorNsec,
+    signer: input.signer,
     kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
     tags: [
       ["t", "optiona_worker_delegation_revocation"],
