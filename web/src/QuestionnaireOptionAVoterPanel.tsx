@@ -4119,6 +4119,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     || displaySubmission?.electionId
     || statusQuestionnaireId;
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
+  const requestId = snapshot?.blindRequest?.requestId ?? "";
   const credentialRequestSentAt = snapshot?.blindRequest?.lastSentAt ?? snapshot?.blindRequestSentAt ?? "";
   const credentialRequestSentLabel = credentialRequestSentAt && Number.isFinite(Date.parse(credentialRequestSentAt))
     ? new Date(credentialRequestSentAt).toLocaleString()
@@ -4128,6 +4129,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     : snapshot?.blindRequestSent
       ? `Waiting for ${credentialIssuerName}`
       : "Not requested";
+  const issuerDiagnostics = [
+    `questionnaire: ${electionId || "unknown"}`,
+    `coordinator: ${coordinatorNpub || "unknown"}`,
+    `issuer: ${credentialIssuerIsProxy ? credentialIssuerNpub : "organiser browser"}`,
+    credentialRequestSentAt ? `request sent: ${credentialRequestSentAt}` : "request sent: unknown",
+    requestId ? `request id: ${requestId}` : "request id: unknown",
+  ].join("\n");
   const submissionStateText = snapshot?.privateSubmissionQueued
     ? t("voterQueuedPrivately")
     : snapshot?.submissionAccepted === true
@@ -4561,11 +4569,30 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
       </ul>
       {waitingForCredential ? (
-        <p className='simple-voter-note'>
-          {credentialIssuerIsProxy
-            ? `Waiting for the audit proxy ${credentialIssuerLabel} to issue your ballot credential. The organiser must confirm the Guardian has a recent heartbeat in Guardian → Connection details; if it does not, switch the questionnaire to Browser only.`
-            : "Waiting for the organiser to issue your ballot credential. Keep the organiser tab open on this questionnaire; it checks automatically and can press Process requests."}
-        </p>
+        <>
+          <p className='simple-voter-note'>
+            {credentialIssuerIsProxy
+              ? `Waiting for the audit proxy ${credentialIssuerLabel} to issue your ballot credential. The organiser must confirm the Guardian has a recent heartbeat in Guardian → Connection details; if it does not, switch the questionnaire to Browser only.`
+              : "Waiting for the organiser to issue your ballot credential. Keep the organiser tab open on this questionnaire; it checks automatically and can press Process requests."}
+          </p>
+          <p className='simple-voter-note'>
+            If this lasts more than a minute, send the diagnostics below to the organiser.
+          </p>
+          <details className='simple-organiser-disclosure'>
+            <summary>Issuer diagnostics</summary>
+            <pre className='simple-voter-note'>{issuerDiagnostics}</pre>
+            <UiButton
+              icon='copy'
+              className='simple-voter-secondary'
+              onPress={() => void (async () => {
+                const copied = await tryWriteClipboard(issuerDiagnostics);
+                setStatus(copied ? "Issuer diagnostics copied." : "Could not copy diagnostics. Select the text manually.");
+              })()}
+            >
+              Copy diagnostics
+            </UiButton>
+          </details>
+        </>
       ) : null}
     </section>
   );

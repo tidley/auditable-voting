@@ -61,6 +61,7 @@ import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import DeliveryPanel from "./otpDelivery/DeliveryPanel";
+import type { IssuerStatus } from "./otpDelivery/issuerStatus";
 import { UiButton, UiDataTable, UiIcon, UiSelect, UiSwitch, UiTextField, type UiIconName } from "./ui/DesignLayer";
 import { useLocaleSafe, useTSafe } from "./i18n/LanguageContext";
 import { t, type UiStringKey } from "./i18n/uiStrings";
@@ -1837,6 +1838,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
     return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
   }, [questionnaireRosterAnnouncement.questionnaireId]);
   const [selectedActiveWorkerDelegation, setSelectedActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
+  const [issuerStatus, setIssuerStatus] = useState<IssuerStatus | null>(null);
   const handleWorkerDelegationChange = useCallback((delegation: WorkerDelegationCertificate | null) => {
     setSelectedActiveWorkerDelegation(delegation);
   }, []);
@@ -1868,6 +1870,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
   useEffect(() => {
     setEditPublished(false);
     setProxySeenActive(false);
+    setIssuerStatus(null);
   }, [optionAElectionId]);
   useEffect(() => {
     participantNoteDraftsRef.current = {};
@@ -9131,6 +9134,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
               onWorkerDelegationChange={handleWorkerDelegationChange}
               onPublishedDefinitionChange={handlePublishedDefinitionChange}
               onWorkerActiveChange={handleWorkerActiveChange}
+              onIssuerStatusChange={setIssuerStatus}
               onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
               onOpenObserver={onOpenObserver}
               onPrimaryPublishActionChange={handleQuestionnairePrimaryPublishActionChange}
@@ -9403,6 +9407,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
                 runtime={optionACoordinatorRuntime}
                 voterUrl={publicQuestionnaireInviteUrl}
                 signer={optionASigner}
+                issuerStatus={issuerStatus}
                 onAdmissionsChanged={() => setKnownVoterInviteRefreshNonce((value) => value + 1)}
               />
             </details>

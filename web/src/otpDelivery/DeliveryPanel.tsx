@@ -20,7 +20,8 @@ import {
 import UiDateTimeField from "../ui/UiDateTimeField";
 import { resolveLocalised } from "../i18n/resolveLocale";
 import type { SignerService } from "../services/signerService";
-import { emailSenderEndpoints, extractBundleElectionId, nip98Authorization } from "./relayAuth";
+import { emailSenderEndpoints, extractBundleElectionId, extractBundleVoteUrl, nip98Authorization } from "./relayAuth";
+import { deriveIssuerReadiness, isLoopbackVoterUrl, type IssuerStatus } from "./issuerStatus";
 
 interface IssuedEmailAdmission {
   resident: ResidentEntry;
@@ -41,6 +42,7 @@ interface DeliveryPanelProps {
   runtime: QuestionnaireOptionACoordinatorRuntime | null;
   voterUrl: string;
   signer?: SignerService | null;
+  issuerStatus?: IssuerStatus | null;
   onAdmissionsChanged?: () => void;
 }
 
@@ -124,7 +126,8 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const [rows, setRows] = useState<DraftResident[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [issued, setIssued] = useState<IssuedEmailAdmission[]>([]);
-  const [deliveryBundle, setDeliveryBundle] = useState<{ csv: string; count: number; fileName: string; electionId: string } | null>(null);
+  const [deliveryBundle, setDeliveryBundle] = useState<{ csv: string; count: number; fileName: string; electionId: string; voteUrl: string } | null>(null);
+  const [sameMachineTest, setSameMachineTest] = useState(false);
   const [revealed, setRevealed] = useState<Set<number>>(() => new Set());
   const [expiresAt, setExpiresAt] = useState("");
   const [status, setStatus] = useState("");
@@ -208,7 +211,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
           if (count < 1) {
             setStatus("The exported bundle contains no recipients.");
           } else {
-            setDeliveryBundle({ csv: text, count, fileName: file.name, electionId: extractBundleElectionId(text) });
+            setDeliveryBundle({ csv: text, count, fileName: file.name, electionId: extractBundleElectionId(text), voteUrl: extractBundleVoteUrl(text) });
             setRows([]);
             setIssued([]);
             setRevealed(new Set());
@@ -359,6 +362,14 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
 
   async function sendEmails() {
     if (sending) return;
+    if (issuerReadiness.level === "red") {
+      setStatus(`Cannot send email: ${issuerReadiness.title}. ${issuerReadiness.detail}`);
+      return;
+    }
+    if (!voterLinkReady) {
+      setStatus("Cannot send to residents: the voter link is a loopback address. Enable the same-machine test option or use a public voter URL.");
+      return;
+    }
     const bundleCsv = buildIssuedBundle();
     if (!bundleCsv) {
       setStatus("Publish and open the questionnaire before sending email.");
@@ -497,6 +508,15 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
   const hasBundle = Boolean(deliveryBundle);
   const hasRows = rows.some((row) => [row.mastersListNumber, row.name, row.email, row.phone].some((value) => value.trim()));
   const relayEndpoints = emailSenderEndpoints(relayUrl);
+  const effectiveVoterUrl = deliveryBundle?.voteUrl || props.voterUrl;
+  const voterLinkLoopback = isLoopbackVoterUrl(effectiveVoterUrl);
+  const voterLinkReady = !voterLinkLoopback || sameMachineTest;
+  const issuerReadiness = deriveIssuerReadiness(props.issuerStatus);
+  const canSend = issuerReadiness.level !== "red"
+    && voterLinkReady
+    && senderCheck === "available"
+    && !sending
+    && !(relayEndpoints.remote && !props.signer);
 
   return <section className="simple-voter-section simple-delivery-panel" aria-label="Resident email admission">
     <p className="simple-voter-note">Generate printed or email admission codes from the coordinator's computer.</p>
@@ -571,6 +591,18 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
       <ul>{csvErrors.map((error) => <li key={error}>{error}</li>)}</ul>
     </div> : null}
 
+    {issued.length || hasBundle ? <div className="simple-voter-note" role='status' aria-label='Delivery readiness'>
+      <p>
+        <strong>Voter link:</strong>{" "}
+        {voterLinkLoopback
+          ? <>Loopback only. <label><input type="checkbox" checked={sameMachineTest} onChange={(event) => setSameMachineTest(event.target.checked)} /> This is a same-machine test</label></>
+          : effectiveVoterUrl ? `Public: ${effectiveVoterUrl}` : "Missing voter URL."}
+      </p>
+      <p><strong>Ballot issuer:</strong> {issuerReadiness.title}. {issuerReadiness.detail}</p>
+      <p><strong>Email transport:</strong> {senderCheck === "available" ? "Ready." : senderCheck === "checking" ? "Checking…" : "Not connected."}</p>
+      {!canSend ? <p><strong>Send emails is disabled until the red items above are resolved.</strong></p> : null}
+    </div> : null}
+
     {issued.length || hasBundle ? <div className="simple-voter-action-row simple-voter-action-row-inline" aria-label="Local email sender">
       {senderCheck === "checking" ? <p className="simple-voter-note">{relayEndpoints.remote ? "Checking the remote email relay…" : "Checking local email sender…"}</p> : null}
       {senderCheck === "unavailable" ? <p className="simple-voter-note">
@@ -594,7 +626,7 @@ export default function DeliveryPanel(props: DeliveryPanelProps) {
           {senderHealth.transports.includes("smtp") ? <option value="smtp">SMTP mailbox</option> : null}
           {!relayEndpoints.remote && senderHealth.transports.includes("cashu") ? <option value="cashu">cashu.email</option> : null}
         </select>
-        <button type="button" className="simple-voter-secondary" disabled={sending || (relayEndpoints.remote && !props.signer)} onClick={() => void sendEmails()}>
+        <button type="button" className="simple-voter-secondary" disabled={!canSend} onClick={() => void sendEmails()}>
           {sending ? "Sending…" : "Send emails"}
         </button>
       </> : null}

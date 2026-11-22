@@ -245,6 +245,21 @@ do not reload that page before exporting.
 The bundle import is delivery-only. It does not call the admission issuer and
 does not create new credentials.
 
+## Delivery readiness
+
+Before **Send emails**, the admission panel checks:
+
+- **Ballot issuer:** Browser only, a Guardian with a fresh heartbeat, or a
+  blocking error. Browser only requires the coordinator tab to stay open. A
+  stale or missing Guardian heartbeat blocks sending.
+- **Voter link:** a public URL is ready. A `127.0.0.1` or `localhost` link is
+  blocked unless **This is a same-machine test** is checked. The emailed link
+  cannot work on another device when it points at loopback.
+- **Transport:** the local companion or remote relay is reachable.
+
+Resolve every red item before sending. The gate is a guardrail, not a
+cryptographic control; expert operators can still export and use the CLI.
+
 ## Recipient flow
 
 1. Open the email and the voter link in a private window or a separate device.

@@ -181,6 +181,13 @@ type QuestionnaireCoordinatorPanelProps = {
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: (questionnaireId: string) => void;
   onWorkerDelegationChange?: (delegation: WorkerDelegationCertificate | null) => void;
+  onIssuerStatusChange?: (status: {
+    mode: "browser_only" | "delegated_worker";
+    workerNpub?: string | null;
+    heartbeatAt?: string | null;
+    delegationId?: string | null;
+    summaryIssuerNpub?: string | null;
+  }) => void;
   onPublishedDefinitionChange?: (published: boolean) => void;
   onWorkerActiveChange?: (active: boolean) => void;
   initialQuestionnaireId?: string;
@@ -3368,6 +3375,23 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
     }
     return availableWorkerStatuses.find((entry) => entry.workerNpub === workerNpub) ?? null;
   }, [availableWorkerStatuses, delegatedWorkerNpub]);
+
+  useEffect(() => {
+    const summaryIssuerNpub = loadElectionSummary(questionnaireId)?.issueBlindTokensWorker?.workerNpub ?? null;
+    props.onIssuerStatusChange?.({
+      mode: delegationMode,
+      workerNpub: activeWorkerDelegation?.workerNpub ?? selectedWorkerStatus?.workerNpub ?? null,
+      heartbeatAt: selectedWorkerStatus?.heartbeatAt ?? null,
+      delegationId: activeWorkerDelegation?.delegationId ?? null,
+      summaryIssuerNpub,
+    });
+  }, [
+    activeWorkerDelegation,
+    delegationMode,
+    props.onIssuerStatusChange,
+    questionnaireId,
+    selectedWorkerStatus,
+  ]);
   const delegationStatusLabel = useMemo(() => {
     if (lastWorkerRevocationState === "revoked") {
       return "Revoked";
@@ -6136,6 +6160,16 @@ function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]
                     <p className='simple-voter-note'>
                       A Guardian handles ballot requests while your browser is closed.
                     </p>
+                    {delegationMode === "browser_only" && activeWorkerDelegation ? (
+                      <p className='simple-voter-note'>
+                        An active Guardian delegation still routes voters. Click Revoke delegation before using Browser only.
+                      </p>
+                    ) : null}
+                    {delegationMode === "delegated_worker" && !selectedWorkerStatus ? (
+                      <p className='simple-voter-note'>
+                        No Guardian heartbeat yet. Confirm the live Guardian before sending email to residents.
+                      </p>
+                    ) : null}
                   </>
                 ) : null}
 
