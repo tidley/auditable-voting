@@ -248,7 +248,8 @@ does not create new credentials.
 ## Recipient flow
 
 1. Open the email and the voter link in a private window or a separate device.
-2. Enter the master-list number and admission code.
+2. Enter the admission code. Older alphanumeric codes may also ask for the
+   master-list number.
 3. Request the ballot.
 4. Complete the questionnaire and submit.
 

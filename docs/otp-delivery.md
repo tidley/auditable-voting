@@ -313,9 +313,8 @@ You are invited to take part in "<questionnaire title>".
 1. Open this link on your device:
    <public voter link>
 2. Select "Use admission code".
-3. Enter:
-   Master-list number: <number>
-   Admission code: <ABCDE-12345>
+3. Enter your admission code:
+   Admission code: <12345-67890>
 4. Request your ballot and wait until it is received before answering.
 
 This code expires at <readable date and time> UTC.
@@ -410,8 +409,9 @@ Provider-visible recipient/message data is inherently not private from the email
 provider; console/network logs, error-reporting systems and the user's own MTA
 must still be reviewed before a real cohort is contacted.
 
-The voter opens the link on their own device, enters the master-list number and
-admission code, and waits for a fresh blind ballot credential. The existing
+The voter opens the link on their own device, enters the admission code, and
+waits for a fresh blind ballot credential. Only older alphanumeric codes also ask
+for the master-list number. The existing
 issuer checks election, expiry, admission state and voter binding. Code, contact
 and master-list details do not enter the anonymous ballot. Organiser/receiver
 state may link admission to the requesting voter identity, but acceptance and

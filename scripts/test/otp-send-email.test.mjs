@@ -65,7 +65,7 @@ test("bundle parsing and email composition preserve exact registered admission d
   assert.equal(formatAdmissionCode(rows[0].code), "ABCD1-234EF");
   const message = buildAdmissionEmail(rows[0]);
   assert.equal(message.to, "alice@example.test");
-  assert.match(message.text, /Master-list number: 101/);
+  assert.doesNotMatch(message.text, /Master-list number/);
   assert.match(message.text, /Admission code: ABCD1-234EF/);
   assert.match(message.text, /Select "Use admission code"/);
   assert.match(message.text, /This code expires at .* UTC/);

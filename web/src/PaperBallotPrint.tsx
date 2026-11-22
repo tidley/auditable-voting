@@ -12,10 +12,10 @@ export default function PaperBallotPrint({ ballot }: { ballot: PaperBallot }) {
     </header>
     <section className="ballot-info">
       <h2 className="ballot-section-title">Admission code access</h2>
-      <p>Master-list number: <strong>{ballot.masterlistNumber}</strong></p>
+      <p>Master-list number (reference only): <strong>{ballot.masterlistNumber}</strong></p>
       <p>Admission code: <code>{formatPaperBallotCode(ballot.code)}</code></p>
       <p>Code expiry (UTC): {ballot.expiresAt}</p>
-      <p>Open the questionnaire link from your organiser. Enter your master-list number and code to receive an anonymous ballot credential.</p>
+      <p>Open the questionnaire link from your organiser. Enter your admission code to receive an anonymous ballot credential. Older alphanumeric codes may also ask for the master-list number.</p>
       <p>Each code admits one request. Keep the same browser to recover or retry that request.</p>
       <p>Answer every applicable question. Leave conditional questions blank unless their condition applies. A required question is required only when applicable.</p>
     </section>

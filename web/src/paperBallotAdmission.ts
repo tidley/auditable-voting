@@ -148,6 +148,15 @@ export function hashPaperBallotAdmissionKey(input: { electionId: string; masterl
   return hashQuestionnaireInviteCode(`paper-ballot-admission:v1:${JSON.stringify([electionId, masterlistNumber, code])}`);
 }
 
+export function hashPaperBallotCodeOnlyKey(input: { electionId: string; code: string }) {
+  const electionId = input.electionId.trim();
+  const code = normalisePaperBallotCode(input.code);
+  if (!electionId || !isPaperBallotCode(code)) {
+    return Promise.resolve("");
+  }
+  return hashQuestionnaireInviteCode(`paper-ballot-admission:v2:${JSON.stringify([electionId, code])}`);
+}
+
 export function paperBallotExpiryToIsoUtc(value: string | null | undefined) {
   const timestamp = Date.parse(value?.trim() ?? "");
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
@@ -182,7 +191,7 @@ export async function createPaperBallotAdmissionSheet(input: {
       code = createPaperBallotCode(input.randomValues);
     }
     codes.add(code);
-    const registryKey = await hashPaperBallotAdmissionKey({ electionId, masterlistNumber, code });
+    const registryKey = await hashPaperBallotCodeOnlyKey({ electionId, code });
     sheet.push({
       masterlistNumber,
       code,

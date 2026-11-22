@@ -117,9 +117,9 @@ both issuer and ballot worker, that operator has both roles' visibility.
 ## 5. Voter tutorial
 
 1. Open the questionnaire invite. With a printed or emailed admission code,
-   enter its code and your master-list number in the admission fields on Vote.
-   These inputs derive the admission hash locally; they are not part of the
-   anonymous ballot.
+   enter the code in the admission fields on Vote. Only older alphanumeric codes
+   also ask for the master-list number. These inputs derive the admission hash
+   locally; they are not part of the anonymous ballot.
 2. Send the access request. Correct a mistyped admission entry while access is
    pending. Wait for the blind credential; sending the request is not admission.
    A valid code is bound to the admitted identity and cannot admit another

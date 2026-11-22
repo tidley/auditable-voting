@@ -188,7 +188,7 @@ import {
   isQuestionnaireInviteCodeHash,
   normaliseQuestionnaireInviteCode,
 } from "./questionnaireInviteCode";
-import { hashPaperBallotAdmissionKey, redeemPaperBallotAdmission, sanitisePaperBallotAdmissions, isPaperBallotAdmissionEntry, type PaperBallotAdmissionEntry } from "./paperBallotAdmission";
+import { hashPaperBallotAdmissionKey, hashPaperBallotCodeOnlyKey, redeemPaperBallotAdmission, sanitisePaperBallotAdmissions, isPaperBallotAdmissionEntry, type PaperBallotAdmissionEntry } from "./paperBallotAdmission";
 
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 320;
@@ -1184,14 +1184,20 @@ export class QuestionnaireOptionAVoterRuntime {
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
   }
 
-  async requestPaperBallotAdmission(input: { code: string; masterlistNumber: string }) {
-    const registryKey = await hashPaperBallotAdmissionKey({
-      electionId: this.electionId,
-      code: input.code,
-      masterlistNumber: input.masterlistNumber,
-    });
+  async requestPaperBallotAdmission(input: { code: string; masterlistNumber?: string }) {
+    const masterlistNumber = input.masterlistNumber?.trim() ?? "";
+    const registryKey = masterlistNumber
+      ? await hashPaperBallotAdmissionKey({
+        electionId: this.electionId,
+        code: input.code,
+        masterlistNumber,
+      })
+      : await hashPaperBallotCodeOnlyKey({
+        electionId: this.electionId,
+        code: input.code,
+      });
     if (!registryKey) {
-      throw new OptionARuntimeError("invalid_submission", "Enter the ten-digit admission code and your master-list number. Legacy codes may contain letters.");
+      throw new OptionARuntimeError("invalid_submission", "Enter the ten-digit admission code. If this is an older code, also enter its master-list number.");
     }
     this.paperBallotAdmissionKey = registryKey;
     return this.requestBlindBallot({ forceResend: true });

@@ -6,6 +6,7 @@ import {
   createPaperBallotCode,
   createPaperBallotAdmissionSheet,
   hashPaperBallotAdmissionKey,
+  hashPaperBallotCodeOnlyKey,
   sanitisePaperBallotAdmissions,
   loadPaperBallotAdmission,
   normalisePaperBallotMasterlistNumber,
@@ -60,6 +61,7 @@ describe("paper ballot admission", () => {
     expect(sheet.map((entry) => entry.code)).toEqual(["0123456789", "0123450123"]);
     expect(sheet.every((entry) => PAPER_BALLOT_CODE_PATTERN.test(entry.code))).toBe(true);
     expect(sheet.every((entry) => /^[0-9a-f]{64}$/.test(entry.admission.registryKey))).toBe(true);
+    expect(sheet[0].admission.registryKey).toBe(await hashPaperBallotCodeOnlyKey({ electionId: "election-a", code: sheet[0].code }));
     expect(sheet.every((entry) => !('masterlistKey' in entry.admission))).toBe(true);
     expect(JSON.stringify(sheet.map((entry) => entry.admission))).not.toContain("ML-001");
     expect(JSON.stringify(sheet.map((entry) => entry.admission))).not.toContain("0123456789");
