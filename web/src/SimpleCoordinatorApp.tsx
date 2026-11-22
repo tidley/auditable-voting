@@ -1841,6 +1841,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
   }, [questionnaireRosterAnnouncement.questionnaireId]);
   const [selectedActiveWorkerDelegation, setSelectedActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [issuerStatus, setIssuerStatus] = useState<IssuerStatus | null>(null);
+  const [issuerResetNonce, setIssuerResetNonce] = useState(0);
   const handleWorkerDelegationChange = useCallback((delegation: WorkerDelegationCertificate | null) => {
     setSelectedActiveWorkerDelegation(delegation);
   }, []);
@@ -1872,6 +1873,10 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
     // relay is unavailable.
     storeBrowserOnlyIssuer({ electionId, revocation });
     setIssuerStatus({ mode: "browser_only" });
+    // Remount the participants panel so its issuer banner re-reads the store.
+    // Do not reload the page: generated plaintext admission codes are not
+    // retained across reloads.
+    setIssuerResetNonce((value) => value + 1);
     if (active && revocation) {
       try {
         const signer = optionASigner ?? createSignerService();
@@ -1888,7 +1893,6 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
         // can be retried from Guardian → Connection details.
       }
     }
-    window.location.reload();
   }, [optionAElectionId, optionASigner]);
   useEffect(() => {
     const electionId = optionAElectionId.trim();
@@ -9155,7 +9159,7 @@ export default function SimpleCoordinatorApp({ accountMenu, onOpenObserver }: Si
             aria-label={participantNavSection === 'voters' ? 'Voters' : 'Results'}
           >
             <QuestionnaireCoordinatorPanel
-              key={`${activeCoordinatorNpub}:participants`}
+              key={`${activeCoordinatorNpub}:participants:${issuerResetNonce}`}
               hideResults={participantNavSection !== 'results'}
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
