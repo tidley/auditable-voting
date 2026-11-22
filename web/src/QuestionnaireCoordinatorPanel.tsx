@@ -2030,7 +2030,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setGeneratedWorkerNsec(credentials.nsec);
     setGeneratedWorkerNpub(credentials.npub);
     setGeneratedWorkerCoordinatorNpub(owner);
-    setDelegationMode("delegated_worker");
+    // Prepare the worker credentials but do not force Guardian mode. The
+    // coordinator may deliberately stay on Browser only.
     setDelegatedWorkerNpub(credentials.npub);
   }, [coordinatorNpub, generatedWorkerCoordinatorNpub, generatedWorkerNpub, generatedWorkerNsec, isProxyBuildPage]);
 

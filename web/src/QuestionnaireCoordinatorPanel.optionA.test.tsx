@@ -445,6 +445,22 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.getByRole("button", { name: "Copy quick start" })).toBeTruthy();
   });
 
+  it("does not switch a Browser-only draft back to Guardian when opening Guardian", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const draftKey = buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1");
+    const first = render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
+    const mode = await screen.findByLabelText("Mode") as HTMLSelectElement;
+    fireEvent.change(mode, { target: { value: "browser_only" } });
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(draftKey) ?? "{}").delegationMode).toBe("browser_only"));
+    first.unmount();
+
+    render(<QuestionnaireCoordinatorPanel view='build' buildPage='proxy' coordinatorNpub={coordinatorNpub} coordinatorNsec={coordinatorNsec} />);
+    await waitFor(() => expect((screen.getByLabelText("Guardian npub") as HTMLInputElement).value).toMatch(/^npub1/));
+    expect(JSON.parse(window.localStorage.getItem(draftKey) ?? "{}").delegationMode).toBe("browser_only");
+  });
+
   it("reuses a generated proxy account when the setup page is reopened", async () => {
     const coordinatorSecret = generateSecretKey();
     const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
